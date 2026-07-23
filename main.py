@@ -207,6 +207,11 @@ def download_youtube_video(url: str) -> str:
         # Permite a yt-dlp descargar el script solver de YouTube (deno) para resolver
         # el challenge de firma; sin esto solo consigue miniaturas, nunca video real.
         'remote_components': ['ejs:github'],
+        # El cliente 'web' (el que usa un navegador normal) es el que más dispara el
+        # "Sign in to confirm you're not a bot" en servidores. Los clientes de apps
+        # moviles/TV usan otro mecanismo de verificacion y no lo piden, sin necesitar
+        # cookies ni login.
+        'extractor_args': {'youtube': {'player_client': ['android', 'tv', 'ios']}},
     }
 
     strategies = _build_ydl_opts_with_auth(base_opts)
