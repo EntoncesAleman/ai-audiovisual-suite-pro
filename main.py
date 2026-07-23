@@ -82,9 +82,26 @@ CAROUSEL_PLATFORMS = {"ig_carrusel_clips", "ig_carrusel_placas"}
 
 print(f"✓ Backend activo. Cacheo en: {CACHE_DIR}")
 
+def _find_cookies_file():
+    """
+    Busca cookies.txt en las ubicaciones posibles según dónde se esté corriendo:
+    - /etc/secrets/cookies.txt: ruta garantizada por Render para Secret Files.
+    - junto a main.py: uso local o Secret Files montados en la raíz de la app.
+    Devuelve el primer Path que exista, o None si no hay ninguno.
+    """
+    candidates = [
+        Path("/etc/secrets/cookies.txt"),
+        Path(__file__).parent / "cookies.txt",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 # Aviso sobre métodos de autenticación para Drive/YouTube
-_cookies_file_check = Path(__file__).parent / "cookies.txt"
-if _cookies_file_check.exists():
+_cookies_file_check = _find_cookies_file()
+if _cookies_file_check:
     print(f"✓ Cookies encontradas en: {_cookies_file_check} (se usarán para archivos privados)")
 else:
     print("ℹ Sin cookies.txt en la carpeta. Para archivos privados de Drive se intentará leer cookies de Chrome.")
@@ -145,7 +162,6 @@ def cache_set(key: str, data: dict):
 #   2. Si no, probamos leer cookies de Chrome directamente
 #   3. Si tampoco funciona, descarga anónima
 PROJECT_DIR = Path(__file__).parent
-COOKIES_FILE = PROJECT_DIR / "cookies.txt"
 
 
 def _build_ydl_opts_with_auth(base_opts: dict) -> list:
@@ -157,9 +173,10 @@ def _build_ydl_opts_with_auth(base_opts: dict) -> list:
     strategies = []
 
     # Estrategia 1: archivo cookies.txt exportado del navegador
-    if COOKIES_FILE.exists():
+    cookies_file = _find_cookies_file()
+    if cookies_file:
         opts = dict(base_opts)
-        opts['cookiefile'] = str(COOKIES_FILE)
+        opts['cookiefile'] = str(cookies_file)
         strategies.append(("cookies.txt en carpeta del proyecto", opts))
 
     # Estrategia 2: cookies leídas directamente de Chrome
