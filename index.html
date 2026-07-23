@@ -24,6 +24,15 @@
         .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; position: relative; }
         .full-width { grid-column: span 2; }
 
+        @media (max-width: 768px) {
+            body { flex-direction: column; height: auto; min-height: 100vh; overflow: auto; }
+            .sidebar { width: auto; max-height: 220px; border-right: none; border-bottom: 1px solid #334155; }
+            .main-content { padding: 15px; overflow-y: visible; }
+            .dashboard-grid { grid-template-columns: 1fr; }
+            .full-width { grid-column: span 1; }
+            .session-title { width: auto; max-width: 55vw; }
+        }
+
         h1, h3 { margin-top: 0; color: #f8fafc; }
         input[type="text"], input[type="file"], select { width: 100%; padding: 10px; margin: 10px 0; background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: white; box-sizing: border-box; }
         button.primary { background: #2563eb; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; }
