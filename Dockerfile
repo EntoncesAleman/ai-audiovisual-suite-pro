@@ -2,10 +2,12 @@ FROM python:3.12-slim
 
 # ffmpeg/ffprobe: el backend los invoca por subprocess para cortar, convertir
 # y exportar clips (ver main.py). yt-dlp además necesita ffmpeg para remuxear.
-# curl: usado solo para instalar deno en la capa siguiente.
+# curl + unzip: usados solo para instalar deno en la capa siguiente
+# (el instalador de deno necesita unzip para extraer el binario descargado).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # deno: yt-dlp lo usa como runtime de JavaScript para resolver los challenges
