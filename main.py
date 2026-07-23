@@ -55,6 +55,12 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3")
 
+# URL del servicio bgutil-ytdlp-pot-provider (deploy separado en Render con la imagen
+# brainicism/bgutil-ytdlp-pot-provider). Genera los PO Tokens que YouTube exige para
+# no mostrar "Sign in to confirm you're not a bot", sin necesitar cookies ni login.
+# Si no está seteada, yt-dlp sigue funcionando igual que antes (sin este plugin).
+POT_PROVIDER_BASE_URL = os.getenv("POT_PROVIDER_BASE_URL")
+
 # Carpeta de cacheo: si ya se analizó un video con el mismo hash, devolvemos el resultado guardado
 CACHE_DIR = Path(os.getenv("CACHE_DIR", tempfile.gettempdir())) / "audiovisual_suite_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -200,6 +206,18 @@ def _build_ydl_opts_with_auth(base_opts: dict) -> list:
 
 
 def download_youtube_video(url: str) -> str:
+    extractor_args = {
+        # El cliente 'web' (el que usa un navegador normal) es el que más dispara el
+        # "Sign in to confirm you're not a bot" en servidores. Los clientes de apps
+        # moviles/TV usan otro mecanismo de verificacion y no lo piden, sin necesitar
+        # cookies ni login.
+        'youtube': {'player_client': ['android', 'tv', 'ios']},
+    }
+    if POT_PROVIDER_BASE_URL:
+        # Le dice al plugin bgutil-ytdlp-pot-provider (instalado via requirements.txt)
+        # donde esta el servicio que genera los PO Tokens.
+        extractor_args['youtubepot-bgutilhttp'] = {'base_url': [POT_PROVIDER_BASE_URL]}
+
     base_opts = {
         'format': 'best[height<=480][ext=mp4]/best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=720]/best',
         'outtmpl': os.path.join(tempfile.gettempdir(), '%(id)s.%(ext)s'),
@@ -207,11 +225,7 @@ def download_youtube_video(url: str) -> str:
         # Permite a yt-dlp descargar el script solver de YouTube (deno) para resolver
         # el challenge de firma; sin esto solo consigue miniaturas, nunca video real.
         'remote_components': ['ejs:github'],
-        # El cliente 'web' (el que usa un navegador normal) es el que más dispara el
-        # "Sign in to confirm you're not a bot" en servidores. Los clientes de apps
-        # moviles/TV usan otro mecanismo de verificacion y no lo piden, sin necesitar
-        # cookies ni login.
-        'extractor_args': {'youtube': {'player_client': ['android', 'tv', 'ios']}},
+        'extractor_args': extractor_args,
     }
 
     strategies = _build_ydl_opts_with_auth(base_opts)
