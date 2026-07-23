@@ -204,6 +204,9 @@ def download_youtube_video(url: str) -> str:
         'format': 'best[height<=480][ext=mp4]/best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=720]/best',
         'outtmpl': os.path.join(tempfile.gettempdir(), '%(id)s.%(ext)s'),
         'noplaylist': True,
+        # Permite a yt-dlp descargar el script solver de YouTube (deno) para resolver
+        # el challenge de firma; sin esto solo consigue miniaturas, nunca video real.
+        'remote_components': ['ejs:github'],
     }
 
     strategies = _build_ydl_opts_with_auth(base_opts)
