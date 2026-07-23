@@ -206,17 +206,19 @@ def _build_ydl_opts_with_auth(base_opts: dict) -> list:
 
 
 def download_youtube_video(url: str) -> str:
-    extractor_args = {
-        # El cliente 'web' (el que usa un navegador normal) es el que más dispara el
-        # "Sign in to confirm you're not a bot" en servidores. Los clientes de apps
-        # moviles/TV usan otro mecanismo de verificacion y no lo piden, sin necesitar
-        # cookies ni login.
-        'youtube': {'player_client': ['android', 'tv', 'ios']},
-    }
+    extractor_args = {}
     if POT_PROVIDER_BASE_URL:
         # Le dice al plugin bgutil-ytdlp-pot-provider (instalado via requirements.txt)
-        # donde esta el servicio que genera los PO Tokens.
+        # donde esta el servicio que genera los PO Tokens. Los PO Tokens son
+        # especificos del cliente 'web' - si restringimos player_client a
+        # android/tv/ios (como haciamos antes) el proveedor nunca se llega a usar.
+        # Con el proveedor activo dejamos 'web' primero para que se aproveche.
         extractor_args['youtubepot-bgutilhttp'] = {'base_url': [POT_PROVIDER_BASE_URL]}
+        extractor_args['youtube'] = {'player_client': ['web', 'tv', 'android']}
+    else:
+        # Sin proveedor de tokens, 'web' dispara el chequeo anti-bot casi siempre;
+        # los clientes de apps moviles/TV usan otra verificacion sin cookies/login.
+        extractor_args['youtube'] = {'player_client': ['android', 'tv', 'ios']}
 
     base_opts = {
         'format': 'best[height<=480][ext=mp4]/best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=720]/best',
