@@ -181,26 +181,26 @@ PROJECT_DIR = Path(__file__).parent
 
 def _build_ydl_opts_with_auth(base_opts: dict) -> list:
     """
-    Devuelve una lista de configuraciones de yt-dlp para probar en orden:
-    primero la opción autenticada que encontremos, después como fallback la
-    descarga anónima. Cada estrategia incluye un nombre para loguear.
+    Devuelve una lista de configuraciones de yt-dlp para probar en orden.
+    La descarga anónima va primero: con el POT Token provider (si está
+    configurado) alcanza para YouTube público sin cookies, y así no se
+    pierde tiempo probando cookies que sabemos que se vencen solas.
+    Las estrategias con cookies quedan de fallback al final, para casos
+    como archivos privados de Google Drive donde sí hacen falta.
     """
-    strategies = []
+    strategies = [("descarga anónima", dict(base_opts))]
 
-    # Estrategia 1: archivo cookies.txt exportado del navegador
+    # Fallback: archivo cookies.txt exportado del navegador (Drive privado, etc.)
     cookies_file = _find_cookies_file()
     if cookies_file:
         opts = dict(base_opts)
         opts['cookiefile'] = str(cookies_file)
         strategies.append(("cookies.txt en carpeta del proyecto", opts))
 
-    # Estrategia 2: cookies leídas directamente de Chrome
+    # Fallback: cookies leídas directamente de Chrome (solo tiene sentido en local)
     opts_chrome = dict(base_opts)
     opts_chrome['cookiesfrombrowser'] = ('chrome',)
     strategies.append(("cookies de Chrome", opts_chrome))
-
-    # Estrategia 3: descarga anónima (último recurso)
-    strategies.append(("descarga anónima (sin sesión)", dict(base_opts)))
 
     return strategies
 
