@@ -1495,6 +1495,7 @@ class ClipSpec(BaseModel):
 
 class ExportClipsInput(BaseModel):
     url: str = ""
+    video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     clips: list[ClipSpec]
 
 
@@ -1507,8 +1508,8 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        if not input_data.url:
-            yield event("error", "Se requiere una URL de video para exportar clips.")
+        if not input_data.url and not input_data.video_path:
+            yield event("error", "Se requiere una URL o un archivo local subido para exportar clips.")
             return
         if not input_data.clips:
             yield event("error", "No hay clips definidos para exportar.")
@@ -1518,15 +1519,22 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         clip_dir = EXPORT_DIR / export_id
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
+        using_uploaded_file = bool(input_data.video_path)
 
         try:
-            yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...")
-            await asyncio.sleep(0)
-            try:
-                video_path = download_youtube_video(input_data.url)
-            except HTTPException as e:
-                yield event("error", e.detail)
-                return
+            if using_uploaded_file:
+                if not os.path.exists(input_data.video_path):
+                    yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo.")
+                    return
+                video_path = input_data.video_path
+            else:
+                yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...")
+                await asyncio.sleep(0)
+                try:
+                    video_path = download_youtube_video(input_data.url)
+                except HTTPException as e:
+                    yield event("error", e.detail)
+                    return
 
             clip_files = []
             for i, clip in enumerate(input_data.clips, 1):
@@ -1604,13 +1612,15 @@ class ReelClipSpec(BaseModel):
 
 
 class ReelExportInput(BaseModel):
-    url: str
+    url: str = ""
+    video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     clips: list[ReelClipSpec]
     platform: str
 
 
 class CarouselExportInput(BaseModel):
-    url: str
+    url: str = ""
+    video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     clips: list[ReelClipSpec]
     platform: str
 
@@ -1626,8 +1636,8 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        if not input_data.url:
-            yield event("error", "Se requiere URL del video."); return
+        if not input_data.url and not input_data.video_path:
+            yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
             yield event("error", "No hay clips definidos."); return
         cfg = PLATFORM_CONFIGS.get(input_data.platform)
@@ -1639,14 +1649,20 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         clip_dir = EXPORT_DIR / export_id
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
+        using_uploaded_file = bool(input_data.video_path)
 
         try:
-            yield event("downloading", "Descargando video fuente...")
-            await asyncio.sleep(0)
-            try:
-                video_path = download_youtube_video(input_data.url)
-            except HTTPException as e:
-                yield event("error", e.detail); return
+            if using_uploaded_file:
+                if not os.path.exists(input_data.video_path):
+                    yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo."); return
+                video_path = input_data.video_path
+            else:
+                yield event("downloading", "Descargando video fuente...")
+                await asyncio.sleep(0)
+                try:
+                    video_path = download_youtube_video(input_data.url)
+                except HTTPException as e:
+                    yield event("error", e.detail); return
 
             clip_files = []
             for i, clip in enumerate(input_data.clips, 1):
@@ -1727,8 +1743,8 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        if not input_data.url:
-            yield event("error", "Se requiere URL del video."); return
+        if not input_data.url and not input_data.video_path:
+            yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
             yield event("error", "No hay slides definidos."); return
         if input_data.platform not in CAROUSEL_PLATFORMS:
@@ -1738,14 +1754,20 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         carousel_dir = EXPORT_DIR / f"car_{export_id}"
         carousel_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
+        using_uploaded_file = bool(input_data.video_path)
 
         try:
-            yield event("downloading", "Descargando video fuente...")
-            await asyncio.sleep(0)
-            try:
-                video_path = download_youtube_video(input_data.url)
-            except HTTPException as e:
-                yield event("error", e.detail); return
+            if using_uploaded_file:
+                if not os.path.exists(input_data.video_path):
+                    yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo."); return
+                video_path = input_data.video_path
+            else:
+                yield event("downloading", "Descargando video fuente...")
+                await asyncio.sleep(0)
+                try:
+                    video_path = download_youtube_video(input_data.url)
+                except HTTPException as e:
+                    yield event("error", e.detail); return
 
             output_files = []
 

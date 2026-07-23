@@ -596,7 +596,11 @@
                     <div class="clip-source-row">
                         <input type="text" id="clipSourceUrl" placeholder="URL del video fuente (YouTube / Drive)..." style="flex:1">
                     </div>
-                    <p style="font-size:11px;color:#64748b;margin:0 0 10px 0;">⚠ El video se va a volver a descargar para hacer los cortes. Para archivos locales, pegá la URL de origen si la tenés. Si seleccionás más de un clip, se descargan todos por separado en un ZIP.</p>
+                    <div class="clip-source-row" style="font-size:12px;color:#64748b;">
+                        <span>o si lo subiste como archivo local:</span>
+                        <input type="file" id="clipSourceFile" accept="video/*,audio/*" style="flex:1;font-size:12px;">
+                    </div>
+                    <p style="font-size:11px;color:#64748b;margin:0 0 10px 0;">⚠ El video se necesita de nuevo para cortar los clips (se descarga de la URL, o se vuelve a subir el archivo local). Si seleccionás más de un clip, se descargan todos por separado en un ZIP.</p>
 
                     <div class="clip-controls">
                         <label>Duración por clip (seg):</label>
@@ -651,7 +655,11 @@
                     <div class="clip-source-row">
                         <input type="text" id="reelSourceUrl" placeholder="URL del video fuente (YouTube / Drive)..." style="flex:1">
                     </div>
-                    <p style="font-size:11px;color:#64748b;margin:0 0 10px 0;">El video se va a descargar, cortar y convertir al formato exacto de la plataforma seleccionada. Si seleccionás más de un clip, se descargan todos por separado en un ZIP (no se unen).</p>
+                    <div class="clip-source-row" style="font-size:12px;color:#64748b;">
+                        <span>o si lo subiste como archivo local:</span>
+                        <input type="file" id="reelSourceFile" accept="video/*,audio/*" style="flex:1;font-size:12px;">
+                    </div>
+                    <p style="font-size:11px;color:#64748b;margin:0 0 10px 0;">El video se corta y convierte al formato exacto de la plataforma seleccionada. Si seleccionás más de un clip, se descargan todos por separado en un ZIP (no se unen).</p>
 
                     <div class="clip-controls">
                         <button class="btn-mini" onclick="parseClipsForReel()" style="background:#1e1f45;border-color:#6366f1;color:#a5b4fc;">📋 Extraer timestamps del análisis</button>
@@ -2120,19 +2128,58 @@ Ejemplo de lo que se importa:
         renderReelClipsList();
     }
 
+    /**
+     * Resuelve de dónde sale el video fuente para exportar: URL pegada, o
+     * archivo local subido de nuevo (ya que el original se borra del server
+     * apenas termina el análisis). Devuelve {url} o {video_path}, o null si
+     * no hay ninguna de las dos (y ya mostró el alert correspondiente).
+     */
+    async function resolveExportSource(urlInputId, fileInputId, statusEl) {
+        const url = document.getElementById(urlInputId).value.trim();
+        const fileInput = document.getElementById(fileInputId);
+        const file = fileInput && fileInput.files.length > 0 ? fileInput.files[0] : null;
+
+        if (!url && !file) {
+            alert("Pegá la URL del video fuente o seleccioná el archivo local antes de exportar.");
+            return null;
+        }
+        if (file) {
+            if (statusEl) {
+                statusEl.className = "clip-export-status active";
+                statusEl.textContent = "⏳ Subiendo archivo local...";
+            }
+            const formData = new FormData();
+            formData.append("file", file);
+            const res = await fetch(`${BACKEND_URL}/inspect-file`, { method: "POST", body: formData });
+            if (!res.ok) throw new Error("No se pudo subir el archivo (HTTP " + res.status + ")");
+            const info = await res.json();
+            return { video_path: info.temp_path };
+        }
+        return { url };
+    }
+
     async function startReelExport() {
-        const url = document.getElementById("reelSourceUrl").value.trim();
-        if (!url) { alert("Pegá la URL del video fuente antes de exportar."); return; }
+        if (!currentPlatformKey) { alert("Seleccioná un enfoque de video primero."); return; }
         const selected = reelClipsList.filter(c => c.selected);
         if (selected.length === 0) { alert("Seleccioná al menos un clip."); return; }
-        if (!currentPlatformKey) { alert("Seleccioná un enfoque de video primero."); return; }
+
+        const statusEl = document.getElementById("reelExportStatus");
+        const downloadBtn = document.getElementById("reelDownloadBtn");
+
+        let source;
+        try {
+            source = await resolveExportSource("reelSourceUrl", "reelSourceFile", statusEl);
+        } catch (e) {
+            statusEl.className = "clip-export-status active error";
+            statusEl.textContent = "❌ Error subiendo el archivo: " + e.message;
+            return;
+        }
+        if (!source) return;
 
         const pdata = PLATFORM_DATA[currentPlatformKey];
         const isCarousel = pdata?.isCarousel;
         const endpoint = isCarousel ? `${BACKEND_URL}/export-carousel` : `${BACKEND_URL}/export-reel`;
 
-        const statusEl = document.getElementById("reelExportStatus");
-        const downloadBtn = document.getElementById("reelDownloadBtn");
         statusEl.className = "clip-export-status active";
         statusEl.textContent = "⏳ Iniciando exportación...";
         downloadBtn.className = "btn-reel-download";
@@ -2143,7 +2190,7 @@ Ejemplo de lo que se importa:
             const res = await fetch(endpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url, clips, platform: currentPlatformKey })
+                body: JSON.stringify({ ...source, clips, platform: currentPlatformKey })
             });
             if (!res.ok || !res.body) throw new Error("Sin respuesta del servidor.");
 
@@ -2184,13 +2231,22 @@ Ejemplo de lo que se importa:
     }
 
     async function startClipExport() {
-        const url = document.getElementById('clipSourceUrl').value.trim();
-        if (!url) { alert("Pegá la URL del video fuente antes de exportar."); return; }
         const selected = clipsList.filter(c => c.selected);
         if (selected.length === 0) { alert("Seleccioná al menos un clip para exportar."); return; }
 
         const statusEl = document.getElementById('clipExportStatus');
         const downloadBtn = document.getElementById('clipDownloadBtn');
+
+        let source;
+        try {
+            source = await resolveExportSource('clipSourceUrl', 'clipSourceFile', statusEl);
+        } catch (e) {
+            statusEl.className = "clip-export-status active error";
+            statusEl.textContent = "❌ Error subiendo el archivo: " + e.message;
+            return;
+        }
+        if (!source) return;
+
         statusEl.className = "clip-export-status active";
         statusEl.textContent = "⏳ Iniciando exportación...";
         downloadBtn.className = "btn-clip-download";
@@ -2201,7 +2257,7 @@ Ejemplo de lo que se importa:
             const res = await fetch(`${BACKEND_URL}/export-clips`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, clips })
+                body: JSON.stringify({ ...source, clips })
             });
             if (!res.ok || !res.body) throw new Error("Sin respuesta del servidor.");
 
