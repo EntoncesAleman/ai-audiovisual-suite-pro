@@ -1,0 +1,46 @@
+{
+  "version": "2.0",
+  "descripcion": "Plantillas de curva dramática para teasers de 1:10. Cada plantilla define el enmarque inicial y los 4 actos del teaser. Editá este archivo para agregar nuevos temas sin tocar código.",
+  "plantillas": {
+    "generico": {
+      "nombre": "🎬 Genérico (sin tema específico)",
+      "enmarque_inicial": "El material aborda un tema central que afecta directamente a la audiencia. Identificá ese eje temático en los primeros segundos del teaser con una frase contundente que sitúe al espectador.",
+      "gancho": "Reuní los testimonios más impactantes sobre el conflicto o desafío central del episodio. Buscá las frases de mayor carga emocional o que generen identificación inmediata.",
+      "nudo": "Cruzá declaraciones que expongan la frustración, la complejidad o la tensión del tema. Mostrá los intentos fallidos, las dudas o las contradicciones.",
+      "revelacion": "Rescatá las declaraciones, advertencias o directivas de mayor peso del experto/especialista del episodio que aporten claridad y respuestas.",
+      "cierre": "Un remate corto y contundente del anfitrión que encapsule el aprendizaje, el mensaje principal o la emoción más fuerte del episodio."
+    },
+    "entrevista": {
+      "nombre": "🎤 Entrevista",
+      "enmarque_inicial": "Presentá al entrevistado y el motivo por el que vale la pena escucharlo. Buscá una frase del entrevistador o del invitado que sitúe rápidamente quién es y qué va a contar.",
+      "gancho": "Reuní las declaraciones más reveladoras o polémicas del entrevistado: confesiones, datos desconocidos, opiniones fuertes o momentos donde se nota emoción genuina.",
+      "nudo": "Cruzá los momentos de mayor tensión: preguntas incómodas, respuestas evasivas, silencios significativos, o cuando el entrevistado revela algo que no esperaba contar.",
+      "revelacion": "Rescatá la información de mayor valor: el dato que cambia la perspectiva, la frase que resume toda la entrevista, o el momento donde el entrevistado dice lo más importante.",
+      "cierre": "Un remate que deje al espectador con ganas de ver la entrevista completa: una frase contundente, una pregunta sin responder, o una declaración emotiva."
+    },
+    "debate": {
+      "nombre": "⚔️ Debate / Discusión",
+      "enmarque_inicial": "Presentá el tema en disputa con una frase que deje claro que hay posturas enfrentadas. Ubicá al espectador en la controversia desde el segundo uno.",
+      "gancho": "Reuní los choques más fuertes: frases donde los participantes se contradicen directamente, momentos de tensión, acusaciones o afirmaciones categóricas.",
+      "nudo": "Cruzá los argumentos opuestos cara a cara: mostrá cómo cada parte defiende su posición y ataca la del otro. Buscá el momento de máxima intensidad.",
+      "revelacion": "Rescatá el argumento más sólido o la concesión más significativa: cuando alguien reconoce algo del otro, o cuando un dato cierra el debate en una dirección.",
+      "cierre": "Un remate que deje la pregunta abierta o que muestre la resolución (si la hubo). La última frase debe resonar como veredicto o como invitación a formarse opinión propia."
+    },
+    "documental": {
+      "nombre": "🎥 Documental / Investigación",
+      "enmarque_inicial": "Situá al espectador en el contexto de la investigación o el tema documental. Una frase que haga sentir la importancia o gravedad del asunto.",
+      "gancho": "Reuní los testimonios más crudos o impactantes: datos que sorprenden, declaraciones de testigos directos, o la escena que mejor transmita la realidad del tema.",
+      "nudo": "Cruzá las voces que muestran la complejidad: testimonios opuestos, la distancia entre el discurso oficial y la realidad, o las contradicciones del sistema.",
+      "revelacion": "Rescatá el hallazgo central de la investigación: el dato clave, la prueba, la declaración que cambia todo, o la conclusión del experto que ata los cabos.",
+      "cierre": "Un remate que deje peso en el espectador: puede ser esperanzador o perturbador, pero debe sentirse como el punto final de una investigación seria."
+    },
+    "tutorial": {
+      "nombre": "📚 Tutorial / Clase",
+      "enmarque_inicial": "Presentá qué se va a aprender y por qué importa. Buscá la frase del docente/expositor que mejor venda el valor práctico del contenido.",
+      "gancho": "Reuní los momentos donde se muestra el problema que el tutorial resuelve: errores comunes, frustraciones típicas, o la brecha entre lo que se sabe y lo que se necesita saber.",
+      "nudo": "Cruzá las explicaciones más densas o los momentos de mayor dificultad conceptual: donde el estudiante típicamente se pierde o donde el docente hace la aclaración clave.",
+      "revelacion": "Rescatá el momento 'eureka': la explicación que simplifica todo, el truco que hace click, o el ejemplo que convierte lo abstracto en concreto.",
+      "cierre": "Un remate que resuma qué se aprendió y motive a ver el material completo: la promesa de lo que se puede lograr con ese conocimiento."
+    }
+  }
+}

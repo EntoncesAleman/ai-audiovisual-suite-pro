@@ -1,0 +1,241 @@
+{
+  "version": "2.0",
+  "categorias": {
+    "audiovisual": "🎬 Montaje Audiovisual",
+    "editorial": "📰 Editorial / Periodístico",
+    "analitico": "🔍 Análisis",
+    "estudios": "🎓 Estudios / Clases",
+    "creativo": "✨ Creativo",
+    "video": "📲 Video / Redes Sociales"
+  },
+  "enfoques": {
+    "teaser": {
+      "categoria": "audiovisual",
+      "nombre": "Estructurar Teaser (1m 10s - Máxima Relevancia Completa) 🎬",
+      "prompt_template": "Actuá como un editor cinematográfico, trailer maker y guionista publicitario senior. Basándote en esta transcripción completa de diálogos reales de todo el metraje:\n\n[TRANSCRIPCIÓN Y DIÁLOGOS DE TODO EL VIDEO]:\n{{TIMELINE}}\n\nTU OBJETIVO CRÍTICO:\nDiseñá un guion de TEASER PUBLICITARIO de exactamente 1 minuto y 10 segundos de duración. Tu misión absoluta es extraer, condensar e integrar LO MÁS RELEVANTE Y SUSTANCIAL de todo el contenido. Debe ser un destilado de los hitos y conceptos clave del material.\n\nINSTRUCCIONES ESTRATÉGICAS DE MONTAJE (ALTA CONDENSACIÓN ANACRÓNICA):\n1. LIBERTAD CRONOLÓGICA TOTAL: Ignorá por completo el orden lineal en el que se grabó el material. Tenés permitido saltar del final al inicio, alternar las intervenciones y cruzar declaraciones de distintos bloques si eso ayuda a unificar las ideas más potentes en un relato compacto de 1:10 minutos.\n2. DESTILADO DE RELEVANCIA: Ignorá transiciones secundarias, saludos, anécdotas largas que no aporten al eje central o muletillas. Cada segundo del teaser debe tener valor sustancial.\n3. CURVA DRAMÁTICA RE ESTRUCTURADA:\n   - EL GANCHO INICIAL (00:00 - 00:20): Reuní los testimonios más impactantes sobre el conflicto o tema central.\n   - EL NUDO / LA TENSIÓN (00:20 - 00:45): Cruzá frases que expongan la complejidad, las contradicciones o la tensión del tema.\n   - LA REVELACIÓN (00:45 - 01:05): Rescatá las declaraciones de mayor peso que aporten claridad, respuestas o perspectivas nuevas.\n   - EL CIERRE (01:05 - 01:10): Un remate corto y contundente que encapsule el mensaje principal.\n\n4. REGLA INQUEBRANTABLE: Usá única y estrictamente los dichos reales y literales expresados por los participantes. Queda terminantemente prohibido inventar, alterar o asumir información.\n\nPresentá el resultado final comenzando directamente con el guion, formateado estrictamente bajo esta estructura de texto plano:\n\n00:00 - 00:05\nNOMBRE_DEL_PERSONAJE\n\"Frase textual, sumamente relevante e impactante.\"\n\n00:05 - 00:10\nOTRO_PERSONAJE\n\"Siguiente frase que continúe el hilo conductor narrativo...\"\n\nEmpezá directo con el tiempo del guion, sin introducciones ni comentarios finales tuyos."
+    },
+    "resumen": {
+      "categoria": "audiovisual",
+      "nombre": "Resumen Ejecutivo Completo",
+      "prompt_template": "Actuá como un editor audiovisual senior. Basándote en esta transcripción completa de diálogos reales de todo el metraje:\n\n[TRANSCRIPCIÓN Y DIÁLOGOS DE TODO EL VIDEO]:\n{{TIMELINE}}\n\nTU TAREA OBLIGATORIA:\nGenerá un resumen analítico completo barriendo la totalidad del texto provisto, destacando las conclusiones principales y los ejes del debate."
+    },
+    "reel_15s": {
+      "categoria": "audiovisual",
+      "nombre": "Reel vertical 15s (TikTok / Reels / Shorts) 📱",
+      "prompt_template": "Actuá como editor de contenido viral para redes verticales (TikTok, Instagram Reels, YouTube Shorts). Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Diseñá un guion de REEL VERTICAL de exactamente 15 segundos.\n\nREGLAS DE ORO:\n1. HOOK EN LOS PRIMEROS 2 SEGUNDOS: La primera frase debe detener el scroll. Buscá la declaración más impactante, polémica o intrigante de todo el material.\n2. RITMO RÁPIDO: Cortes cada 2-3 segundos máximo. Sin pausas largas, sin saludos, sin presentaciones.\n3. PAYOFF FINAL: Los últimos 2 segundos deben dejar al espectador con una sensación clara (revelación, sorpresa, risa, indignación o ganas de saber más).\n4. SOLO FRASES LITERALES: Nada inventado. Solo dichos reales del material.\n\nFormato de salida:\n\n00:00 - 00:02\nPERSONAJE\n\"Frase hook impactante.\"\n\n00:02 - 00:05\nPERSONAJE\n\"Siguiente fragmento...\"\n\nEmpezá directo con el guion."
+    },
+    "reel_30s": {
+      "categoria": "audiovisual",
+      "nombre": "Reel vertical 30s 📱",
+      "prompt_template": "Actuá como editor de contenido viral para redes verticales. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Diseñá un guion de REEL VERTICAL de exactamente 30 segundos.\n\nESTRUCTURA:\n- HOOK (00:00 - 00:04): Frase que detenga el scroll.\n- DESARROLLO (00:04 - 00:24): Tres a cinco fragmentos cortos que construyan tensión o cuenten algo.\n- PAYOFF (00:24 - 00:30): Cierre con la frase más memorable o reveladora.\n\nREGLAS:\n1. Solo frases literales del material original.\n2. Libertad cronológica: podés reordenar para crear mejor narrativa.\n3. Cada corte debe aportar; nada de relleno.\n\nFormato de salida igual al teaser: tiempo, personaje, frase entre comillas. Empezá directo con el guion."
+    },
+    "best_of": {
+      "categoria": "audiovisual",
+      "nombre": "Best Of - Momentos destacados ⭐",
+      "prompt_template": "Actuá como editor de \"highlights\" de podcast. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Identificá los 8 a 10 MOMENTOS MÁS MEMORABLES del material, con sus timestamps EXACTOS del original (no inventes tiempos nuevos).\n\nCRITERIOS DE SELECCIÓN:\n- Frases citables (que funcionarían como placa o quote en redes).\n- Momentos de humor genuino, sorpresa, emoción intensa o revelación.\n- Picos de tensión o conflicto.\n- Declaraciones que sintetizan el corazón del episodio.\n\nFORMATO DE SALIDA:\n\n#1 — [Título corto descriptivo del momento]\n⏱ Timestamp original: 00:00\n👤 Personaje: NOMBRE\n💬 Cita: \"Frase textual del momento.\"\n📌 Por qué destaca: Una línea breve explicando el valor del fragmento.\n\n#2 — ...\n\nOrdená los momentos del más fuerte al menos fuerte. No del 1 al 10 cronológico, sino por IMPACTO."
+    },
+    "podcast": {
+      "categoria": "audiovisual",
+      "nombre": "Convertir en Podcast 🎙",
+      "prompt_template": "Actuá como productor de podcast profesional. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Convertí este material en un GUION DE EPISODIO DE PODCAST listo para grabar o editar, de entre 10 y 20 minutos de duración estimada.\n\nESTRUCTURA:\n\n1. METADATA DEL EPISODIO\n   - Título sugerido (atractivo, con gancho)\n   - Duración estimada\n   - Descripción para plataformas (máx 200 palabras)\n   - 5 tags / palabras clave\n\n2. INTRO (30-60 segundos)\n   Texto para el conductor que presente el tema, enganche al oyente y anticipe qué va a escuchar.\n\n3. BLOQUES TEMÁTICOS (3 a 5 bloques)\n   Para cada bloque:\n   - Título del bloque\n   - Duración estimada\n   - Fragmentos de audio originales a incluir (con timestamp exacto del material fuente: \"Desde MM:SS hasta MM:SS\")\n   - Texto de transición o locución del conductor entre fragmentos\n   - Notas de producción (música sugerida, efectos, pausas)\n\n4. CIERRE (30-60 segundos)\n   Texto de despedida con resumen del episodio y llamado a la acción.\n\n5. TIMESTAMPS PARA PLATAFORMAS\n   Capítulos con timestamps para Spotify/Apple Podcasts.\n\nREGLAS:\n- Los fragmentos de audio deben referenciar timestamps exactos del material original.\n- Las locuciones del conductor son texto nuevo tuyo, pero basado fielmente en el contenido.\n- Priorizá ritmo y enganche: evitá bloques de más de 5 minutos sin corte.\n\nEmpezá directo con la metadata."
+    },
+    "nota_periodistica": {
+      "categoria": "editorial",
+      "nombre": "Nota periodística con citas",
+      "prompt_template": "Actuá como periodista cultural senior. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Convertí el contenido en una nota periodística publicable de entre 600 y 900 palabras.\n\nESTRUCTURA:\n1. TITULAR Y BAJADA: Un titular potente y una bajada de 2 líneas que sintetice el ángulo.\n2. LEAD: Primer párrafo que enganche con el dato o frase más fuerte.\n3. DESARROLLO: 4-6 párrafos articulando los ejes del contenido, intercalando contexto narrativo con citas textuales atribuidas (\"Frase\", dijo [Personaje]).\n4. CIERRE: Párrafo final con la reflexión o conclusión más significativa.\n\nREGLAS:\n- Las citas entre comillas DEBEN ser literales del material original.\n- El texto fuera de comillas es tuyo (contexto, transiciones, análisis).\n- Tono periodístico profesional, ni opinático ni neutro plano.\n\nEmpezá directo con el titular."
+    },
+    "hilo_twitter": {
+      "categoria": "editorial",
+      "nombre": "Hilo para X / Twitter",
+      "prompt_template": "Actuá como creador de hilos virales en X (Twitter). Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Armá un HILO de 8 a 12 tweets que resuma y haga shareable el contenido.\n\nREGLAS:\n1. TWEET 1: Hook absoluto. La frase o dato más fuerte del material. Debe generar ganas de seguir leyendo. Máximo 280 caracteres.\n2. TWEETS 2 al penúltimo: Cada tweet desarrolla UN punto. Podés citar literalmente entre comillas o parafrasear.\n3. ÚLTIMO TWEET: Cierre con la conclusión más fuerte o pregunta abierta.\n\nFORMATO:\n1/ [Texto del tweet]\n\n2/ [Texto del tweet]\n\n...\n\nCada tweet en su propia línea, con número y barra al inicio. No uses hashtags salvo 1 o 2 estratégicos en el último tweet."
+    },
+    "quotes_shareables": {
+      "categoria": "editorial",
+      "nombre": "Quotes shareables (para placas) 🖼",
+      "prompt_template": "Actuá como curador de contenido para placas de redes sociales. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Extraé las 15 frases MÁS CITABLES Y POTENTES del material.\n\nCRITERIOS:\n- Frases autocontenidas (se entienden solas, fuera de contexto).\n- Entre 5 y 25 palabras idealmente.\n- Con peso conceptual, emocional o filosófico.\n- Originales, no lugares comunes.\n\nFORMATO DE SALIDA:\n\n#1\n💬 \"Frase textual literal.\"\n👤 Autor: NOMBRE\n⏱ Timestamp: 00:00\n🎯 Uso sugerido: [breve descripción de para qué tipo de placa serviría]\n\n#2\n...\n\nNo inventes ni adaptes frases: copialas tal cual del original."
+    },
+    "newsletter": {
+      "categoria": "editorial",
+      "nombre": "Newsletter (formato extenso) ✉",
+      "prompt_template": "Actuá como editor de newsletter cultural / divulgativo. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Redactá una edición de newsletter de entre 800 y 1200 palabras sobre el contenido del material.\n\nESTRUCTURA:\n1. ASUNTO DEL MAIL: Atractivo, máximo 60 caracteres.\n2. SALUDO INICIAL: Breve, cálido, personal (sin ser meloso).\n3. SECCIÓN PRINCIPAL: 3-4 bloques temáticos, cada uno con su micro-titular.\n4. CITAS DESTACADAS: 2-3 fragmentos textuales del material, formateados como bloque destacado.\n5. CIERRE: Reflexión final y, si corresponde, pregunta al lector o llamado a la acción.\n\nTono: pensado, articulado, con voz propia pero respetando el material. Empezá directo con el asunto."
+    },
+    "mapa_conceptual": {
+      "categoria": "analitico",
+      "nombre": "Mapa conceptual de ideas",
+      "prompt_template": "Actuá como analista de discurso e investigador. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Generá un MAPA CONCEPTUAL textual del contenido.\n\nESTRUCTURA:\n\n1. CONCEPTOS NÚCLEO (3-5 ideas centrales del material)\n   - Concepto: [nombre]\n     Definición operativa según el material: [una línea]\n     Quién lo introduce: [personaje]\n     Timestamp clave: 00:00\n\n2. CONCEPTOS SATÉLITE (5-10 ideas secundarias relacionadas)\n   - [mismo formato]\n\n3. RELACIONES ENTRE CONCEPTOS\n   - [Concepto A] ↔ [Concepto B]: tipo de relación (causa, oposición, complemento, ejemplo, etc.) y descripción breve.\n\n4. TENSIONES O CONTRADICCIONES DETECTADAS\n   - Si hay posturas en conflicto entre participantes, listalas.\n\nSé riguroso: solo conceptos que efectivamente aparezcan en el material."
+    },
+    "analisis_discurso": {
+      "categoria": "analitico",
+      "nombre": "Análisis de discurso",
+      "prompt_template": "Actuá como analista de discurso. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Realizá un análisis cualitativo del discurso del material.\n\nEJES A CUBRIR:\n\n1. TONOS DOMINANTES\n   - Identificá el o los tonos predominantes (didáctico, confesional, polémico, humorístico, etc.) con ejemplos textuales.\n\n2. MOMENTOS DE TENSIÓN\n   - Pasajes donde se eleva la intensidad emocional o conceptual. Citá timestamp y fragmento.\n\n3. CONTRADICCIONES INTERNAS\n   - Casos en los que un participante se contradice o matiza fuertemente algo dicho antes.\n\n4. ESTRATEGIAS RETÓRICAS\n   - Recursos usados: anécdota, metáfora, autoridad, pregunta retórica, apelación emocional, etc.\n\n5. SILENCIOS O EVASIONES SIGNIFICATIVAS\n   - Temas que se rozan y no se desarrollan, o que se cambian abruptamente.\n\nFormato libre pero estructurado por estos cinco ejes."
+    },
+    "linea_por_participante": {
+      "categoria": "analitico",
+      "nombre": "Línea argumental por participante",
+      "prompt_template": "Actuá como analista de discurso. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Para cada participante del material, reconstruí su LÍNEA ARGUMENTAL completa.\n\nFORMATO POR CADA PARTICIPANTE:\n\n══════════════════════\nPARTICIPANTE: [Nombre]\n══════════════════════\n\n🎯 POSTURA CENTRAL: Una frase que resuma su posición o aporte principal.\n\n📈 EVOLUCIÓN: Cómo se transforma su discurso a lo largo del material (¿se mantiene firme? ¿cede ante argumentos? ¿se contradice?).\n\n🗝 FRASES CLAVE (3-5):\n- ⏱ 00:00 — \"Cita textual.\"\n- ⏱ 00:00 — \"Cita textual.\"\n\n🤝 RELACIÓN CON OTROS PARTICIPANTES: Si hay diálogo, cómo es la dinámica (colaborativa, tensa, asimétrica, etc.).\n\nHacelo para cada participante identificable. Si hay un anfitrión, ponelo primero."
+    },
+    "glosario": {
+      "categoria": "analitico",
+      "nombre": "Glosario de términos clave",
+      "prompt_template": "Actuá como lexicógrafo especializado. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Construí un GLOSARIO de los términos técnicos, conceptuales o particulares que aparecen en el material.\n\nFORMATO POR ENTRADA:\n\n📖 [TÉRMINO]\nDefinición contextual: [Cómo se usa en este material específicamente, no necesariamente la definición de diccionario.]\nQuién lo usa: [Personaje]\nPrimera aparición: ⏱ 00:00\nCita ilustrativa: \"Fragmento donde aparece.\"\n\nIncluí entre 10 y 20 términos. Priorizá:\n- Jerga específica del campo.\n- Conceptos que el material trabaja o discute.\n- Expresiones particulares con sentido propio en el contexto.\n\nNo incluyas palabras de uso común."
+    },
+    "fact_check": {
+      "categoria": "analitico",
+      "nombre": "Fact-checking y verificación 🔎",
+      "prompt_template": "Actuá como verificador de datos profesional. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Identificá TODAS las afirmaciones verificables del material (datos, cifras, fechas, nombres, referencias históricas, estadísticas, citas atribuidas) y evaluá su precisión.\n\nFORMATO POR CADA AFIRMACIÓN:\n\n#[N]\n📍 Timestamp: 00:00\n👤 Quién lo dice: NOMBRE\n💬 Afirmación: \"Cita textual.\"\n✅/⚠️/❌ Veredicto: Correcto / Impreciso / Incorrecto / No verificable\n📋 Explicación: Contexto o corrección si aplica.\n\nAl final incluí:\n- Puntuación general de precisión (cantidad de afirmaciones correctas vs. total).\n- Las 3 afirmaciones más riesgosas si se repiten sin verificar.\n\nSé riguroso pero justo: distinguí entre errores de hecho y simplificaciones aceptables en un formato oral."
+    },
+    "resumen_clase": {
+      "categoria": "estudios",
+      "nombre": "Resumen para estudiar 🎓",
+      "prompt_template": "Actuá como docente preparando material de estudio. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Generá un RESUMEN DIDÁCTICO del contenido, pensado para estudiar o repasar.\n\nESTRUCTURA:\n\n1. TEMA CENTRAL\n   Una frase clara que diga de qué trata el material.\n\n2. OBJETIVOS DE APRENDIZAJE\n   Tres a cinco puntos: al terminar, el estudiante podrá... [verbo en infinitivo].\n\n3. CONCEPTOS CLAVE\n   Lista numerada con cada concepto y una definición de 1-2 líneas.\n\n4. DESARROLLO ESTRUCTURADO\n   El contenido organizado pedagógicamente (no necesariamente en el orden del material original), en bloques con subtítulos.\n\n5. EJEMPLOS DEL MATERIAL\n   2-4 ejemplos concretos extraídos del contenido, con timestamp.\n\n6. PUNTOS DE DEBATE\n   Preguntas abiertas que el material deja planteadas para discutir.\n\nLenguaje claro, accesible, sin jerga innecesaria."
+    },
+    "preguntas_comprension": {
+      "categoria": "estudios",
+      "nombre": "Preguntas de comprensión ❓",
+      "prompt_template": "Actuá como docente diseñando evaluación. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Generá un cuestionario de 15 preguntas sobre el contenido, en tres niveles cognitivos.\n\nESTRUCTURA:\n\nNIVEL 1 — COMPRENSIÓN LITERAL (5 preguntas)\nPreguntas cuya respuesta está explícita en el material. Formato: pregunta + respuesta correcta + timestamp donde aparece.\n\nNIVEL 2 — INFERENCIA (5 preguntas)\nPreguntas que requieren conectar ideas o sacar conclusiones. Formato: pregunta + respuesta esperada con justificación.\n\nNIVEL 3 — REFLEXIÓN CRÍTICA (5 preguntas)\nPreguntas abiertas que invitan a opinar, debatir o aplicar. Formato: pregunta + posibles líneas de respuesta.\n\nTono: respetuoso con el estudiante, no condescendiente."
+    },
+    "ficha_didactica": {
+      "categoria": "estudios",
+      "nombre": "Ficha didáctica completa 📋",
+      "prompt_template": "Actuá como diseñador instruccional. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Armá una FICHA DIDÁCTICA completa para trabajar el contenido en aula o tutoría.\n\nESTRUCTURA:\n\n📌 DATOS GENERALES\n- Título de la ficha\n- Nivel sugerido / público objetivo\n- Duración estimada de la actividad\n- Materiales necesarios\n\n🎯 OBJETIVOS\n- Generales\n- Específicos\n\n🧠 CONOCIMIENTOS PREVIOS NECESARIOS\nQué debería saber el estudiante antes de abordar el material.\n\n📚 CONTENIDOS\nListado de los conceptos que se trabajan.\n\n🛠 ACTIVIDADES SUGERIDAS\n3-5 actividades concretas, con consigna clara y tiempo estimado.\n\n💡 EJEMPLOS DEL MATERIAL\nFragmentos textuales del material original que sirvan como disparador.\n\n📊 EVALUACIÓN\nCómo verificar el aprendizaje (no necesariamente una prueba; puede ser producto, debate, etc.).\n\n🔗 EXTENSIONES\nSugerencias de material complementario o actividades de profundización."
+    },
+    "apuntes_clase": {
+      "categoria": "estudios",
+      "nombre": "Apuntes de clase 📝",
+      "prompt_template": "Actuá como un estudiante avanzado tomando apuntes de una clase o conferencia. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Generá APUNTES DE CLASE completos y organizados, como los tomaría un buen estudiante.\n\nESTRUCTURA:\n\n📅 DATOS DE LA CLASE\n- Tema principal\n- Docente / Expositor (si se identifica)\n- Temas secundarios abordados\n\n📝 APUNTES (cuerpo principal)\nOrganizá el contenido con:\n- Títulos y subtítulos claros\n- Bullet points para ideas principales\n- Sub-bullets para detalles y ejemplos\n- Citas textuales importantes entre comillas con timestamp\n- Fórmulas, datos, nombres propios, fechas: todo resaltado\n- Flechas o conectores lógicos entre ideas (→, ∴, vs., etc.)\n\n⚠️ ADVERTENCIAS DEL DOCENTE\nCosas que el expositor marcó como importantes, que van a evaluación, o errores comunes.\n\n❓ DUDAS QUE QUEDAN\nPuntos que no quedaron del todo claros o que merecen profundizar.\n\n📚 REFERENCIAS MENCIONADAS\nLibros, papers, autores o recursos que se nombraron en la clase.\n\nEscribí de forma concisa, telegráfica donde se pueda, pero sin perder información."
+    },
+    "guion_corto": {
+      "categoria": "creativo",
+      "nombre": "Guion de cortometraje 🎭",
+      "prompt_template": "Actuá como guionista de ficción. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Reinterpretá el material como un CORTOMETRAJE de ficción de 5 a 8 minutos.\n\nPAUTAS CREATIVAS:\n1. Podés mantener nombres reales o cambiarlos.\n2. Podés inventar entornos, situaciones, personajes secundarios que no estén en el material, siempre que el NÚCLEO temático venga del original.\n3. Las frases más potentes del material deben aparecer como diálogos del corto (textuales o ligeramente adaptados).\n4. Estructura clásica de tres actos en escala corta.\n\nFORMATO ESTÁNDAR DE GUION:\n\nESCENA 1 - INT/EXT. LUGAR - DÍA/NOCHE\n\nDescripción de la escena en tiempo presente.\n\nPERSONAJE\n(acotación)\nDiálogo del personaje.\n\nOTRO PERSONAJE\nDiálogo.\n\nESCENA 2 - ...\n\nEmpezá directo con la primera escena."
+    },
+    "poema_documental": {
+      "categoria": "creativo",
+      "nombre": "Poema documental 📜",
+      "prompt_template": "Actuá como poeta de obra documental, en la tradición del found poetry y la poesía de archivo. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Construí un POEMA DOCUMENTAL usando exclusivamente fragmentos textuales del material original, reorganizados como composición poética.\n\nREGLAS:\n1. Solo podés usar palabras y frases que aparecen literalmente en el material. Podés cortar, recortar y combinar fragmentos de distintos momentos.\n2. Podés repetir fragmentos para crear ritmo o letanía.\n3. La disposición en el verso es libre: versos cortos, largos, en columnas, fragmentados.\n4. Buscá una atmósfera coherente (melancólica, contemplativa, irónica, etc.); definí cuál antes de empezar.\n\nFORMATO DE SALIDA:\n\n[TÍTULO DEL POEMA]\n(una nota breve indicando la atmósfera elegida y el origen del material)\n\n[POEMA]\n\nNo agregues palabras tuyas dentro del poema. Solo en el título y la nota inicial."
+    },
+    "monologo_escenico": {
+      "categoria": "creativo",
+      "nombre": "Monólogo escénico 🎭",
+      "prompt_template": "Actuá como dramaturgo especializado en teatro documental. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Construí un MONÓLOGO ESCÉNICO de 4 a 8 minutos de duración estimada, montando las intervenciones de UN SOLO participante (el más sustancial del material) como pieza unipersonal.\n\nPAUTAS:\n1. Elegí al participante con mayor densidad discursiva.\n2. Usá únicamente sus dichos literales, pero podés:\n   - Reordenarlos libremente.\n   - Cortar muletillas o titubeos.\n   - Crear pausas, silencios o repeticiones para dar musicalidad escénica.\n3. Estructurá una pequeña curva dramática: apertura — desarrollo — momento de quiebre — cierre.\n4. Incluí acotaciones escénicas (entre paréntesis) sugiriendo gesto, intención o silencio.\n\nFORMATO:\n\n[TÍTULO DEL MONÓLOGO]\n\nPersonaje: [Nombre]\n\n(Acotación inicial: estado, posición, atmósfera.)\n\n[Texto del monólogo, en bloques con saltos cuando corresponda.]\n\n(Acotación final.)\n\nEmpezá directo con el título."
+    },
+    "descripcion_youtube": {
+      "categoria": "editorial",
+      "nombre": "Descripción para YouTube 📺",
+      "prompt_template": "Actuá como especialista en SEO y contenido para YouTube. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Generá una DESCRIPCIÓN OPTIMIZADA para el video de YouTube.\n\nESTRUCTURA:\n\n1. TÍTULO SUGERIDO (máx 70 caracteres, con gancho y keywords)\n\n2. DESCRIPCIÓN (primeras 2 líneas son las más importantes, aparecen sin expandir):\n   - Línea 1-2: Hook + de qué trata el video.\n   - Línea 3-5: Contexto y valor para el espectador.\n   - Timestamps / capítulos (con formato 00:00 - Título del capítulo).\n   - Mención de los participantes.\n   - Call to action (suscribirse, comentar, compartir).\n\n3. TAGS SUGERIDOS (10-15 tags relevantes separados por coma)\n\n4. 3 OPCIONES DE THUMBNAILS\n   Descripción textual de 3 ideas de miniatura, indicando qué texto poner, qué expresión o imagen usar, y qué emoción transmitir.\n\nEmpezá directo con el título sugerido."
+    },
+    "ig_reel_15s": {
+      "categoria": "video",
+      "nombre": "Instagram Reel 15s 📱",
+      "plataforma": "ig_reel_15s",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 15,
+      "prompt_template": "Actuá como especialista en contenido viral para Instagram Reels. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 3-5 MEJORES momentos de 10 a 15 segundos para un Reel vertical (9:16).\n\nCRITERIOS PARA REEL DE 15 SEGUNDOS:\n- Los primeros 2-3 segundos deben parar el scroll (hook instantáneo)\n- Una sola idea poderosa por clip: sorpresa, revelación, emoción, dato impactante\n- Frases cortas y directas, sin necesidad de contexto previo\n- El cierre debe generar un pensamiento o emoción residual\n\nFORMATO DE SALIDA:\n\n🎯 Opción #1 — [Nombre corto del momento]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento clave: \"cita textual\"\n⚡ Por qué para el scroll en Reels: [razón específica]\n\n🎯 Opción #2 — ...\n\nOrdenar de mayor a menor impacto potencial."
+    },
+    "ig_reel_30s": {
+      "categoria": "video",
+      "nombre": "Instagram Reel 30s 📱",
+      "plataforma": "ig_reel_30s",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 30,
+      "prompt_template": "Actuá como especialista en contenido para Instagram Reels. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 3-5 mejores SECUENCIAS de 20 a 30 segundos para un Reel vertical.\n\nCRITERIOS PARA REEL DE 30 SEGUNDOS:\n- Hook en los primeros 3 segundos (la pregunta o afirmación que engancha)\n- Desarrollo de 20 segundos: tres o cuatro fragmentos que construyan tensión o cuenten algo\n- Payoff final: la frase más memorable o reveladora\n- El 30s permite una mini-historia con inicio, conflicto y resolución\n\nFORMATO DE SALIDA:\n\n🎯 Opción #1 — [Nombre del arco narrativo]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n🎬 Estructura:\n  - HOOK (MM:SS): \"...\"\n  - DESARROLLO (MM:SS - MM:SS): descripción\n  - PAYOFF (MM:SS): \"...\"\n📌 Por qué funciona como Reel de 30s: [razón]\n\n🎯 Opción #2 — ..."
+    },
+    "ig_reel_60s": {
+      "categoria": "video",
+      "nombre": "Instagram Reel 60s 📱",
+      "plataforma": "ig_reel_60s",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 60,
+      "prompt_template": "Actuá como editor de contenido para Instagram. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 2-3 MEJORES ARCOS NARRATIVOS de 45 a 60 segundos para un Reel largo.\n\nCRITERIOS PARA REEL DE 60 SEGUNDOS:\n- El minuto permite contar una historia completa: planteamiento, desarrollo, resolución\n- Podés combinar fragmentos de distintos momentos del material (montaje no lineal)\n- Cada 15 segundos debe pasar algo que retenga la atención\n- El 60s es ideal para entrevistas, debates o revelaciones con contexto\n\nFORMATO DE SALIDA:\n\n🎯 Opción #1 — [Título del arco]\n📋 Estructura sugerida (tiempos aproximados en el Reel final):\n  00:00-00:08 HOOK — timestamp: MM:SS → \"cita\"\n  00:08-00:30 CONTEXTO — timestamps: MM:SS a MM:SS\n  00:30-00:50 TENSIÓN/REVELACIÓN — timestamp: MM:SS → \"cita\"\n  00:50-01:00 CIERRE — timestamp: MM:SS → \"cita\"\n📌 Por qué funciona: [razón]\n\n🎯 Opción #2 — ..."
+    },
+    "ig_story_15s": {
+      "categoria": "video",
+      "nombre": "Instagram Story 15s ⭕",
+      "plataforma": "ig_story_15s",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 15,
+      "prompt_template": "Actuá como creador de Stories para Instagram. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 3-5 momentos perfectos para Stories de 10-15 segundos.\n\nCRITERIOS PARA STORIES:\n- Las Stories son más casuales y urgentes que los Reels: sensación de \"en vivo\"\n- Funcionan bien como teaser ('¿querés ver la entrevista completa?')\n- Un solo punto concreto, sin contexto\n- Tono directo, como si alguien te enviara un mensaje de voz\n- Ideal: reacciones genuinas, datos sorprendentes, preguntas sin respuesta\n\nFORMATO DE SALIDA:\n\n⭕ Story #1 — [Tipo: Teaser / Dato / Pregunta / Reacción]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento: \"cita textual\"\n📲 Cómo presentarla: [sugerencia de contexto visual o texto superpuesto]\n\n⭕ Story #2 — ..."
+    },
+    "ig_feed_4x5": {
+      "categoria": "video",
+      "nombre": "Instagram Feed Video (4:5) 🖼",
+      "plataforma": "ig_feed_4x5",
+      "aspect_ratio": "4:5",
+      "resolucion": "1080x1350",
+      "duracion_max": 60,
+      "prompt_template": "Actuá como curador de contenido para el feed de Instagram. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 2-4 mejores momentos para un video de feed en formato 4:5 (más cuadrado que el Reel).\n\nCRITERIOS PARA FEED VIDEO:\n- El feed es más curado y permanente que Stories/Reels: el contenido debe tener vida larga\n- Funciona para contenido educativo, reflexivo o con alta densidad de información\n- Podés usar títulos/captions más largos para dar contexto\n- El primer frame es tu thumbnail: debe ser visualmente impactante\n- Duración ideal: 30-60 segundos para feed orgánico\n\nFORMATO DE SALIDA:\n\n🖼 Opción #1 — [Ángulo temático]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento clave: \"cita\"\n📌 Por qué funciona en feed (no en Reels): [razón]\n💡 Sugerencia de caption: [3 líneas de texto para el post]\n\n🖼 Opción #2 — ..."
+    },
+    "ig_carrusel_clips": {
+      "categoria": "video",
+      "nombre": "Instagram Carrusel (mini-clips) 🎞",
+      "plataforma": "ig_carrusel_clips",
+      "aspect_ratio": "1:1",
+      "resolucion": "1080x1080",
+      "duracion_max": 60,
+      "prompt_template": "Actuá como creador de carruseles de video para Instagram. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá 5-8 momentos DISTINTOS del material para crear un carrusel de mini-clips (cada slide es un clip de video cuadrado 1:1).\n\nCRITERIOS PARA CARRUSEL DE CLIPS:\n- Cada slide debe ser autocontenido: una idea única, sin depender del anterior\n- La PROGRESIÓN es clave: el slide 1 genera curiosidad sobre el 2, y así\n- Variedad de tipo de contenido: declaración polémica, dato, pregunta, revelación, cierre\n- El slide 1 es el más importante (se ve sin swipear): debe tener el gancho máximo\n- El último slide debe cerrar o generar acción (guardar, comentar, compartir)\n\nFORMATO DE SALIDA:\n\nSlide 1 (HOOK):\n⏱ Inicio: MM:SS — Fin: MM:SS\n💬 Fragmento: \"cita\"\n🎯 Por qué es el primer slide: [razón]\n\nSlide 2:\n⏱ Inicio: MM:SS — Fin: MM:SS\n💬 Fragmento: \"cita\"\n\n[continuar para cada slide]\n\nSlide N (CIERRE):\n⏱ Inicio: MM:SS — Fin: MM:SS\n💬 Fragmento: \"cita\"\n🔚 Cómo cierra el carrusel: [descripción]\n\nTambién describí la NARRATIVA GENERAL: qué historia cuenta el carrusel de principio a fin."
+    },
+    "ig_carrusel_placas": {
+      "categoria": "video",
+      "nombre": "Instagram Carrusel (placas de texto) 🃏",
+      "plataforma": "ig_carrusel_placas",
+      "aspect_ratio": "1:1",
+      "resolucion": "1080x1080",
+      "duracion_max": null,
+      "prompt_template": "Actuá como curador de contenido para carrusel de placas de texto en Instagram. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá 6-10 frases o momentos para crear UN CARRUSEL de placas de texto + imagen de fondo.\n\nCRITERIOS PARA CARRUSEL DE PLACAS:\n- Cada placa es una cita textual AUTOCONTENIDA (se entiende sola, sin el video)\n- Máximo 35-45 palabras por placa\n- El texto debe ser visualmente impactante sobre una imagen del material\n- Progresión lógica entre placas: deben contar algo juntas\n- La placa 1 (cover) es tu portada en el feed: debe ser la más impactante\n- La última placa puede ser un llamado a la acción o una conclusión\n\nFORMATO DE SALIDA:\n\nPlaca 1 (PORTADA — la más impactante):\n⏱ Timestamp: MM:SS\n💬 Texto literal: \"Frase tal cual aparece en el material\"\n🎨 Descripción del momento visual: [qué vemos en ese frame, expresión, acción]\n👤 Hablante: NOMBRE\n\nPlaca 2:\n⏱ Timestamp: MM:SS\n💬 Texto literal: \"...\"\n🎨 Descripción visual: ...\n👤 Hablante: ...\n\n[continuar para cada placa]\n\nNarrativa del carrusel: [cómo fluye el hilo de principio a fin]"
+    },
+    "tiktok_15s": {
+      "categoria": "video",
+      "nombre": "TikTok 15s 🎵",
+      "plataforma": "tiktok_15s",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 15,
+      "prompt_template": "Actuá como creador de contenido viral en TikTok. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 3-5 momentos de 10-15 segundos más viralizables para TikTok.\n\nCRITERIOS PARA TIKTOK 15s:\n- TikTok premia la autenticidad y lo inesperado sobre lo producido\n- El hook debe ser en el primer segundo: una frase o reacción que haga pensar '¿qué?\"\n- Contenido que genera comentarios: frases polémicas, revelaciones, humor ácido o consejos contraintuitivos\n- El tono puede ser más crudo y directo que en Instagram\n- Los subtítulos automáticos de TikTok favorecen frases cortas y claras\n\nFORMATO DE SALIDA:\n\n🎵 Opción #1 — [Tipo de hook: Polémica / Sorpresa / Humor / Consejo]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento: \"cita textual\"\n🔥 Por qué viraliza en TikTok: [razón específica según la cultura de TikTok]\n📣 Texto sugerido para superponer en pantalla: [2-4 palabras]\n\n🎵 Opción #2 — ..."
+    },
+    "tiktok_30s": {
+      "categoria": "video",
+      "nombre": "TikTok 30s 🎵",
+      "plataforma": "tiktok_30s",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 30,
+      "prompt_template": "Actuá como especialista en contenido para TikTok. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 2-4 mejores arcos de 20-30 segundos para TikTok.\n\nCRITERIOS PARA TIKTOK 30s:\n- Los 30 segundos en TikTok permiten contar una mini-historia con giro final\n- El algoritmo favorece que la gente replaye: terminá con algo que deje dudas o invite a releer\n- Los momentos de 'espera, qué?' a mitad del clip aumentan el tiempo de visualización\n- Podés combinar fragmentos de distintos momentos para crear un montaje dinámico\n\nFORMATO DE SALIDA:\n\n🎵 Opción #1 — [Nombre del arco/giro]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n🎬 Estructura:\n  - ARRANQUE (MM:SS): \"cita hook\"\n  - GIRO/TENSIÓN (MM:SS): \"cita que cambia la expectativa\"\n  - REMATE (MM:SS): \"cita final\"\n🔥 Por qué retiene en TikTok: [razón]\n\n🎵 Opción #2 — ..."
+    },
+    "tiktok_60s": {
+      "categoria": "video",
+      "nombre": "TikTok 60s 🎵",
+      "plataforma": "tiktok_60s",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 60,
+      "prompt_template": "Actuá como creador de contenido largo en TikTok. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá 2-3 arcos narrativos de 45-60 segundos con alto potencial de retención.\n\nCRITERIOS PARA TIKTOK 60s:\n- El minuto requiere mantener la atención en 4 tramos de 15 segundos\n- TikTok 60s compite con el feed continuo: cada 15s debe haber algo nuevo\n- Funciona para: explicaciones rápidas, debates breves, revelaciones con contexto, 'storytelling' de impacto\n- El 'loop' (que la gente lo vea de vuelta) se logra cuando el final conecta con el inicio\n\nFORMATO DE SALIDA:\n\n🎵 Opción #1 — [Nombre + tipo de contenido]\n📋 Estructura de los 60 segundos:\n  0-15s (MM:SS): HOOK — \"...\"\n  15-30s (MM:SS): CONTEXTO/CONFLICTO — descripción\n  30-45s (MM:SS): ESCALADA — \"...\"\n  45-60s (MM:SS): REMATE — \"...\"\n🔄 Loop: ¿cómo el final conecta con el inicio?\n🔥 Por qué retiene: [razón]\n\n🎵 Opción #2 — ..."
+    },
+    "youtube_short": {
+      "categoria": "video",
+      "nombre": "YouTube Short (60s) ▶",
+      "plataforma": "youtube_short",
+      "aspect_ratio": "9:16",
+      "resolucion": "1080x1920",
+      "duracion_max": 60,
+      "prompt_template": "Actuá como especialista en YouTube Shorts. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá 2-3 momentos o arcos de 30-60 segundos ideales para YouTube Shorts.\n\nCRITERIOS PARA YOUTUBE SHORTS:\n- YouTube Shorts tiene una audiencia ligeramente más madura que TikTok: valora la claridad y el valor informativo\n- Los primeros 5 segundos determinan si el algoritmo distribuye el short\n- Los viewers de YouTube buscan aprender algo, incluso en formato corto\n- El título del Short (se ve en la primera frame) debe prometer algo concreto\n- El 'share' sucede cuando el contenido educa y sorprende al mismo tiempo\n\nFORMATO DE SALIDA:\n\n▶ Short #1 — [Título sugerido para el Short]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento clave: \"cita\"\n📌 Qué aprende o descubre el viewer: [descripción]\n🎯 Título sugerido para el video (máx 60 caracteres): \"...\"\n📸 Sugerencia de thumbnail: [descripción visual]\n\n▶ Short #2 — ..."
+    },
+    "twitter_x_clip": {
+      "categoria": "video",
+      "nombre": "Twitter / X clip 🐦",
+      "plataforma": "twitter_x_clip",
+      "aspect_ratio": "16:9",
+      "resolucion": "1280x720",
+      "duracion_max": 140,
+      "prompt_template": "Actuá como estratega de contenido para Twitter/X. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\n⚠️ REGLAS CRÍTICAS — OBLIGATORIAS:\n1. Analizá la transcripción anterior línea por línea\n2. Usá ÚNICAMENTE timestamps que aparezcan literalmente en el formato \"TIMESTAMP: MM:SS\" de la transcripción\n3. PROHIBIDO inventar momentos, frases o timestamps que no estén en el texto\n4. PROHIBIDO sugerir \"crear\" contenido nuevo — solo extraer momentos reales del material\n5. Si no hay contenido suficiente, indicalo explícitamente\n\nOBJETIVO: Identificá los 3-5 momentos más poderosos para compartir como clips en X (máx 2:20).\n\nCRITERIOS PARA CLIPS EN TWITTER/X:\n- X favorece los clips de 30s a 2 minutos con postura clara y directa\n- El clip debe funcionar SIN sonido: la información debe ser entendible en mute\n- Lo que viraliza en X: posiciones contraintuitivas, datos que desafían el sentido común, declaraciones que generan debate\n- El clip va acompañado de un tweet: pensá en qué tweet complementa el fragmento\n- Formato 16:9 (landscape) funciona mejor en el feed de X\n\nFORMATO DE SALIDA:\n\n🐦 Clip #1 — [Postura o dato central]\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento clave: \"cita\"\n✍️ Tweet sugerido para acompañar: [máx 280 caracteres sin contar el video]\n🔥 Por qué debatirá en X: [razón]\n\n🐦 Clip #2 — ..."
+    },
+    "subtitulos_srt": {
+      "categoria": "audiovisual",
+      "nombre": "Subtítulos (formato SRT) 💬",
+      "prompt_template": "Actuá como subtitulador profesional. Basándote en esta transcripción:\n\n[TRANSCRIPCIÓN]:\n{{TIMELINE}}\n\nOBJETIVO: Convertí la transcripción en un archivo de SUBTÍTULOS en formato SRT.\n\nREGLAS:\n1. Cada subtítulo debe tener máximo 2 líneas y 42 caracteres por línea.\n2. Duración mínima: 1 segundo. Máxima: 7 segundos.\n3. Respetar los timestamps del material original.\n4. Cortar las frases en puntos naturales de pausa (comas, puntos, respiraciones).\n5. No incluir muletillas repetitivas ni sonidos no verbales salvo que sean significativos.\n6. Usar formato SRT estándar.\n\nFORMATO:\n\n1\n00:00:01,000 --> 00:00:04,500\nTexto del primer subtítulo\nen máximo dos líneas.\n\n2\n00:00:05,000 --> 00:00:08,200\nTexto del siguiente subtítulo.\n\nEmpezá directo con el primer subtítulo."
+    }
+  }
+}

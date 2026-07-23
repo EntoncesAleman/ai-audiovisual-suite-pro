@@ -1,0 +1,33 @@
+============================================================
+  AI Audiovisual Suite Pro — Comandos para arrancar
+============================================================
+
+Abrir PowerShell o CMD en la carpeta del proyecto, luego:
+
+1. Activar el entorno virtual:
+   venv\Scripts\activate
+
+2. Configurar las API keys en el archivo .env (ya creado en la carpeta
+   del proyecto). Se cargan solas al arrancar main.py, no hace falta
+   setearlas a mano en la terminal:
+   - GEMINI_API_KEY  (obligatoria)
+   - GROQ_API_KEY    (opcional — fallback de transcripción cuando se
+                       agota la cuota diaria de TODOS los modelos Gemini.
+                       Conseguila gratis en https://console.groq.com,
+                       2000 req/día, Whisper Large v3)
+
+3. Arrancar el servidor:
+   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+4. Abrir en el navegador:
+   http://localhost:8000
+
+   (NO abrir index.html directamente — tiene que ser via el servidor)
+
+Ctrl+C para detener el servidor.
+
+============================================================
+  Todo junto (PowerShell, una sola sesion):
+============================================================
+
+venv\Scripts\activate; uvicorn main:app --reload --host 0.0.0.0 --port 8000
