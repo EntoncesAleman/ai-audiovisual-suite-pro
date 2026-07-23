@@ -460,6 +460,30 @@ def split_video_in_chunks(video_path: str, chunk_seconds: int) -> list:
     return chunks
 
 
+def _collapse_repeated_runs(text: str, max_repeats: int = 3) -> str:
+    """
+    Colapsa una misma palabra repetida muchas veces seguidas a un máximo de
+    `max_repeats` repeticiones. Es el remedio para la alucinación típica de
+    los modelos de transcripción durante tramos de música/silencio/audio
+    poco claro, donde quedan "trabados" repitiendo la última palabra cientos
+    de veces (ej: "no, no, no, no, no, ..." x300). El prompt ya les pide que
+    no lo hagan, pero la instrucción sola no siempre alcanza.
+    Deja intactas las repeticiones cortas normales (2-3 veces, típicas del
+    habla real para dar énfasis).
+    """
+    import re
+
+    pattern = re.compile(r'\b(\w+)\b((?:[\s,.:;!?-]+\1\b){3,})', re.IGNORECASE)
+
+    def _replace(match):
+        word = match.group(1)
+        sep_match = re.match(r'[\s,.:;!?-]+', match.group(2))
+        sep = sep_match.group(0) if sep_match else ' '
+        return (word + sep) * (max_repeats - 1) + word
+
+    return pattern.sub(_replace, text)
+
+
 def shift_timestamps_in_transcript(text: str, offset_seconds: int) -> str:
     """
     Suma offset_seconds a cada timestamp del transcript.
@@ -893,7 +917,7 @@ def _process_single_video_file(video_path: str) -> str:
             except Exception:
                 pass
 
-        return text
+        return _collapse_repeated_runs(text)
 
     finally:
         # Limpiar el audio temporal (el video original lo limpia el caller)
