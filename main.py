@@ -82,20 +82,29 @@ CAROUSEL_PLATFORMS = {"ig_carrusel_clips", "ig_carrusel_placas"}
 
 print(f"✓ Backend activo. Cacheo en: {CACHE_DIR}")
 
+_WRITABLE_COOKIES_FILE = Path(tempfile.gettempdir()) / "cookies_writable.txt"
+
+
 def _find_cookies_file():
     """
     Busca cookies.txt en las ubicaciones posibles según dónde se esté corriendo:
-    - /etc/secrets/cookies.txt: ruta garantizada por Render para Secret Files.
+    - /etc/secrets/cookies.txt: ruta garantizada por Render para Secret Files (solo lectura).
     - junto a main.py: uso local o Secret Files montados en la raíz de la app.
-    Devuelve el primer Path que exista, o None si no hay ninguno.
+    yt-dlp reescribe el cookiejar después de cada uso, así que si el original es de
+    solo lectura (caso Render) lo copiamos a un archivo escribible en /tmp y devolvemos ese.
+    Devuelve el Path a usar, o None si no hay cookies en ningún lado.
     """
+    if _WRITABLE_COOKIES_FILE.exists():
+        return _WRITABLE_COOKIES_FILE
+
     candidates = [
         Path("/etc/secrets/cookies.txt"),
         Path(__file__).parent / "cookies.txt",
     ]
     for candidate in candidates:
         if candidate.exists():
-            return candidate
+            shutil.copy(candidate, _WRITABLE_COOKIES_FILE)
+            return _WRITABLE_COOKIES_FILE
     return None
 
 
