@@ -1819,3 +1819,39 @@ def read_root():
     if index_html.exists():
         return FileResponse(str(index_html), media_type="text/html")
     return {"status": "Online - index.html no encontrado en el directorio del proyecto."}
+
+
+@app.get("/debug/ytdlp-info")
+def debug_ytdlp_info():
+    """
+    Diagnostico temporal: confirma si el plugin bgutil-ytdlp-pot-provider esta
+    instalado y si yt-dlp lo detecta como plugin cargado. No requiere Shell
+    (que es solo para planes pagos de Render) - se consulta como cualquier URL.
+    """
+    import importlib.metadata
+    import io
+    import contextlib
+
+    result = {}
+
+    try:
+        result["bgutil_pip_version"] = importlib.metadata.version("bgutil-ytdlp-pot-provider")
+    except importlib.metadata.PackageNotFoundError:
+        result["bgutil_pip_version"] = None
+
+    result["pot_provider_base_url_env"] = POT_PROVIDER_BASE_URL
+
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+            test_ydl = yt_dlp.YoutubeDL({"verbose": True, "simulate": True, "skip_download": True, "quiet": False})
+            test_ydl.extract_info("https://www.youtube.com/watch?v=jNQXAC9IVRw", download=False, process=False)
+    except Exception as e:
+        buf.write(f"\n[EXCEPTION] {e}")
+
+    verbose_output = buf.getvalue()
+    plugin_lines = [line for line in verbose_output.splitlines() if "plugin" in line.lower() or "pot" in line.lower()]
+    result["plugin_related_lines"] = plugin_lines
+    result["full_verbose_tail"] = verbose_output[-3000:]
+
+    return JSONResponse(result)
