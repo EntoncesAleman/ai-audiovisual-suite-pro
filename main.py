@@ -68,6 +68,38 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR = Path(tempfile.gettempdir()) / "audiovisual_suite_exports"
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Cache de videos originales (junto al cache de resultados de analisis): permite
+# exportar clips despues sin volver a descargar de la URL ni re-subir el archivo.
+VIDEO_CACHE_DIR = CACHE_DIR / "videos"
+VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def cache_video_path(cache_key: str):
+    """Devuelve la ruta al video cacheado para este cache_key, o None si no esta."""
+    if not cache_key:
+        return None
+    matches = list(VIDEO_CACHE_DIR.glob(f"{cache_key}.*"))
+    return str(matches[0]) if matches else None
+
+
+def cache_video_store(cache_key: str, source_path: str):
+    """
+    Mueve el video original a la carpeta de cache (no lo copia: evita duplicar
+    el escrito a disco). A partir de ahi, exportar clips lo reusa directo sin
+    volver a descargar ni pedir que se re-suba.
+    """
+    if not cache_key or not os.path.exists(source_path):
+        return
+    ext = Path(source_path).suffix or ".mp4"
+    dest = VIDEO_CACHE_DIR / f"{cache_key}{ext}"
+    try:
+        # Si ya habia un cacheado (re-analisis del mismo video), lo reemplazamos.
+        if dest.exists():
+            dest.unlink()
+        shutil.move(source_path, str(dest))
+    except Exception as e:
+        print(f"⚠ No se pudo cachear el video: {e}")
+
 # Configs de plataforma para exportación de video: (ancho, alto, max_dur_seg o None)
 PLATFORM_CONFIGS: dict[str, tuple] = {
     "ig_reel_15s":        (1080, 1920, 15),
@@ -1017,7 +1049,7 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None):
         print("Iniciando procesamiento inteligente (con detección automática de duración)...")
         text = process_video_smart(video_path)
 
-        result = {"title": "Metraje Completo Analizado", "raw_timeline": text, "from_cache": False}
+        result = {"title": "Metraje Completo Analizado", "raw_timeline": text, "from_cache": False, "cache_key": cache_key}
 
         if cache_key:
             cache_set(cache_key, result)
@@ -1110,7 +1142,8 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
         result = {
             "title": "Metraje Completo Analizado",
             "raw_timeline": text,
-            "from_cache": False
+            "from_cache": False,
+            "cache_key": cache_key
         }
 
         if cache_key:
@@ -1186,8 +1219,9 @@ async def analyze_url_stream(input_data: UrlInput):
             async for chunk in process_video_streaming(video_path, cache_key=cache_key):
                 yield chunk
         finally:
-            if os.path.exists(video_path):
-                os.remove(video_path)
+            # En vez de borrarlo, lo dejamos cacheado para poder exportar clips
+            # despues sin volver a descargarlo de la URL.
+            cache_video_store(cache_key, video_path)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -1207,8 +1241,9 @@ async def analyze_video_stream(file: UploadFile = File(...)):
             async for chunk in process_video_streaming(video_path, cache_key=cache_key):
                 yield chunk
         finally:
-            if os.path.exists(video_path):
-                os.remove(video_path)
+            # En vez de borrarlo, lo dejamos cacheado para poder exportar clips
+            # despues sin volver a re-subirlo.
+            cache_video_store(cache_key, video_path)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -1260,6 +1295,7 @@ async def process_inspected(input_data: ProcessInspectedInput):
     async def generator():
         path_to_process = temp_path
         created_files = []  # para limpiar al final
+        cache_key = None  # se define mas abajo; None si algo falla antes de llegar ahi
 
         try:
             # Conversión opcional ANTES de procesar
@@ -1281,14 +1317,19 @@ async def process_inspected(input_data: ProcessInspectedInput):
             async for chunk in process_video_streaming(path_to_process, cache_key=cache_key):
                 yield chunk
         finally:
-            # Limpieza
+            # Limpieza de archivos intermedios (ej: audio convertido)
             for f in created_files:
                 if os.path.exists(f):
                     try:
                         os.remove(f)
                     except Exception:
                         pass
-            if os.path.exists(temp_path):
+            # El original (temp_path, no el convertido) queda cacheado para poder
+            # exportar clips despues sin volver a subirlo. Si algo fallo antes de
+            # calcular cache_key, no hay bajo que llave guardarlo: se borra.
+            if cache_key:
+                cache_video_store(cache_key, temp_path)
+            elif os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
                 except Exception:
@@ -1496,6 +1537,7 @@ class ClipSpec(BaseModel):
 class ExportClipsInput(BaseModel):
     url: str = ""
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
+    cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
     clips: list[ClipSpec]
 
 
@@ -1508,7 +1550,8 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        if not input_data.url and not input_data.video_path:
+        cached_video = cache_video_path(input_data.cache_key)
+        if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido para exportar clips.")
             return
         if not input_data.clips:
@@ -1519,14 +1562,17 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         clip_dir = EXPORT_DIR / export_id
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
-        using_uploaded_file = bool(input_data.video_path)
+        delete_video_after = False  # el cacheado NO se borra: lo puede volver a usar otra exportacion
 
         try:
-            if using_uploaded_file:
+            if cached_video:
+                video_path = cached_video
+            elif input_data.video_path:
                 if not os.path.exists(input_data.video_path):
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo.")
                     return
                 video_path = input_data.video_path
+                delete_video_after = True
             else:
                 yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...")
                 await asyncio.sleep(0)
@@ -1535,6 +1581,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 except HTTPException as e:
                     yield event("error", e.detail)
                     return
+                delete_video_after = True
 
             clip_files = []
             for i, clip in enumerate(input_data.clips, 1):
@@ -1576,7 +1623,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         except Exception as e:
             yield event("error", f"Error inesperado: {e}")
         finally:
-            if video_path and os.path.exists(video_path):
+            if delete_video_after and video_path and os.path.exists(video_path):
                 try:
                     os.remove(video_path)
                 except Exception:
@@ -1614,6 +1661,7 @@ class ReelClipSpec(BaseModel):
 class ReelExportInput(BaseModel):
     url: str = ""
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
+    cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
     clips: list[ReelClipSpec]
     platform: str
 
@@ -1621,6 +1669,7 @@ class ReelExportInput(BaseModel):
 class CarouselExportInput(BaseModel):
     url: str = ""
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
+    cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
     clips: list[ReelClipSpec]
     platform: str
 
@@ -1636,7 +1685,8 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        if not input_data.url and not input_data.video_path:
+        cached_video = cache_video_path(input_data.cache_key)
+        if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
             yield event("error", "No hay clips definidos."); return
@@ -1649,13 +1699,16 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         clip_dir = EXPORT_DIR / export_id
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
-        using_uploaded_file = bool(input_data.video_path)
+        delete_video_after = False
 
         try:
-            if using_uploaded_file:
+            if cached_video:
+                video_path = cached_video
+            elif input_data.video_path:
                 if not os.path.exists(input_data.video_path):
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo."); return
                 video_path = input_data.video_path
+                delete_video_after = True
             else:
                 yield event("downloading", "Descargando video fuente...")
                 await asyncio.sleep(0)
@@ -1663,6 +1716,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                     video_path = download_youtube_video(input_data.url)
                 except HTTPException as e:
                     yield event("error", e.detail); return
+                delete_video_after = True
 
             clip_files = []
             for i, clip in enumerate(input_data.clips, 1):
@@ -1723,7 +1777,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         except Exception as e:
             yield event("error", f"Error inesperado: {e}")
         finally:
-            if video_path and os.path.exists(video_path):
+            if delete_video_after and video_path and os.path.exists(video_path):
                 try: os.remove(video_path)
                 except: pass
             try: shutil.rmtree(str(clip_dir), ignore_errors=True)
@@ -1743,7 +1797,8 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        if not input_data.url and not input_data.video_path:
+        cached_video = cache_video_path(input_data.cache_key)
+        if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
             yield event("error", "No hay slides definidos."); return
@@ -1754,13 +1809,16 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         carousel_dir = EXPORT_DIR / f"car_{export_id}"
         carousel_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
-        using_uploaded_file = bool(input_data.video_path)
+        delete_video_after = False
 
         try:
-            if using_uploaded_file:
+            if cached_video:
+                video_path = cached_video
+            elif input_data.video_path:
                 if not os.path.exists(input_data.video_path):
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo."); return
                 video_path = input_data.video_path
+                delete_video_after = True
             else:
                 yield event("downloading", "Descargando video fuente...")
                 await asyncio.sleep(0)
@@ -1768,6 +1826,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                     video_path = download_youtube_video(input_data.url)
                 except HTTPException as e:
                     yield event("error", e.detail); return
+                delete_video_after = True
 
             output_files = []
 
@@ -1825,7 +1884,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         except Exception as e:
             yield event("error", f"Error inesperado: {e}")
         finally:
-            if video_path and os.path.exists(video_path):
+            if delete_video_after and video_path and os.path.exists(video_path):
                 try: os.remove(video_path)
                 except: pass
             try: shutil.rmtree(str(carousel_dir), ignore_errors=True)

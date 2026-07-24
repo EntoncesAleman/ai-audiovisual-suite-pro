@@ -46,6 +46,8 @@
         .loading-detail { font-size: 13px; color: #93c5fd; }
         .progress-bar { background: #0f172a; height: 6px; border-radius: 3px; margin-top: 10px; overflow: hidden; }
         .progress-fill { background: linear-gradient(90deg, #3b82f6, #60a5fa); height: 100%; width: 0%; transition: width 0.4s ease; }
+        .btn-stop-analysis { background: #ef4444; color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: bold; margin-top: 12px; }
+        .btn-stop-analysis:hover { background: #dc2626; }
 
         .res-box { background: #0f172a; padding: 15px; border-radius: 6px; border-left: 4px solid #3b82f6; margin-bottom: 15px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
         .res-box[contenteditable="true"] { outline: 1px solid #3b82f6; }
@@ -499,6 +501,7 @@
             <div class="loading-stage" id="loadingStage">⏳ Procesando...</div>
             <div class="loading-detail" id="loadingDetail">Iniciando análisis...</div>
             <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            <button class="btn-stop-analysis" onclick="stopCurrentAnalysis()">⏹ Detener</button>
         </div>
 
         <div class="dashboard-grid">
@@ -868,7 +871,21 @@ Ejemplo de lo que se importa:
         renderSessions();
         loadPromptsLibrary();
         loadTeaserTemplates();
+        startKeepAlive();
     });
+
+    /**
+     * Render (plan free) apaga el servidor tras 15 min sin requests entrantes;
+     * el siguiente pedido tarda ~30-50s en "despertar". Mientras la pestaña
+     * esté abierta, hacemos un ping liviano cada 10 min para que no llegue
+     * a esos 15 min de inactividad. Si cerrás la pestaña, el intervalo se
+     * corta solo y el servidor se duerme normalmente (no es un "always-on").
+     */
+    function startKeepAlive() {
+        setInterval(() => {
+            fetch(`${BACKEND_URL}/`, { method: "GET" }).catch(() => {});
+        }, 10 * 60 * 1000);
+    }
 
     async function loadTeaserTemplates() {
         try {
@@ -1185,6 +1202,10 @@ Ejemplo de lo que se importa:
                 body: JSON.stringify({ url: urlInput })
             });
         } catch (e) {
+            if (e.name === 'AbortError') {
+                console.log("Análisis detenido por el usuario.");
+                return;
+            }
             // Fallback al endpoint clásico si el streaming no está disponible
             console.warn("Streaming falló, usando endpoint clásico:", e);
             try {
@@ -1249,6 +1270,10 @@ Ejemplo de lo que se importa:
                 body: formData
             });
         } catch (e) {
+            if (e.name === 'AbortError') {
+                console.log("Análisis detenido por el usuario.");
+                return;
+            }
             console.warn("Streaming falló, usando endpoint clásico:", e);
             try {
                 const res = await fetch(`${BACKEND_URL}/analyze-video`, { method: 'POST', body: formData });
@@ -1263,41 +1288,55 @@ Ejemplo de lo que se importa:
         }
     }
 
+    // Controller del análisis en curso, para poder frenarlo con el botón "Detener".
+    let currentAbortController = null;
+
+    function stopCurrentAnalysis() {
+        if (currentAbortController) {
+            currentAbortController.abort();
+        }
+    }
+
     // Cliente SSE básico sobre fetch (lee chunks line by line)
     async function streamingFetch(url, opts) {
-        const res = await fetch(url, opts);
-        if (!res.ok || !res.body) throw new Error("Servidor sin respuesta streaming.");
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let finalResult = null;
+        currentAbortController = new AbortController();
+        try {
+            const res = await fetch(url, { ...opts, signal: currentAbortController.signal });
+            if (!res.ok || !res.body) throw new Error("Servidor sin respuesta streaming.");
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let finalResult = null;
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
 
-            for (const line of lines) {
-                if (!line.startsWith("data:")) continue;
-                const json = line.slice(5).trim();
-                if (!json) continue;
-                try {
-                    const payload = JSON.parse(json);
-                    if (payload.stage === "error") {
-                        alert("Error: " + payload.message);
-                        return;
+                for (const line of lines) {
+                    if (!line.startsWith("data:")) continue;
+                    const json = line.slice(5).trim();
+                    if (!json) continue;
+                    try {
+                        const payload = JSON.parse(json);
+                        if (payload.stage === "error") {
+                            alert("Error: " + payload.message);
+                            return;
+                        }
+                        updateProgress(payload.stage, payload.message);
+                        if (payload.result) finalResult = payload.result;
+                    } catch (err) {
+                        console.warn("Línea SSE inválida:", json);
                     }
-                    updateProgress(payload.stage, payload.message);
-                    if (payload.result) finalResult = payload.result;
-                } catch (err) {
-                    console.warn("Línea SSE inválida:", json);
                 }
             }
-        }
 
-        if (finalResult) saveSession(finalResult);
+            if (finalResult) saveSession(finalResult);
+        } finally {
+            currentAbortController = null;
+        }
     }
 
     // ============================================================
@@ -1806,6 +1845,10 @@ Ejemplo de lo que se importa:
                 })
             });
         } catch (e) {
+            if (e.name === 'AbortError') {
+                console.log("Análisis detenido por el usuario.");
+                return;
+            }
             alert("Error procesando el archivo: " + e.message);
         } finally {
             showLoader(false);
@@ -2129,12 +2172,18 @@ Ejemplo de lo que se importa:
     }
 
     /**
-     * Resuelve de dónde sale el video fuente para exportar: URL pegada, o
-     * archivo local subido de nuevo (ya que el original se borra del server
-     * apenas termina el análisis). Devuelve {url} o {video_path}, o null si
-     * no hay ninguna de las dos (y ya mostró el alert correspondiente).
+     * Resuelve de dónde sale el video fuente para exportar. Orden de prioridad:
+     * 1. cache_key del análisis actual (el server guardó el video, cero re-subida/descarga).
+     * 2. URL pegada.
+     * 3. Archivo local subido de nuevo (fallback si el cache ya no está).
+     * Devuelve {cache_key}, {url} o {video_path}, o null si no hay ninguna
+     * (y ya mostró el alert correspondiente).
      */
     async function resolveExportSource(urlInputId, fileInputId, statusEl) {
+        if (currentData && currentData.cache_key) {
+            return { cache_key: currentData.cache_key };
+        }
+
         const url = document.getElementById(urlInputId).value.trim();
         const fileInput = document.getElementById(fileInputId);
         const file = fileInput && fileInput.files.length > 0 ? fileInput.files[0] : null;
