@@ -519,6 +519,226 @@ def split_video_in_chunks(video_path: str, chunk_seconds: int) -> list:
     return chunks
 
 
+# ============================================================
+# VAD (Voice Activity Detection): recortar silencios/música antes de
+# transcribir, para que Gemini nunca "escuche" esos tramos y alucine
+# texto donde no hay voz real (ej. loops tipo "no, no, no..." o
+# "que venga, que tenga, que venga..." durante cortes musicales).
+# ============================================================
+
+try:
+    import webrtcvad
+    _VAD_AVAILABLE = True
+except ImportError:
+    _VAD_AVAILABLE = False
+    print("⚠ webrtcvad no disponible: se transcribe sin recorte de silencios/música.")
+
+VAD_FRAME_MS = 30
+VAD_AGGRESSIVENESS = int(os.getenv("VAD_AGGRESSIVENESS", "2"))  # 0-3, mas alto = mas estricto para clasificar como voz
+VAD_PAD_MS = 250          # margen antes/despues de cada tramo de voz detectado, para no cortar palabras
+VAD_MERGE_GAP_MS = 700    # tramos de voz separados por menos de esto se funden en uno solo
+VAD_MIN_SEGMENT_MS = 200  # tramos mas cortos que esto (ya con padding) se descartan como ruido
+
+
+def _extract_pcm16_mono(source_path: str, sample_rate: int = 16000) -> str:
+    """Convierte a WAV PCM 16-bit mono, el formato que exige webrtcvad."""
+    import subprocess
+    output_path = f"{os.path.splitext(source_path)[0]}_vad16k.wav"
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", source_path,
+        "-ac", "1", "-ar", str(sample_rate), "-f", "wav",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        raise Exception(f"ffmpeg (extracción PCM para VAD) falló: {result.stderr[:200]}")
+    return output_path
+
+
+def _read_wav_pcm16(wav_path: str):
+    """Lee un WAV PCM 16-bit mono y devuelve (sample_rate, bytes crudos)."""
+    import wave
+    with wave.open(wav_path, "rb") as wf:
+        if wf.getsampwidth() != 2:
+            raise Exception("Se esperaba PCM 16-bit para VAD.")
+        sample_rate = wf.getframerate()
+        raw = wf.readframes(wf.getnframes())
+    return sample_rate, raw
+
+
+def _merge_vad_segments(raw_segments: list, total_duration: float) -> list:
+    """Aplica padding y fusiona tramos de voz cercanos entre sí, descartando ruido corto."""
+    if not raw_segments:
+        return []
+
+    pad = VAD_PAD_MS / 1000.0
+    merge_gap = VAD_MERGE_GAP_MS / 1000.0
+
+    padded = [(max(0, s - pad), min(total_duration, e + pad)) for s, e in raw_segments]
+
+    merged = [padded[0]]
+    for s, e in padded[1:]:
+        last_s, last_e = merged[-1]
+        if s - last_e <= merge_gap:
+            merged[-1] = (last_s, max(last_e, e))
+        else:
+            merged.append((s, e))
+
+    min_dur = VAD_MIN_SEGMENT_MS / 1000.0
+    return [(s, e) for s, e in merged if (e - s) >= min_dur]
+
+
+def detect_speech_segments(audio_path: str):
+    """
+    Corre VAD sobre el audio y devuelve una lista de tramos (start_sec, end_sec)
+    donde hay voz humana, ya fusionados y con padding.
+    Devuelve None si webrtcvad no está disponible (el caller debe procesar
+    el audio entero, sin recorte, igual que antes). Devuelve [] si no se
+    detectó voz humana en absoluto.
+    """
+    if not _VAD_AVAILABLE:
+        return None
+
+    pcm_wav = _extract_pcm16_mono(audio_path)
+    try:
+        sample_rate, raw = _read_wav_pcm16(pcm_wav)
+        vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
+
+        frame_bytes = int(sample_rate * (VAD_FRAME_MS / 1000.0)) * 2  # 16-bit = 2 bytes/sample
+        n_frames = (len(raw) - frame_bytes + 1) // frame_bytes if len(raw) >= frame_bytes else 0
+
+        flags = []
+        for i in range(n_frames):
+            frame = raw[i * frame_bytes:(i + 1) * frame_bytes]
+            try:
+                flags.append(vad.is_speech(frame, sample_rate))
+            except Exception:
+                flags.append(False)
+
+        if not flags:
+            return []
+
+        raw_segments = []
+        seg_start = None
+        for i, is_speech in enumerate(flags):
+            t = i * VAD_FRAME_MS / 1000.0
+            if is_speech and seg_start is None:
+                seg_start = t
+            elif not is_speech and seg_start is not None:
+                raw_segments.append((seg_start, t))
+                seg_start = None
+        if seg_start is not None:
+            raw_segments.append((seg_start, len(flags) * VAD_FRAME_MS / 1000.0))
+
+        total_duration = len(flags) * VAD_FRAME_MS / 1000.0
+        return _merge_vad_segments(raw_segments, total_duration)
+    finally:
+        if os.path.exists(pcm_wav):
+            try:
+                os.remove(pcm_wav)
+            except Exception:
+                pass
+
+
+def build_trimmed_audio(audio_path: str, segments: list, output_path: str) -> list:
+    """
+    Construye un audio nuevo concatenando solo los tramos con voz detectados.
+    Devuelve el mapping: lista de (trimmed_start, trimmed_end, original_start)
+    para poder traducir después los timestamps que devuelva Gemini (que van a
+    estar en el tiempo del audio ya recortado) de vuelta al tiempo real del video.
+    """
+    import subprocess
+
+    filter_parts = []
+    labels = []
+    for i, (s, e) in enumerate(segments):
+        label = f"a{i}"
+        filter_parts.append(f"[0:a]atrim=start={s:.3f}:end={e:.3f},asetpts=PTS-STARTPTS[{label}]")
+        labels.append(f"[{label}]")
+    filter_complex = ";".join(filter_parts) + ";" + "".join(labels) + f"concat=n={len(segments)}:v=0:a=1[out]"
+
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", audio_path,
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise Exception(f"ffmpeg (armado de audio recortado por VAD) falló: {result.stderr[:300]}")
+
+    mapping = []
+    cursor = 0.0
+    for s, e in segments:
+        dur = e - s
+        mapping.append((cursor, cursor + dur, s))
+        cursor += dur
+    return mapping
+
+
+def remap_time_through_vad(t: float, mapping: list) -> float:
+    """Traduce un instante del audio recortado de vuelta al tiempo original del video."""
+    if not mapping:
+        return t
+    for trimmed_start, trimmed_end, original_start in mapping:
+        if trimmed_start <= t <= trimmed_end:
+            return original_start + (t - trimmed_start)
+    # Fuera de rango (ej. Gemini redondeó más allá del final): usar el último tramo como referencia
+    last_trimmed_start, last_trimmed_end, last_original_start = mapping[-1]
+    if t > last_trimmed_end:
+        return last_original_start + (t - last_trimmed_start)
+    return t
+
+
+def remap_timestamps_in_transcript_vad(text: str, mapping: list) -> str:
+    """
+    Igual que shift_timestamps_in_transcript, pero usando el mapping de tramos
+    de VAD en vez de un offset constante: cada tramo puede tener un salto de
+    tiempo distinto respecto al anterior, por los huecos de silencio/música
+    que se recortaron entre uno y otro.
+    """
+    if not mapping:
+        return text
+    import re
+
+    def to_seconds(ts: str) -> float:
+        parts = [int(p) for p in ts.strip().split(":")]
+        if len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+        if len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        return 0.0
+
+    def to_ts(secs: float) -> str:
+        secs = round(secs)
+        h = secs // 3600
+        m = (secs % 3600) // 60
+        s = secs % 60
+        if h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    def replace_keyword_ts(match):
+        try:
+            new_secs = remap_time_through_vad(to_seconds(match.group(1)), mapping)
+            return f"TIMESTAMP: {to_ts(new_secs)}"
+        except Exception:
+            return match.group(0)
+
+    def replace_inline_ts(match):
+        try:
+            new_secs = remap_time_through_vad(to_seconds(match.group(1)), mapping)
+            return f"{to_ts(new_secs)}{match.group(2)}"
+        except Exception:
+            return match.group(0)
+
+    text = re.sub(r"TIMESTAMP:\s*(\d{1,2}:\d{2}(?::\d{2})?)", replace_keyword_ts, text)
+    text = re.sub(r"^(\d{1,2}:\d{2}(?::\d{2})?)(:\s)", replace_inline_ts, text, flags=re.MULTILINE)
+    return text
+
+
 def _collapse_repeated_runs(text: str, max_repeats: int = 3, max_phrase_words: int = 4) -> str:
     """
     Colapsa una misma palabra O frase corta (hasta `max_phrase_words` palabras)
@@ -1002,7 +1222,12 @@ def _process_single_video_file(video_path: str) -> str:
 
 def process_video_smart(video_path: str, progress_callback=None) -> str:
     """
-    Decide si procesar el video entero o partirlo en tramos según su duración.
+    Recorta silencios/música con VAD, decide si procesar el resultado entero
+    o partirlo en tramos según su duración, y devuelve la transcripción con
+    tiempo absoluto continuo desde 00:00 del video original (sin marcas de
+    tramo: si el texto le llega a otra IA con "=== TRAMO 2 ===" de por medio,
+    puede confundirse y devolver timestamps relativos al tramo en vez de al
+    video completo — por eso el resultado es siempre un único hilo).
     progress_callback(stage, message) opcional para reportar avance.
     """
     def report(stage, msg):
@@ -1010,48 +1235,79 @@ def process_video_smart(video_path: str, progress_callback=None) -> str:
             progress_callback(stage, msg)
         print(f"[{stage}] {msg}")
 
-    duration_seconds = get_video_duration_seconds(video_path)
-    duration_minutes = duration_seconds / 60 if duration_seconds else 0
+    vad_mapping = None
+    working_path = video_path
 
-    if duration_minutes > 0:
-        report("info", f"Duración detectada: {duration_minutes:.1f} minutos")
-
-    # Si es corto o no pudimos detectar duración, procesamos entero
-    if duration_minutes == 0 or duration_minutes <= CHUNK_THRESHOLD_MIN:
-        report("analyzing", "Procesando video completo (un solo tramo)...")
-        return _process_single_video_file(video_path)
-
-    # Video largo: procesar por tramos
-    chunk_seconds = CHUNK_DURATION_MIN * 60
-    estimated_chunks = int((duration_seconds + chunk_seconds - 1) // chunk_seconds)
-    report("analyzing", f"Video largo ({duration_minutes:.1f} min). Dividiendo en {estimated_chunks} tramos de {CHUNK_DURATION_MIN} min...")
-
-    chunks = split_video_in_chunks(video_path, chunk_seconds)
-    if len(chunks) <= 1:
-        report("info", "No se pudo partir; procesando entero como fallback.")
-        return _process_single_video_file(video_path)
-
-    full_transcript = []
     try:
-        for i, (offset, chunk_path) in enumerate(chunks, start=1):
-            if i > 1:
-                report("analyzing", f"Pausa de {INTER_CHUNK_DELAY}s entre tramos (cuota Gemini)...")
-                time.sleep(INTER_CHUNK_DELAY)
-            report("analyzing", f"Procesando tramo {i}/{len(chunks)} (desde minuto {offset//60})...")
-            chunk_text = _process_single_video_file(chunk_path)
-            adjusted = shift_timestamps_in_transcript(chunk_text, offset)
-            full_transcript.append(f"\n=== TRAMO {i} (desde {offset//60:02d}:{offset%60:02d}) ===\n")
-            full_transcript.append(adjusted)
-    finally:
-        # Limpieza local de los tramos creados
-        for offset, chunk_path in chunks:
-            if chunk_path != video_path and os.path.exists(chunk_path):
-                try:
-                    os.remove(chunk_path)
-                except Exception:
-                    pass
+        report("analyzing", "Detectando tramos de silencio/música para recortar antes de transcribir...")
+        segments = detect_speech_segments(video_path)
+        if segments:
+            trimmed_path = f"{os.path.splitext(video_path)[0]}_vadtrim.mp3"
+            vad_mapping = build_trimmed_audio(video_path, segments, trimmed_path)
+            if vad_mapping and os.path.exists(trimmed_path):
+                working_path = trimmed_path
+                report("analyzing", f"Recorte de silencios/música listo: {vad_mapping[-1][1] / 60:.1f} min de voz real a transcribir.")
+            else:
+                vad_mapping = None
+        elif segments == []:
+            report("info", "No se detectó voz humana en el audio.")
+        # si segments es None (webrtcvad no disponible), se sigue sin recortar
+    except Exception as e:
+        print(f"⚠ VAD falló, se sigue sin recorte: {e}")
+        vad_mapping = None
+        working_path = video_path
 
-    return "\n".join(full_transcript)
+    try:
+        duration_seconds = get_video_duration_seconds(working_path)
+        duration_minutes = duration_seconds / 60 if duration_seconds else 0
+
+        if duration_minutes > 0:
+            report("info", f"Duración a procesar: {duration_minutes:.1f} minutos" + (" (ya recortada)" if vad_mapping else ""))
+
+        # Si es corto o no pudimos detectar duración, procesamos entero
+        if duration_minutes == 0 or duration_minutes <= CHUNK_THRESHOLD_MIN:
+            report("analyzing", "Procesando (un solo tramo)...")
+            text = _process_single_video_file(working_path)
+        else:
+            # Largo: procesar por tramos
+            chunk_seconds = CHUNK_DURATION_MIN * 60
+            estimated_chunks = int((duration_seconds + chunk_seconds - 1) // chunk_seconds)
+            report("analyzing", f"Largo ({duration_minutes:.1f} min). Dividiendo en {estimated_chunks} tramos de {CHUNK_DURATION_MIN} min...")
+
+            chunks = split_video_in_chunks(working_path, chunk_seconds)
+            if len(chunks) <= 1:
+                report("info", "No se pudo partir; procesando entero como fallback.")
+                text = _process_single_video_file(working_path)
+            else:
+                full_transcript = []
+                try:
+                    for i, (offset, chunk_path) in enumerate(chunks, start=1):
+                        if i > 1:
+                            report("analyzing", f"Pausa de {INTER_CHUNK_DELAY}s entre tramos (cuota Gemini)...")
+                            time.sleep(INTER_CHUNK_DELAY)
+                        report("analyzing", f"Procesando tramo {i}/{len(chunks)} (desde minuto {offset//60})...")
+                        chunk_text = _process_single_video_file(chunk_path)
+                        adjusted = shift_timestamps_in_transcript(chunk_text, offset)
+                        full_transcript.append(adjusted)
+                finally:
+                    # Limpieza local de los tramos creados
+                    for offset, chunk_path in chunks:
+                        if chunk_path != working_path and os.path.exists(chunk_path):
+                            try:
+                                os.remove(chunk_path)
+                            except Exception:
+                                pass
+                text = "\n".join(full_transcript)
+
+        if vad_mapping:
+            text = remap_timestamps_in_transcript_vad(text, vad_mapping)
+        return text
+    finally:
+        if working_path != video_path and os.path.exists(working_path):
+            try:
+                os.remove(working_path)
+            except Exception:
+                pass
 
 
 async def process_video_with_gemini(video_path: str, cache_key: str = None):
@@ -1066,7 +1322,7 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None):
 
     try:
         print("Iniciando procesamiento inteligente (con detección automática de duración)...")
-        text = process_video_smart(video_path)
+        text = await asyncio.to_thread(process_video_smart, video_path)
 
         result = {"title": "Metraje Completo Analizado", "raw_timeline": text, "from_cache": False, "cache_key": cache_key}
 
@@ -1098,35 +1354,62 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
             yield event("done", "Listo (desde cache)", {"result": cached})
             return
 
+    vad_mapping = None
+    working_path = video_path
+
     try:
-        # 2. Detectar duración y decidir si procesar entero o por tramos
-        duration_seconds = get_video_duration_seconds(video_path)
+        # 2. VAD: recortar silencios/música antes de subir nada a Gemini, para
+        #    que no alucine texto donde no hay voz real.
+        try:
+            yield event("analyzing", "Detectando tramos de silencio/música para recortar antes de transcribir...")
+            await asyncio.sleep(0)
+            segments = await asyncio.to_thread(detect_speech_segments, video_path)
+            if segments:
+                trimmed_path = f"{os.path.splitext(video_path)[0]}_vadtrim.mp3"
+                vad_mapping = await asyncio.to_thread(build_trimmed_audio, video_path, segments, trimmed_path)
+                if vad_mapping and os.path.exists(trimmed_path):
+                    working_path = trimmed_path
+                    yield event("analyzing", f"Recorte listo: {vad_mapping[-1][1] / 60:.1f} min de voz real a transcribir.")
+                    await asyncio.sleep(0)
+                else:
+                    vad_mapping = None
+            elif segments == []:
+                yield event("error", "No se detectó voz humana en el audio.")
+                return
+            # si segments es None (webrtcvad no disponible), se sigue sin recortar
+        except Exception as e:
+            print(f"⚠ VAD falló, se sigue sin recorte: {e}")
+            vad_mapping = None
+            working_path = video_path
+
+        # 3. Detectar duración y decidir si procesar entero o por tramos
+        duration_seconds = await asyncio.to_thread(get_video_duration_seconds, working_path)
         duration_minutes = duration_seconds / 60 if duration_seconds else 0
 
         if duration_minutes > 0:
-            yield event("info", f"Duración del video: {duration_minutes:.1f} minutos")
+            yield event("info", f"Duración a procesar: {duration_minutes:.1f} minutos" + (" (ya recortada)" if vad_mapping else ""))
 
-        # 3. Procesamiento (entero o por tramos)
+        # 4. Procesamiento (entero o por tramos)
         if duration_minutes == 0 or duration_minutes <= CHUNK_THRESHOLD_MIN:
-            yield event("uploading", "Video corto: procesando en un solo tramo...")
+            yield event("uploading", "Procesando en un solo tramo...")
             await asyncio.sleep(0)
             try:
-                text = _process_single_video_file(video_path)
+                text = await asyncio.to_thread(_process_single_video_file, working_path)
             except Exception as e:
                 yield event("error", str(e))
                 return
         else:
-            # Video largo: tramos
+            # Largo: tramos
             chunk_seconds = CHUNK_DURATION_MIN * 60
             estimated = int((duration_seconds + chunk_seconds - 1) // chunk_seconds)
-            yield event("analyzing", f"Video largo ({duration_minutes:.1f} min). Partiendo en {estimated} tramos de {CHUNK_DURATION_MIN} min...")
+            yield event("analyzing", f"Largo ({duration_minutes:.1f} min). Partiendo en {estimated} tramos de {CHUNK_DURATION_MIN} min...")
             await asyncio.sleep(0)
 
-            chunks = split_video_in_chunks(video_path, chunk_seconds)
+            chunks = await asyncio.to_thread(split_video_in_chunks, working_path, chunk_seconds)
             if len(chunks) <= 1:
-                yield event("analyzing", "No se pudo partir el video; procesando completo...")
+                yield event("analyzing", "No se pudo partir; procesando completo...")
                 try:
-                    text = _process_single_video_file(video_path)
+                    text = await asyncio.to_thread(_process_single_video_file, working_path)
                 except Exception as e:
                     yield event("error", str(e))
                     return
@@ -1140,23 +1423,25 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
                         yield event("analyzing", f"Tramo {i}/{len(chunks)} — desde minuto {offset//60} (subiendo y analizando)...")
                         await asyncio.sleep(0)
                         try:
-                            chunk_text = _process_single_video_file(chunk_path)
+                            chunk_text = await asyncio.to_thread(_process_single_video_file, chunk_path)
                         except Exception as e:
                             yield event("error", f"Falló el tramo {i}: {e}")
                             return
                         adjusted = shift_timestamps_in_transcript(chunk_text, offset)
-                        full_transcript.append(f"\n=== TRAMO {i} (desde {offset//60:02d}:{offset%60:02d}) ===\n")
                         full_transcript.append(adjusted)
                         yield event("analyzing", f"Tramo {i}/{len(chunks)} completado ✓")
                         await asyncio.sleep(0)
                 finally:
                     for offset, chunk_path in chunks:
-                        if chunk_path != video_path and os.path.exists(chunk_path):
+                        if chunk_path != working_path and os.path.exists(chunk_path):
                             try:
                                 os.remove(chunk_path)
                             except Exception:
                                 pass
                 text = "\n".join(full_transcript)
+
+        if vad_mapping:
+            text = remap_timestamps_in_transcript_vad(text, vad_mapping)
 
         result = {
             "title": "Metraje Completo Analizado",
@@ -1172,6 +1457,12 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
 
     except Exception as e:
         yield event("error", f"Error en el procesamiento: {str(e)}")
+    finally:
+        if working_path != video_path and os.path.exists(working_path):
+            try:
+                os.remove(working_path)
+            except Exception:
+                pass
 
 
 # ============================================================
