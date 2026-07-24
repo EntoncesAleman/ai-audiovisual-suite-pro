@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from google import genai
 from google.genai import types as genai_types
@@ -209,6 +210,11 @@ def cache_set(key: str, data: dict):
 #   2. Si no, probamos leer cookies de Chrome directamente
 #   3. Si tampoco funciona, descarga anónima
 PROJECT_DIR = Path(__file__).parent
+
+# El HTML fue refactorizado a CSS/JS separados en carpetas propias; los servimos
+# como archivos estáticos para que <link>/<script type="module"> puedan cargarlos.
+app.mount("/css", StaticFiles(directory=str(PROJECT_DIR / "css")), name="css")
+app.mount("/js", StaticFiles(directory=str(PROJECT_DIR / "js")), name="js")
 
 
 def _build_ydl_opts_with_auth(base_opts: dict) -> list:

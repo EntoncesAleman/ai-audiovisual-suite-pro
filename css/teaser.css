@@ -1,0 +1,100 @@
+/* ============================================
+   PANEL DE PERSONALIZACIÓN DEL TEASER
+   ============================================ */
+.teaser-customizer {
+    background: linear-gradient(135deg, #1e293b 0%, #0f2540 100%);
+    border: 2px solid #3b82f6;
+    border-radius: 10px;
+    padding: 18px;
+    margin: 14px 0;
+    display: none;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.2);
+}
+.teaser-customizer.active { display: block; }
+.teaser-customizer h4 {
+    margin: 0 0 14px 0;
+    color: #60a5fa;
+    font-size: 15px;
+    display: flex; align-items: center; gap: 8px;
+}
+.teaser-template-selector {
+    display: flex; gap: 8px; align-items: center;
+    margin-bottom: 14px;
+}
+.teaser-template-selector label {
+    font-size: 12px; color: #94a3b8;
+    white-space: nowrap;
+}
+.teaser-template-selector select {
+    flex: 1; margin: 0; padding: 8px;
+    font-size: 13px;
+}
+.teaser-field {
+    margin-bottom: 12px;
+}
+.teaser-field-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px;
+    color: #fbbf24;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+.teaser-field-time {
+    color: #64748b; font-weight: normal;
+    font-family: 'Courier New', monospace;
+}
+.teaser-field textarea {
+    width: 100%;
+    background: #1e293b;
+    border: 1px solid #475569;
+    color: #e2e8f0;
+    border-radius: 5px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    min-height: 60px;
+    resize: vertical;
+    box-sizing: border-box;
+}
+.teaser-field textarea:focus {
+    outline: none;
+    border-color: #60a5fa;
+}
+.teaser-actions {
+    display: flex; gap: 8px; margin-top: 10px;
+}
+.btn-teaser-action {
+    background: #334155;
+    color: #e2e8f0;
+    border: 1px solid #475569;
+    padding: 6px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 11px;
+}
+.btn-teaser-action:hover { background: #475569; }
+.btn-teaser-action.primary {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: white;
+    font-weight: bold;
+    transition: all 0.2s;
+}
+.btn-teaser-action.primary:hover { background: #1d4ed8; }
+.btn-teaser-action.primary.flash {
+    background: #10b981 !important;
+    border-color: #10b981 !important;
+    transform: scale(1.05);
+}
+
+/* Flash visual en el cuadro del prompt al regenerar */
+@keyframes promptFlash {
+    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+    50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0.3); }
+    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.prompt-box.flash {
+    animation: promptFlash 0.8s ease-out;
+    border-color: #10b981;
+}

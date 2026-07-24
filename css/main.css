@@ -1,0 +1,9 @@
+body { font-family: 'Segoe UI', system-ui, sans-serif; background-color: #0f172a; color: #e2e8f0; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+
+h1, h3 { margin-top: 0; color: #f8fafc; }
+input[type="text"], input[type="file"], select { width: 100%; padding: 10px; margin: 10px 0; background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: white; box-sizing: border-box; }
+button.primary { background: #2563eb; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; }
+button.primary:hover { background: #1d4ed8; }
+
+select optgroup { color: #94a3b8; font-style: italic; }
+select option { color: white; font-style: normal; padding: 4px; }

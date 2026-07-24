@@ -1,0 +1,72 @@
+/* ============================================
+   PANEL DE EDITOR DE VIDEO PARA REDES
+   ============================================ */
+.video-editor-panel {
+    background: linear-gradient(135deg, #1a1535 0%, #0d0f20 100%);
+    border: 2px solid #6366f1;
+    border-radius: 10px; padding: 18px; margin-top: 16px;
+    display: none;
+}
+.video-editor-panel.active { display: block; }
+.video-editor-panel h4 { margin: 0 0 14px 0; color: #a5b4fc; font-size: 15px; }
+
+.platform-info-bar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    background: #0f172a; border-radius: 8px; padding: 10px 14px;
+    margin-bottom: 14px; font-size: 12px; border: 1px solid #312e81;
+}
+.platform-badge {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white; border-radius: 5px;
+    padding: 4px 12px; font-weight: bold; font-size: 12px;
+    white-space: nowrap;
+}
+.platform-detail { color: #94a3b8; white-space: nowrap; }
+.platform-detail strong { color: #e2e8f0; }
+
+.btn-reel-export {
+    background: #6366f1; color: white; border: none;
+    padding: 12px; border-radius: 6px; cursor: pointer;
+    width: 100%; max-width: 300px; font-weight: bold; font-size: 14px;
+}
+.btn-reel-export:hover { background: #4f46e5; }
+.btn-reel-download {
+    display: none; background: #6366f1; color: white;
+    border: none; padding: 10px 18px; border-radius: 6px;
+    cursor: pointer; font-weight: bold; font-size: 13px; margin-top: 10px;
+    text-decoration: none;
+}
+.btn-reel-download.active { display: inline-block; }
+
+/* Importar respuesta de IA */
+.ai-import-toggle-btn {
+    background: #1e1f45 !important; border-color: #6366f1 !important;
+    color: #a5b4fc !important;
+}
+.ai-import-toggle-btn.open { background: #312e81 !important; }
+.ai-import-body {
+    display: none; margin-top: 12px;
+    border: 1px dashed #4338ca; border-radius: 8px;
+    padding: 14px; background: #0d0e1f;
+}
+.ai-import-body.open { display: block; }
+.como-hacer-box {
+    background: #0f172a; border-radius: 6px;
+    padding: 12px 14px; margin-bottom: 10px;
+    font-size: 12px; color: #94a3b8;
+    border-left: 3px solid #6366f1;
+}
+.como-hacer-box strong { color: #a5b4fc; display: block; margin-bottom: 6px; }
+.como-hacer-box ol { margin: 0; padding-left: 18px; }
+.como-hacer-box li { margin-bottom: 4px; line-height: 1.5; }
+.como-hacer-box code {
+    background: #1e293b; padding: 1px 5px; border-radius: 3px;
+    font-family: monospace; font-size: 11px; color: #c4b5fd;
+}
+#aiResponseInput {
+    width: 100%; box-sizing: border-box;
+    background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+    color: #e2e8f0; font-size: 12px; font-family: monospace;
+    padding: 10px; resize: vertical; line-height: 1.5;
+}
+#aiResponseInput:focus { outline: none; border-color: #6366f1; }

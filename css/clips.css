@@ -1,0 +1,36 @@
+/* ============================================
+   PANEL DE EXPORTACIÓN DE CLIPS
+   ============================================ */
+.clip-exporter {
+    background: linear-gradient(135deg, #1a2535 0%, #0d1f1a 100%);
+    border: 2px solid #10b981;
+    border-radius: 10px; padding: 18px; margin-top: 16px;
+    display: none;
+}
+.clip-exporter.active { display: block; }
+.clip-exporter h4 { margin: 0 0 14px 0; color: #34d399; font-size: 15px; }
+.clip-source-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.clip-source-row input { flex: 1; margin: 0; font-size: 13px; }
+.clip-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.clip-controls label { font-size: 12px; color: #94a3b8; white-space: nowrap; }
+.clip-controls input[type="number"] { width: 70px; margin: 0; padding: 7px; font-size: 13px; }
+.clip-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 12px; }
+.clip-table th { background: #0f172a; color: #64748b; padding: 6px 8px; text-align: left; font-weight: normal; }
+.clip-table td { padding: 5px 6px; border-bottom: 1px solid #1e293b; }
+.clip-table tr:hover td { background: #0f172a; }
+.clip-table input[type="text"] { width: 100%; background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 4px 6px; border-radius: 4px; margin: 0; font-size: 12px; box-sizing: border-box; }
+.clip-table input[type="checkbox"] { cursor: pointer; width: 15px; height: 15px; }
+.clip-table .clip-label-cell { max-width: 220px; overflow: hidden; }
+.clip-table .clip-label-text { color: #94a3b8; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 200px; }
+.btn-clip-remove { background: none; border: none; color: #f87171; cursor: pointer; font-size: 14px; padding: 2px 6px; }
+.clip-add-row { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.clip-add-row input { margin: 0; padding: 7px; font-size: 12px; }
+.clip-add-row input.ts-input { width: 80px; }
+.clip-add-row input.label-input { flex: 1; min-width: 100px; }
+.clip-export-status { margin-top: 12px; padding: 10px 14px; border-radius: 6px; font-size: 13px; display: none; }
+.clip-export-status.active { display: block; background: #0f172a; border-left: 4px solid #10b981; }
+.clip-export-status.error { border-left-color: #ef4444; }
+.btn-clip-download { display: none; background: #10b981; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px; margin-top: 10px; }
+.btn-clip-download.active { display: inline-block; }
+.clip-empty { color: #64748b; font-size: 13px; text-align: center; padding: 16px; }
+.clip-count-badge { background: #065f46; color: #34d399; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; margin-left: 8px; }
