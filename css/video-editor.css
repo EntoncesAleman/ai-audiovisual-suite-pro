@@ -70,3 +70,5 @@
     padding: 10px; resize: vertical; line-height: 1.5;
 }
 #aiResponseInput:focus { outline: none; border-color: #6366f1; }
+
+.video-editor-panel .progress-fill { background: linear-gradient(90deg, #6366f1, #a5b4fc); }

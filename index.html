@@ -175,6 +175,10 @@
                     <button class="primary" onclick="startClipExport()" style="background:#10b981;max-width:220px;">🎬 Exportar clips seleccionados</button>
 
                     <div class="clip-export-status" id="clipExportStatus"></div>
+                    <div class="export-progress" id="clipExportProgress">
+                        <div class="progress-bar"><div class="progress-fill" id="clipExportProgressFill"></div></div>
+                        <span class="export-progress-pct" id="clipExportProgressPct">0%</span>
+                    </div>
                     <a id="clipDownloadBtn" class="btn-clip-download" href="#" download>⬇ Descargar video exportado</a>
                 </div>
 
@@ -262,6 +266,10 @@ Ejemplo de lo que se importa:
                     <button class="btn-reel-export" id="btnExportReel" onclick="startReelExport()">🎬 Generar video</button>
 
                     <div class="clip-export-status" id="reelExportStatus"></div>
+                    <div class="export-progress" id="reelExportProgress">
+                        <div class="progress-bar"><div class="progress-fill" id="reelExportProgressFill"></div></div>
+                        <span class="export-progress-pct" id="reelExportProgressPct">0%</span>
+                    </div>
                     <a id="reelDownloadBtn" class="btn-reel-download" href="#" download>⬇ Descargar archivo exportado</a>
                 </div>
 

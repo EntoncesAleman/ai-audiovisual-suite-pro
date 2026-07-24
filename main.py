@@ -519,28 +519,39 @@ def split_video_in_chunks(video_path: str, chunk_seconds: int) -> list:
     return chunks
 
 
-def _collapse_repeated_runs(text: str, max_repeats: int = 3) -> str:
+def _collapse_repeated_runs(text: str, max_repeats: int = 3, max_phrase_words: int = 4) -> str:
     """
-    Colapsa una misma palabra repetida muchas veces seguidas a un máximo de
-    `max_repeats` repeticiones. Es el remedio para la alucinación típica de
-    los modelos de transcripción durante tramos de música/silencio/audio
-    poco claro, donde quedan "trabados" repitiendo la última palabra cientos
-    de veces (ej: "no, no, no, no, no, ..." x300). El prompt ya les pide que
-    no lo hagan, pero la instrucción sola no siempre alcanza.
+    Colapsa una misma palabra O frase corta (hasta `max_phrase_words` palabras)
+    repetida muchas veces seguidas a un máximo de `max_repeats` repeticiones.
+    Es el remedio para la alucinación típica de los modelos de transcripción
+    durante tramos de música/silencio/audio poco claro, donde quedan "trabados"
+    repitiendo lo último que entendieron cientos de veces (ej: "no, no, no, ..."
+    x300, o "que venga, que venga, que venga, ..." x60). El prompt ya les pide
+    que no lo hagan, pero la instrucción sola no siempre alcanza.
     Deja intactas las repeticiones cortas normales (2-3 veces, típicas del
-    habla real para dar énfasis).
+    habla real para dar énfasis, como un "que venga, que venga!" real).
     """
     import re
 
-    pattern = re.compile(r'\b(\w+)\b((?:[\s,.:;!?-]+\1\b){3,})', re.IGNORECASE)
+    pattern = re.compile(
+        r'\b((?:\w+[\s,]+){0,%d}\w+)\b((?:[\s,.:;!?-]+\1\b){3,})' % (max_phrase_words - 1),
+        re.IGNORECASE
+    )
 
     def _replace(match):
-        word = match.group(1)
+        phrase = match.group(1)
         sep_match = re.match(r'[\s,.:;!?-]+', match.group(2))
         sep = sep_match.group(0) if sep_match else ' '
-        return (word + sep) * (max_repeats - 1) + word
+        return (phrase + sep) * (max_repeats - 1) + phrase
 
-    return pattern.sub(_replace, text)
+    # Aplicar hasta que no cambie más: una racha larga puede necesitar más
+    # de una pasada para terminar de colapsar del todo.
+    prev = None
+    result = text
+    while prev != result:
+        prev = result
+        result = pattern.sub(_replace, result)
+    return result
 
 
 def shift_timestamps_in_transcript(text: str, offset_seconds: int) -> str:
@@ -609,7 +620,8 @@ PROMPT_ESCANEO = (
     "— whether at the beginning, middle, or end of the file — skip them COMPLETELY and silently. "
     "Jump directly to the next moment where a human voice speaks and continue transcribing from there. "
     "NEVER produce any output entry for a music segment. "
-    "NEVER fill a music gap by repeating a word (such as 'no, no, no' or any filler). "
+    "NEVER fill a music gap by repeating a word or short phrase (such as 'no, no, no' or "
+    "'que venga, que venga, que venga' or any filler). "
     "If a section has no speech at all, produce nothing for it.\n\n"
     "CRITICAL RULE — NO EMPTY ENTRIES: Every entry in your output MUST contain actual dialogue text in the "
     "DIALOGUE field. If you cannot hear what is being said in a segment, skip that segment entirely. "
@@ -640,7 +652,8 @@ PROMPT_ESCANEO_FALLBACK = (
     "This program has musical breaks of several minutes at various points throughout the audio. "
     "Whenever you encounter music, jingles, or non-speech audio — at any point — skip it entirely and silently. "
     "Move directly to the next human voice. NEVER write anything for music segments, "
-    "and NEVER fill music gaps with repeated words like 'no, no, no' or any filler.\n"
+    "and NEVER fill music gaps with a repeated word or short phrase like 'no, no, no' or "
+    "'que venga, que venga, que venga' or any filler.\n"
     "Do NOT stop at commercial breaks or pauses — continue until the very last second of speech.\n"
     "IMPORTANT: Each DIALOGUE entry MUST contain actual spoken text — never leave it blank or empty.\n"
     "Assign each distinct voice a numbered label: Speaker 1, Speaker 2, etc. "
@@ -1173,7 +1186,7 @@ async def analyze_url(input_data: UrlInput):
         cached["from_cache"] = True
         return cached
 
-    video_path = download_youtube_video(input_data.url)
+    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
     try:
         return await process_video_with_gemini(video_path, cache_key=cache_key)
     finally:
@@ -1216,7 +1229,7 @@ async def analyze_url_stream(input_data: UrlInput):
         # Descarga
         yield f"data: {json.dumps({'stage': 'downloading', 'message': 'Descargando video desde la URL...'}, ensure_ascii=False)}\n\n"
         try:
-            video_path = download_youtube_video(input_data.url)
+            video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
         except HTTPException as e:
             yield f"data: {json.dumps({'stage': 'error', 'message': e.detail}, ensure_ascii=False)}\n\n"
             return
@@ -1276,7 +1289,7 @@ async def inspect_file(file: UploadFile = File(...)):
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    info = inspect_media_file(temp_path)
+    info = await asyncio.to_thread(inspect_media_file, temp_path)
     info["temp_path"] = temp_path  # frontend devuelve esta ruta en el siguiente paso
     return info
 
@@ -1309,7 +1322,7 @@ async def process_inspected(input_data: ProcessInspectedInput):
                 yield f"data: {json.dumps({'stage': 'converting', 'message': f'Convirtiendo a audio limpio (modo={input_data.conversion_mode})...'}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
                 try:
-                    converted = convert_to_clean_audio(temp_path, mode=input_data.conversion_mode)
+                    converted = await asyncio.to_thread(convert_to_clean_audio, temp_path, mode=input_data.conversion_mode)
                     path_to_process = converted
                     created_files.append(converted)
                     yield f"data: {json.dumps({'stage': 'converting', 'message': f'✓ Conversión completa. Continuando con análisis...'}, ensure_ascii=False)}\n\n"
@@ -1580,26 +1593,28 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 video_path = input_data.video_path
                 delete_video_after = True
             else:
-                yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...")
+                yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...", {"pct": 5})
                 await asyncio.sleep(0)
                 try:
-                    video_path = download_youtube_video(input_data.url)
+                    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
                 except HTTPException as e:
                     yield event("error", e.detail)
                     return
                 delete_video_after = True
 
             clip_files = []
+            total_clips = len(input_data.clips)
             for i, clip in enumerate(input_data.clips, 1):
                 safe_label = "".join(c if c.isalnum() or c in "-_ " else "_" for c in clip.label)[:25]
                 clip_path = str(clip_dir / f"{i:02d}_{safe_label or 'clip'}.mp4")
-                yield event("cutting", f"Cortando clip {i}/{len(input_data.clips)}: {clip.start} → {clip.end}")
+                pct = 10 + round(80 * i / total_clips)
+                yield event("cutting", f"Cortando clip {i}/{total_clips}: {clip.start} → {clip.end}", {"pct": pct, "current": i, "total": total_clips})
                 await asyncio.sleep(0)
                 try:
-                    cut_single_clip(video_path, clip.start, clip.end, clip_path)
+                    await asyncio.to_thread(cut_single_clip, video_path, clip.start, clip.end, clip_path)
                     clip_files.append(clip_path)
                 except Exception as e:
-                    yield event("cutting", f"⚠ Clip {i} falló: {str(e)[:80]}. Continuando...")
+                    yield event("cutting", f"⚠ Clip {i} falló: {str(e)[:80]}. Continuando...", {"pct": pct})
                     await asyncio.sleep(0)
 
             if not clip_files:
@@ -1612,9 +1627,12 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 yield event("done", "✓ Clip exportado.", {
                     "download_url": f"/exports/{single_name}",
                     "filename": single_name,
-                    "clip_count": 1
+                    "clip_count": 1,
+                    "pct": 100,
                 })
             else:
+                yield event("merging", f"Empaquetando {len(clip_files)} clips en ZIP...", {"pct": 95})
+                await asyncio.sleep(0)
                 zip_name = f"clips_{export_id}.zip"
                 zip_path = str(EXPORT_DIR / zip_name)
                 with zipfile.ZipFile(zip_path, "w") as zf:
@@ -1623,7 +1641,8 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 yield event("done", f"✓ {len(clip_files)} clips empaquetados en ZIP.", {
                     "download_url": f"/exports/{zip_name}",
                     "filename": zip_name,
-                    "clip_count": len(clip_files)
+                    "clip_count": len(clip_files),
+                    "pct": 100,
                 })
 
         except Exception as e:
@@ -1716,25 +1735,27 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                 video_path = input_data.video_path
                 delete_video_after = True
             else:
-                yield event("downloading", "Descargando video fuente...")
+                yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
                 try:
-                    video_path = download_youtube_video(input_data.url)
+                    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
                 except HTTPException as e:
                     yield event("error", e.detail); return
                 delete_video_after = True
 
             clip_files = []
+            total_clips = len(input_data.clips)
             for i, clip in enumerate(input_data.clips, 1):
                 safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in clip.label)[:20]
                 clip_path = str(clip_dir / f"{i:02d}_{safe or 'clip'}.mp4")
-                yield event("cutting", f"Cortando clip {i}/{len(input_data.clips)}: {clip.start} → {clip.end}")
+                pct = 5 + round(45 * i / total_clips)
+                yield event("cutting", f"Cortando clip {i}/{total_clips}: {clip.start} → {clip.end}", {"pct": pct, "current": i, "total": total_clips})
                 await asyncio.sleep(0)
                 try:
-                    cut_single_clip(video_path, clip.start, clip.end, clip_path)
+                    await asyncio.to_thread(cut_single_clip, video_path, clip.start, clip.end, clip_path)
                     clip_files.append(clip_path)
                 except Exception as e:
-                    yield event("cutting", f"⚠ Clip {i} falló: {str(e)[:60]}. Continuando...")
+                    yield event("cutting", f"⚠ Clip {i} falló: {str(e)[:60]}. Continuando...", {"pct": pct})
                     await asyncio.sleep(0)
 
             if not clip_files:
@@ -1742,15 +1763,17 @@ async def export_reel_endpoint(input_data: ReelExportInput):
 
             # Escalar cada clip por separado al formato de la plataforma
             output_files = []
+            total_scale = len(clip_files)
             for i, clip_path in enumerate(clip_files, 1):
-                yield event("converting", f"Aplicando formato {target_w}×{target_h} a clip {i}/{len(clip_files)}...")
+                pct = 50 + round(45 * i / total_scale)
+                yield event("converting", f"Aplicando formato {target_w}×{target_h} a clip {i}/{total_scale}...", {"pct": pct, "current": i, "total": total_scale})
                 await asyncio.sleep(0)
                 scaled_path = str(clip_dir / f"scaled_{i:02d}.mp4")
                 try:
-                    scale_to_platform(clip_path, scaled_path, target_w, target_h, max_dur)
+                    await asyncio.to_thread(scale_to_platform, clip_path, scaled_path, target_w, target_h, max_dur)
                     output_files.append(scaled_path)
                 except Exception as e:
-                    yield event("converting", f"⚠ Clip {i} falló al convertir: {str(e)[:60]}")
+                    yield event("converting", f"⚠ Clip {i} falló al convertir: {str(e)[:60]}", {"pct": pct})
                     await asyncio.sleep(0)
 
             if not output_files:
@@ -1765,8 +1788,11 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                     "platform": input_data.platform,
                     "resolution": f"{target_w}x{target_h}",
                     "clip_count": 1,
+                    "pct": 100,
                 })
             else:
+                yield event("merging", f"Empaquetando {len(output_files)} clips en ZIP...", {"pct": 95})
+                await asyncio.sleep(0)
                 zip_name = f"reel_{input_data.platform}_{export_id}.zip"
                 zip_path = str(EXPORT_DIR / zip_name)
                 with zipfile.ZipFile(zip_path, "w") as zf:
@@ -1778,6 +1804,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                     "platform": input_data.platform,
                     "resolution": f"{target_w}x{target_h}",
                     "clip_count": len(output_files),
+                    "pct": 100,
                 })
 
         except Exception as e:
@@ -1826,33 +1853,36 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                 video_path = input_data.video_path
                 delete_video_after = True
             else:
-                yield event("downloading", "Descargando video fuente...")
+                yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
                 try:
-                    video_path = download_youtube_video(input_data.url)
+                    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
                 except HTTPException as e:
                     yield event("error", e.detail); return
                 delete_video_after = True
 
             output_files = []
+            total_slides = len(input_data.clips)
 
             if input_data.platform == "ig_carrusel_clips":
                 for i, clip in enumerate(input_data.clips, 1):
-                    yield event("cutting", f"Procesando slide {i}/{len(input_data.clips)} (clip 1:1)...")
+                    pct = 5 + round(85 * i / total_slides)
+                    yield event("cutting", f"Procesando slide {i}/{total_slides} (clip 1:1)...", {"pct": pct, "current": i, "total": total_slides})
                     await asyncio.sleep(0)
                     raw_clip = str(carousel_dir / f"raw_{i:02d}.mp4")
                     out_clip = str(carousel_dir / f"slide_{i:02d}.mp4")
                     try:
-                        cut_single_clip(video_path, clip.start, clip.end, raw_clip)
-                        scale_to_platform(raw_clip, out_clip, 1080, 1080, 60)
+                        await asyncio.to_thread(cut_single_clip, video_path, clip.start, clip.end, raw_clip)
+                        await asyncio.to_thread(scale_to_platform, raw_clip, out_clip, 1080, 1080, 60)
                         output_files.append(out_clip)
                     except Exception as e:
-                        yield event("cutting", f"⚠ Slide {i} falló: {str(e)[:60]}")
+                        yield event("cutting", f"⚠ Slide {i} falló: {str(e)[:60]}", {"pct": pct})
                         await asyncio.sleep(0)
 
             elif input_data.platform == "ig_carrusel_placas":
                 for i, clip in enumerate(input_data.clips, 1):
-                    yield event("cutting", f"Creando placa {i}/{len(input_data.clips)}...")
+                    pct = 5 + round(85 * i / total_slides)
+                    yield event("cutting", f"Creando placa {i}/{total_slides}...", {"pct": pct, "current": i, "total": total_slides})
                     await asyncio.sleep(0)
                     frame_path = str(carousel_dir / f"frame_{i:02d}.jpg")
                     plate_path = str(carousel_dir / f"placa_{i:02d}.jpg")
@@ -1863,11 +1893,11 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                     else:
                         speaker, dialogue = "", label
                     try:
-                        extract_frame(video_path, clip.start, frame_path)
-                        create_carousel_plate(frame_path, dialogue, speaker, plate_path)
+                        await asyncio.to_thread(extract_frame, video_path, clip.start, frame_path)
+                        await asyncio.to_thread(create_carousel_plate, frame_path, dialogue, speaker, plate_path)
                         output_files.append(plate_path)
                     except Exception as e:
-                        yield event("cutting", f"⚠ Placa {i} falló: {str(e)[:60]}")
+                        yield event("cutting", f"⚠ Placa {i} falló: {str(e)[:60]}", {"pct": pct})
                         await asyncio.sleep(0)
 
             if not output_files:
@@ -1875,7 +1905,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
 
             zip_name = f"carousel_{input_data.platform}_{export_id}.zip"
             zip_path = str(EXPORT_DIR / zip_name)
-            yield event("merging", f"Empaquetando {len(output_files)} archivos en ZIP...")
+            yield event("merging", f"Empaquetando {len(output_files)} archivos en ZIP...", {"pct": 95})
             await asyncio.sleep(0)
             with zipfile.ZipFile(zip_path, "w") as zf:
                 for f in output_files:
@@ -1885,6 +1915,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                 "download_url": f"/exports/{zip_name}",
                 "filename": zip_name,
                 "slide_count": len(output_files),
+                "pct": 100,
             })
 
         except Exception as e:
@@ -1906,6 +1937,15 @@ def read_root():
     if index_html.exists():
         return FileResponse(str(index_html), media_type="text/html")
     return {"status": "Online - index.html no encontrado en el directorio del proyecto."}
+
+
+@app.get("/login")
+def read_login():
+    """Pantalla de login (todavía sin autenticación real conectada)."""
+    login_html = PROJECT_DIR / "login.html"
+    if login_html.exists():
+        return FileResponse(str(login_html), media_type="text/html")
+    return {"status": "login.html no encontrado en el directorio del proyecto."}
 
 
 @app.get("/debug/ytdlp-info")

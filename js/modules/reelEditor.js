@@ -1,6 +1,6 @@
 import { state } from '../state.js';
 import { BACKEND_URL, PLATFORM_DATA } from '../config.js';
-import { escapeHtml } from '../utils/dom.js';
+import { escapeHtml, setExportProgress, resetExportProgress } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
 
@@ -200,6 +200,8 @@ export async function startReelExport() {
     statusEl.className = "clip-export-status active";
     statusEl.textContent = "⏳ Iniciando exportación...";
     downloadBtn.className = "btn-reel-download";
+    resetExportProgress('reelExport');
+    setExportProgress('reelExport', 2);
 
     const clips = selected.map(c => ({ start: c.start, end: c.end, label: c.label }));
 
@@ -225,12 +227,16 @@ export async function startReelExport() {
                 if (!line.startsWith("data:")) continue;
                 try {
                     const payload = JSON.parse(line.slice(5).trim());
+                    if (typeof payload.pct === "number") {
+                        setExportProgress('reelExport', payload.pct);
+                    }
                     if (payload.stage === "error") {
                         statusEl.className = "clip-export-status active error";
                         statusEl.textContent = "❌ " + payload.message;
                         return;
                     }
                     if (payload.stage === "done") {
+                        setExportProgress('reelExport', 100);
                         statusEl.textContent = "✅ " + payload.message;
                         downloadBtn.href = BACKEND_URL + payload.download_url;
                         downloadBtn.download = payload.filename;

@@ -34,3 +34,5 @@
 .btn-clip-download.active { display: inline-block; }
 .clip-empty { color: #64748b; font-size: 13px; text-align: center; padding: 16px; }
 .clip-count-badge { background: #065f46; color: #34d399; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; margin-left: 8px; }
+
+.clip-exporter .progress-fill { background: linear-gradient(90deg, #10b981, #34d399); }
