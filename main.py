@@ -647,25 +647,26 @@ def build_trimmed_audio(audio_path: str, segments: list, output_path: str) -> li
     Devuelve el mapping: lista de (trimmed_start, trimmed_end, original_start)
     para poder traducir después los timestamps que devuelva Gemini (que van a
     estar en el tiempo del audio ya recortado) de vuelta al tiempo real del video.
+
+    Usa un único filtro aselect (una sola expresión booleana con todos los
+    tramos) en vez de un nodo atrim+concat por tramo: con audio que tiene
+    muchas pausas cortas (charlas normales) el enfoque atrim+concat generaba
+    un filtergraph con cientos de nodos, que a ffmpeg le podía tardar varios
+    minutos en armar/ejecutar (se veía como el proceso "colgado"). aselect
+    hace una sola pasada sobre el audio sin importar cuántos tramos haya.
     """
     import subprocess
 
-    filter_parts = []
-    labels = []
-    for i, (s, e) in enumerate(segments):
-        label = f"a{i}"
-        filter_parts.append(f"[0:a]atrim=start={s:.3f}:end={e:.3f},asetpts=PTS-STARTPTS[{label}]")
-        labels.append(f"[{label}]")
-    filter_complex = ";".join(filter_parts) + ";" + "".join(labels) + f"concat=n={len(segments)}:v=0:a=1[out]"
+    expr = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in segments)
+    filter_complex = f"aselect='{expr}',asetpts=N/SR/TB"
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", audio_path,
-        "-filter_complex", filter_complex,
-        "-map", "[out]",
+        "-af", filter_complex,
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if result.returncode != 0:
         raise Exception(f"ffmpeg (armado de audio recortado por VAD) falló: {result.stderr[:300]}")
 
