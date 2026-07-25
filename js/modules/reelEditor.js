@@ -1,5 +1,5 @@
 import { state } from '../state.js';
-import { BACKEND_URL, PLATFORM_DATA } from '../config.js';
+import { BACKEND_URL, PLATFORM_DATA, MAX_CLIPS_PER_EXPORT } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
@@ -180,6 +180,15 @@ export async function startReelExport() {
     const selected = state.reelClipsList.filter(c => c.selected);
     if (selected.length === 0) { alert("Seleccioná al menos un clip."); return; }
 
+    const pdata = PLATFORM_DATA[state.currentPlatformKey];
+    // Las placas de texto son solo imágenes (liviano); todo lo demás corta +
+    // reencodea con ffmpeg, y muchos clips juntos se quedan sin memoria en
+    // el free tier de Render (512MB) - ver MAX_CLIPS_PER_EXPORT.
+    if (!pdata?.isPlatesCarousel && selected.length > MAX_CLIPS_PER_EXPORT) {
+        alert(`Máximo ${MAX_CLIPS_PER_EXPORT} clips por exportación (seleccionaste ${selected.length}). Exportá en tandas de a ${MAX_CLIPS_PER_EXPORT} para no sobrecargar el servidor.`);
+        return;
+    }
+
     const statusEl = document.getElementById("reelExportStatus");
     const downloadBtn = document.getElementById("reelDownloadBtn");
 
@@ -193,7 +202,6 @@ export async function startReelExport() {
     }
     if (!source) return;
 
-    const pdata = PLATFORM_DATA[state.currentPlatformKey];
     const isCarousel = pdata?.isCarousel;
     const endpoint = isCarousel ? `${BACKEND_URL}/export-carousel` : `${BACKEND_URL}/export-reel`;
 

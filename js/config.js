@@ -19,6 +19,12 @@ export const PROMPTS_FALLBACK = {
     }
 };
 
+// Debe coincidir con MAX_CLIPS_PER_EXPORT en main.py: cortar/reencodear
+// muchos clips juntos en una sola corrida se queda sin memoria en el free
+// tier de Render (512MB). El backend igual valida esto, este chequeo del
+// lado del cliente solo evita el viaje de red para avisar antes.
+export const MAX_CLIPS_PER_EXPORT = 4;
+
 export const STAGE_PROGRESS = {
     downloading: { pct: 15, label: "📥 Descargando video" },
     uploading: { pct: 30, label: "☁ Subiendo a Google" },

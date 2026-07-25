@@ -69,6 +69,12 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR = Path(tempfile.gettempdir()) / "audiovisual_suite_exports"
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Tope de clips por exportación: cortar + reencodear video en el free tier de
+# Render (512MB) se banca hasta cierta cantidad de clips por corrida antes de
+# quedarse sin memoria. Forzar tandas más chicas baja el pico de memoria por
+# request en vez de arriesgar un OOM a mitad de camino.
+MAX_CLIPS_PER_EXPORT = int(os.getenv("MAX_CLIPS_PER_EXPORT", "4"))
+
 # Cache de videos originales (junto al cache de resultados de analisis): permite
 # exportar clips despues sin volver a descargar de la URL ni re-subir el archivo.
 VIDEO_CACHE_DIR = CACHE_DIR / "videos"
@@ -1714,6 +1720,9 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         if not input_data.clips:
             yield event("error", "No hay clips definidos para exportar.")
             return
+        if len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
+            yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT} para no quedarse sin memoria en el servidor.")
+            return
 
         export_id = uuid.uuid4().hex[:12]
         clip_dir = EXPORT_DIR / export_id
@@ -1863,6 +1872,8 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
             yield event("error", "No hay clips definidos."); return
+        if len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
+            yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT}."); return
         cfg = PLATFORM_CONFIGS.get(input_data.platform)
         if not cfg:
             yield event("error", f"Plataforma desconocida: {input_data.platform}"); return
@@ -1995,6 +2006,10 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             yield event("error", "No hay slides definidos."); return
         if input_data.platform not in CAROUSEL_PLATFORMS:
             yield event("error", f"Plataforma no es carrusel: {input_data.platform}"); return
+        # Las placas de texto son solo imágenes (PIL, liviano); el tope de
+        # clips solo aplica al carrusel de video (corta + reencodea con ffmpeg).
+        if input_data.platform == "ig_carrusel_clips" and len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
+            yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT}."); return
 
         export_id = uuid.uuid4().hex[:12]
         carousel_dir = EXPORT_DIR / f"car_{export_id}"

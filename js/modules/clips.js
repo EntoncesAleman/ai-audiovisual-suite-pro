@@ -1,5 +1,5 @@
 import { state } from '../state.js';
-import { BACKEND_URL } from '../config.js';
+import { BACKEND_URL, MAX_CLIPS_PER_EXPORT } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
@@ -104,6 +104,10 @@ export function addClipManual() {
 export async function startClipExport() {
     const selected = state.clipsList.filter(c => c.selected);
     if (selected.length === 0) { alert("Seleccioná al menos un clip para exportar."); return; }
+    if (selected.length > MAX_CLIPS_PER_EXPORT) {
+        alert(`Máximo ${MAX_CLIPS_PER_EXPORT} clips por exportación (seleccionaste ${selected.length}). Exportá en tandas de a ${MAX_CLIPS_PER_EXPORT} para no sobrecargar el servidor.`);
+        return;
+    }
 
     const statusEl = document.getElementById('clipExportStatus');
     const downloadBtn = document.getElementById('clipDownloadBtn');
