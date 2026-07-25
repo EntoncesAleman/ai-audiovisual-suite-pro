@@ -1729,7 +1729,6 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
         delete_video_after = False  # el cacheado NO se borra: lo puede volver a usar otra exportacion
-        cache_after_download = False  # el recien descargado de la URL se cachea para el proximo export
 
         try:
             if cached_video:
@@ -1754,7 +1753,11 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 if download_error:
                     yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error))
                     return
-                cache_after_download = True
+                # No se cachea: se borra despues de usarlo (ver finally), igual
+                # que la descarga de audio para analizar. Cachear el video acá
+                # sumaba disco/pagecache que puede contar contra el limite de
+                # memoria del contenedor en el free tier de Render.
+                delete_video_after = True
 
             clip_files = []
             total_clips = len(input_data.clips)
@@ -1807,8 +1810,6 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                     os.remove(video_path)
                 except Exception:
                     pass
-            elif cache_after_download and video_path and os.path.exists(video_path):
-                cache_video_store(effective_cache_key, video_path)
             try:
                 shutil.rmtree(str(clip_dir), ignore_errors=True)
             except Exception:
@@ -1884,7 +1885,6 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
         delete_video_after = False
-        cache_after_download = False
 
         try:
             if cached_video:
@@ -1907,7 +1907,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                         download_error = payload
                 if download_error:
                     yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error)); return
-                cache_after_download = True
+                delete_video_after = True
 
             clip_files = []
             total_clips = len(input_data.clips)
@@ -1979,8 +1979,6 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             if delete_video_after and video_path and os.path.exists(video_path):
                 try: os.remove(video_path)
                 except: pass
-            elif cache_after_download and video_path and os.path.exists(video_path):
-                cache_video_store(effective_cache_key, video_path)
             try: shutil.rmtree(str(clip_dir), ignore_errors=True)
             except: pass
 
@@ -2016,7 +2014,6 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         carousel_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
         delete_video_after = False
-        cache_after_download = False
 
         try:
             if cached_video:
@@ -2039,7 +2036,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                         download_error = payload
                 if download_error:
                     yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error)); return
-                cache_after_download = True
+                delete_video_after = True
 
             output_files = []
             total_slides = len(input_data.clips)
@@ -2104,8 +2101,6 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             if delete_video_after and video_path and os.path.exists(video_path):
                 try: os.remove(video_path)
                 except: pass
-            elif cache_after_download and video_path and os.path.exists(video_path):
-                cache_video_store(effective_cache_key, video_path)
             try: shutil.rmtree(str(carousel_dir), ignore_errors=True)
             except: pass
 
