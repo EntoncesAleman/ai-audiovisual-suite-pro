@@ -185,6 +185,19 @@ def url_hash(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
+def deterministic_export_id(*parts: str) -> str:
+    """
+    ID de exportación estable a partir de la fuente + los clips pedidos (en
+    vez de un uuid random). Así, si el server se reinicia a mitad de un
+    export y el usuario le da "Generar" de nuevo con los mismos clips, cae
+    en la MISMA carpeta y puede saltear los clips que ya se habían cortado,
+    en vez de arrancar de cero. El video fuente en /tmp sobrevive un reinicio
+    por OOM (no un redeploy), asi que esto le saca provecho a eso.
+    """
+    payload = "|".join(parts)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def cache_get(key: str):
     """Recupera resultado cacheado si existe."""
     cache_file = CACHE_DIR / f"{key}.json"
@@ -1724,7 +1737,10 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
             yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT} para no quedarse sin memoria en el servidor.")
             return
 
-        export_id = uuid.uuid4().hex[:12]
+        export_id = deterministic_export_id(
+            effective_cache_key or input_data.video_path or "local",
+            *[f"{c.start}-{c.end}-{c.label}" for c in input_data.clips],
+        )
         clip_dir = EXPORT_DIR / export_id
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
@@ -1765,6 +1781,13 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 safe_label = "".join(c if c.isalnum() or c in "-_ " else "_" for c in clip.label)[:25]
                 clip_path = str(clip_dir / f"{i:02d}_{safe_label or 'clip'}.mp4")
                 pct = 10 + round(80 * i / total_clips)
+                # Si el server se reinició a mitad de un intento anterior con
+                # estos mismos clips, este archivo ya puede estar cortado.
+                if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                    yield event("cutting", f"Clip {i}/{total_clips} ya estaba cortado de un intento anterior, lo salteo.", {"pct": pct, "current": i, "total": total_clips})
+                    await asyncio.sleep(0)
+                    clip_files.append(clip_path)
+                    continue
                 yield event("cutting", f"Cortando clip {i}/{total_clips}: {clip.start} → {clip.end}", {"pct": pct, "current": i, "total": total_clips})
                 await asyncio.sleep(0)
                 try:
@@ -1880,7 +1903,11 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             yield event("error", f"Plataforma desconocida: {input_data.platform}"); return
 
         target_w, target_h, max_dur = cfg
-        export_id = uuid.uuid4().hex[:12]
+        export_id = deterministic_export_id(
+            effective_cache_key or input_data.video_path or "local",
+            input_data.platform,
+            *[f"{c.start}-{c.end}-{c.label}" for c in input_data.clips],
+        )
         clip_dir = EXPORT_DIR / export_id
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
@@ -1915,6 +1942,11 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                 safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in clip.label)[:20]
                 clip_path = str(clip_dir / f"{i:02d}_{safe or 'clip'}.mp4")
                 pct = 5 + round(45 * i / total_clips)
+                if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
+                    yield event("cutting", f"Clip {i}/{total_clips} ya estaba cortado, lo salteo.", {"pct": pct, "current": i, "total": total_clips})
+                    await asyncio.sleep(0)
+                    clip_files.append(clip_path)
+                    continue
                 yield event("cutting", f"Cortando clip {i}/{total_clips}: {clip.start} → {clip.end}", {"pct": pct, "current": i, "total": total_clips})
                 await asyncio.sleep(0)
                 try:
@@ -1932,9 +1964,14 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             total_scale = len(clip_files)
             for i, clip_path in enumerate(clip_files, 1):
                 pct = 50 + round(45 * i / total_scale)
+                scaled_path = str(clip_dir / f"scaled_{i:02d}.mp4")
+                if os.path.exists(scaled_path) and os.path.getsize(scaled_path) > 0:
+                    yield event("converting", f"Clip {i}/{total_scale} ya estaba convertido, lo salteo.", {"pct": pct, "current": i, "total": total_scale})
+                    await asyncio.sleep(0)
+                    output_files.append(scaled_path)
+                    continue
                 yield event("converting", f"Aplicando formato {target_w}×{target_h} a clip {i}/{total_scale}...", {"pct": pct, "current": i, "total": total_scale})
                 await asyncio.sleep(0)
-                scaled_path = str(clip_dir / f"scaled_{i:02d}.mp4")
                 try:
                     await asyncio.to_thread(scale_to_platform, clip_path, scaled_path, target_w, target_h, max_dur)
                     output_files.append(scaled_path)
@@ -2009,7 +2046,11 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         if input_data.platform == "ig_carrusel_clips" and len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
             yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT}."); return
 
-        export_id = uuid.uuid4().hex[:12]
+        export_id = deterministic_export_id(
+            effective_cache_key or input_data.video_path or "local",
+            input_data.platform,
+            *[f"{c.start}-{c.end}-{c.label}" for c in input_data.clips],
+        )
         carousel_dir = EXPORT_DIR / f"car_{export_id}"
         carousel_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
@@ -2044,10 +2085,15 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             if input_data.platform == "ig_carrusel_clips":
                 for i, clip in enumerate(input_data.clips, 1):
                     pct = 5 + round(85 * i / total_slides)
-                    yield event("cutting", f"Procesando slide {i}/{total_slides} (clip 1:1)...", {"pct": pct, "current": i, "total": total_slides})
-                    await asyncio.sleep(0)
                     raw_clip = str(carousel_dir / f"raw_{i:02d}.mp4")
                     out_clip = str(carousel_dir / f"slide_{i:02d}.mp4")
+                    if os.path.exists(out_clip) and os.path.getsize(out_clip) > 0:
+                        yield event("cutting", f"Slide {i}/{total_slides} ya estaba listo, lo salteo.", {"pct": pct, "current": i, "total": total_slides})
+                        await asyncio.sleep(0)
+                        output_files.append(out_clip)
+                        continue
+                    yield event("cutting", f"Procesando slide {i}/{total_slides} (clip 1:1)...", {"pct": pct, "current": i, "total": total_slides})
+                    await asyncio.sleep(0)
                     try:
                         await asyncio.to_thread(cut_single_clip, video_path, clip.start, clip.end, raw_clip)
                         await asyncio.to_thread(scale_to_platform, raw_clip, out_clip, 1080, 1080, 60)
@@ -2059,10 +2105,15 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             elif input_data.platform == "ig_carrusel_placas":
                 for i, clip in enumerate(input_data.clips, 1):
                     pct = 5 + round(85 * i / total_slides)
-                    yield event("cutting", f"Creando placa {i}/{total_slides}...", {"pct": pct, "current": i, "total": total_slides})
-                    await asyncio.sleep(0)
                     frame_path = str(carousel_dir / f"frame_{i:02d}.jpg")
                     plate_path = str(carousel_dir / f"placa_{i:02d}.jpg")
+                    if os.path.exists(plate_path) and os.path.getsize(plate_path) > 0:
+                        yield event("cutting", f"Placa {i}/{total_slides} ya estaba lista, la salteo.", {"pct": pct, "current": i, "total": total_slides})
+                        await asyncio.sleep(0)
+                        output_files.append(plate_path)
+                        continue
+                    yield event("cutting", f"Creando placa {i}/{total_slides}...", {"pct": pct, "current": i, "total": total_slides})
+                    await asyncio.sleep(0)
                     label = clip.label or ""
                     if ":" in label:
                         parts = label.split(":", 1)
