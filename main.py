@@ -269,7 +269,7 @@ async def run_blocking_with_heartbeat(func, *args, interval: float = 20.0, **kwa
         yield ("error", e)
 
 
-def download_youtube_video(url: str) -> str:
+def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "") -> str:
     extractor_args = {}
     if POT_PROVIDER_BASE_URL:
         # Le dice al plugin bgutil-ytdlp-pot-provider (instalado via requirements.txt)
@@ -285,11 +285,11 @@ def download_youtube_video(url: str) -> str:
         extractor_args['youtube'] = {'player_client': ['android', 'tv', 'ios']}
 
     base_opts = {
-        'format': 'best[height<=480][ext=mp4]/best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=720]/best',
-        'outtmpl': os.path.join(tempfile.gettempdir(), '%(id)s.%(ext)s'),
+        'format': format_selector,
+        'outtmpl': os.path.join(tempfile.gettempdir(), f'%(id)s{outtmpl_suffix}.%(ext)s'),
         'noplaylist': True,
         # Permite a yt-dlp descargar el script solver de YouTube (deno) para resolver
-        # el challenge de firma; sin esto solo consigue miniaturas, nunca video real.
+        # el challenge de firma; sin esto solo consigue miniaturas, nunca contenido real.
         'remote_components': ['ejs:github'],
         'extractor_args': extractor_args,
     }
@@ -312,18 +312,45 @@ def download_youtube_video(url: str) -> str:
                 print(f"   ⚠ Falló por permisos: {err_str[:120]}")
                 continue
             print(f"   ✗ Error no relacionado con autenticación: {err_str[:200]}")
-            raise HTTPException(status_code=400, detail=f"Error al descargar el video: {err_str}")
+            raise HTTPException(status_code=400, detail=f"Error al descargar: {err_str}")
 
     # Si llegamos acá, todos los métodos fallaron
     raise HTTPException(
         status_code=403,
         detail=(
-            f"No se pudo descargar el video con ningún método de autenticación. "
+            f"No se pudo descargar con ningún método de autenticación. "
             f"Último error: {str(last_error)[:200]}. "
             f"Soluciones: (1) Verificá que el archivo de Drive tenga permiso 'Cualquier persona con el enlace'. "
             f"(2) Exportá cookies.txt desde Chrome y guardalo en la carpeta del proyecto. "
-            f"(3) Bajá el video manualmente y subilo con 'Subir Local'."
+            f"(3) Bajá el archivo manualmente y subilo con 'Subir Local'."
         )
+    )
+
+
+def download_youtube_video(url: str) -> str:
+    """Descarga el video completo. Usar solo para exportar (cortar/convertir clips) - para
+    transcribir no hace falta, ver download_youtube_audio."""
+    return _download_youtube(
+        url,
+        'best[height<=480][ext=mp4]/best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=720]/best',
+    )
+
+
+def download_youtube_audio(url: str) -> str:
+    """
+    Descarga SOLO el audio, para transcribir. La desgrabación nunca usó el
+    video en sí (_process_single_video_file igual extrae el audio antes de
+    subirlo a Gemini/Groq), así que bajar el video entero para analizar era
+    puro desperdicio de ancho de banda, tiempo y memoria - con videos largos
+    esto era lo que hacía que el análisis tardara de más y, al exportar
+    después, hacía más probable quedarse sin los 512MB del free tier de
+    Render. Sufijo distinto en el nombre de archivo para no pisar una
+    descarga de video en curso del mismo id.
+    """
+    return _download_youtube(
+        url,
+        'bestaudio[ext=m4a]/bestaudio/best',
+        outtmpl_suffix='_audio',
     )
 
 
@@ -1276,13 +1303,16 @@ async def analyze_url(input_data: UrlInput):
         cached["from_cache"] = True
         return cached
 
-    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
+    # Solo audio: analizar nunca necesitó el video, y descargarlo entero
+    # era lo que hacía lento/pesado el análisis de videos largos. No se
+    # cachea como "video exportable" - para exportar clips se descarga
+    # el video real por separado, ver /export-clips, /export-reel, etc.
+    video_path = await asyncio.to_thread(download_youtube_audio, input_data.url)
     try:
         return await process_video_with_gemini(video_path, cache_key=cache_key, engine=_normalize_engine(input_data.engine))
     finally:
-        # Igual que la version streaming: lo dejamos cacheado para exportar
-        # clips despues sin volver a descargarlo de la URL.
-        cache_video_store(cache_key, video_path)
+        if os.path.exists(video_path):
+            os.remove(video_path)
 
 
 @app.post("/analyze-video")
@@ -1318,11 +1348,12 @@ async def analyze_url_stream(input_data: UrlInput):
             yield f"data: {json.dumps({'stage': 'done', 'message': 'Listo', 'result': cached}, ensure_ascii=False)}\n\n"
             return
 
-        # Descarga
-        yield f"data: {json.dumps({'stage': 'downloading', 'message': 'Descargando video desde la URL...'}, ensure_ascii=False)}\n\n"
+        # Descarga (solo audio: transcribir nunca necesitó el video, y bajarlo
+        # entero era lo que hacía lento/pesado el análisis de videos largos)
+        yield f"data: {json.dumps({'stage': 'downloading', 'message': 'Descargando audio desde la URL...'}, ensure_ascii=False)}\n\n"
         video_path = None
         download_error = None
-        async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+        async for kind, payload in run_blocking_with_heartbeat(download_youtube_audio, input_data.url):
             if kind == "heartbeat":
                 yield ": keep-alive\n\n"
             elif kind == "result":
@@ -1338,9 +1369,10 @@ async def analyze_url_stream(input_data: UrlInput):
             async for chunk in process_video_streaming(video_path, cache_key=cache_key, engine=engine):
                 yield chunk
         finally:
-            # En vez de borrarlo, lo dejamos cacheado para poder exportar clips
-            # despues sin volver a descargarlo de la URL.
-            cache_video_store(cache_key, video_path)
+            # No se cachea como "video exportable": es solo audio. Para
+            # exportar clips se descarga el video real por separado.
+            if os.path.exists(video_path):
+                os.remove(video_path)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -1671,7 +1703,11 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        cached_video = cache_video_path(input_data.cache_key)
+        # Si no vino cache_key (ej: exportar directo pegando una URL, sin
+        # pasar antes por análisis), usamos el hash de la URL para que un
+        # segundo export del mismo video pueda reusar lo recién descargado.
+        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
+        cached_video = cache_video_path(effective_cache_key)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido para exportar clips.")
             return
@@ -1684,6 +1720,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
         delete_video_after = False  # el cacheado NO se borra: lo puede volver a usar otra exportacion
+        cache_after_download = False  # el recien descargado de la URL se cachea para el proximo export
 
         try:
             if cached_video:
@@ -1708,7 +1745,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 if download_error:
                     yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error))
                     return
-                delete_video_after = True
+                cache_after_download = True
 
             clip_files = []
             total_clips = len(input_data.clips)
@@ -1761,6 +1798,8 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                     os.remove(video_path)
                 except Exception:
                     pass
+            elif cache_after_download and video_path and os.path.exists(video_path):
+                cache_video_store(effective_cache_key, video_path)
             try:
                 shutil.rmtree(str(clip_dir), ignore_errors=True)
             except Exception:
@@ -1818,7 +1857,8 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        cached_video = cache_video_path(input_data.cache_key)
+        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
+        cached_video = cache_video_path(effective_cache_key)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
@@ -1833,6 +1873,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         clip_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
         delete_video_after = False
+        cache_after_download = False
 
         try:
             if cached_video:
@@ -1855,7 +1896,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                         download_error = payload
                 if download_error:
                     yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error)); return
-                delete_video_after = True
+                cache_after_download = True
 
             clip_files = []
             total_clips = len(input_data.clips)
@@ -1927,6 +1968,8 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             if delete_video_after and video_path and os.path.exists(video_path):
                 try: os.remove(video_path)
                 except: pass
+            elif cache_after_download and video_path and os.path.exists(video_path):
+                cache_video_store(effective_cache_key, video_path)
             try: shutil.rmtree(str(clip_dir), ignore_errors=True)
             except: pass
 
@@ -1944,7 +1987,8 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        cached_video = cache_video_path(input_data.cache_key)
+        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
+        cached_video = cache_video_path(effective_cache_key)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
@@ -1957,6 +2001,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         carousel_dir.mkdir(parents=True, exist_ok=True)
         video_path = None
         delete_video_after = False
+        cache_after_download = False
 
         try:
             if cached_video:
@@ -1979,7 +2024,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                         download_error = payload
                 if download_error:
                     yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error)); return
-                delete_video_after = True
+                cache_after_download = True
 
             output_files = []
             total_slides = len(input_data.clips)
@@ -2044,6 +2089,8 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             if delete_video_after and video_path and os.path.exists(video_path):
                 try: os.remove(video_path)
                 except: pass
+            elif cache_after_download and video_path and os.path.exists(video_path):
+                cache_video_store(effective_cache_key, video_path)
             try: shutil.rmtree(str(carousel_dir), ignore_errors=True)
             except: pass
 
