@@ -25,6 +25,13 @@ export const PROMPTS_FALLBACK = {
 // lado del cliente solo evita el viaje de red para avisar antes.
 export const MAX_CLIPS_PER_EXPORT = 4;
 
+// Si no llega ningún byte del stream SSE en este tiempo, asumimos que la
+// conexión se colgó (el backend manda un keep-alive cada 20s durante los
+// pasos largos, así que esto le da bastante margen antes de avisar) y
+// cortamos el fetch en vez de dejar la barra de progreso congelada para
+// siempre sin que la persona se entere de que algo se rompió.
+export const STREAM_STALL_MS = 90 * 1000;
+
 export const STAGE_PROGRESS = {
     downloading: { pct: 15, label: "📥 Descargando video" },
     uploading: { pct: 30, label: "☁ Subiendo a Google" },

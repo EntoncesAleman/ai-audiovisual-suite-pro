@@ -16,4 +16,7 @@ export const state = {
 
     // Controller del análisis en curso, para poder frenarlo con el botón "Detener".
     currentAbortController: null,
+    // true si el último streamingFetch se cortó por el watchdog de stall
+    // (sin datos por STREAM_STALL_MS), no porque el usuario le dio "Detener".
+    _lastStreamStalled: false,
 };

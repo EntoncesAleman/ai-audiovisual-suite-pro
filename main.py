@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from google import genai
@@ -1790,12 +1790,17 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                     continue
                 yield event("cutting", f"Cortando clip {i}/{total_clips}: {clip.start} → {clip.end}", {"pct": pct, "current": i, "total": total_clips})
                 await asyncio.sleep(0)
-                try:
-                    await asyncio.to_thread(cut_single_clip, video_path, clip.start, clip.end, clip_path)
-                    clip_files.append(clip_path)
-                except Exception as e:
-                    yield event("cutting", f"⚠ Clip {i} falló: {str(e)[:80]}. Continuando...", {"pct": pct})
+                cut_error = None
+                async for kind, payload in run_blocking_with_heartbeat(cut_single_clip, video_path, clip.start, clip.end, clip_path):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "error":
+                        cut_error = payload
+                if cut_error:
+                    yield event("cutting", f"⚠ Clip {i} falló: {str(cut_error)[:80]}. Continuando...", {"pct": pct})
                     await asyncio.sleep(0)
+                else:
+                    clip_files.append(clip_path)
 
             if not clip_files:
                 yield event("error", "Ningún clip se pudo cortar.")
@@ -1839,6 +1844,45 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 pass
 
     return StreamingResponse(generator(), media_type="text/event-stream")
+
+
+@app.get("/exports")
+async def list_exports():
+    """
+    Lista lo que haya terminado de generarse en el servidor, con link de
+    descarga directo. Sirve como red de contención cuando la conexión se
+    corta antes de que la web reciba el link (el archivo puede haberse
+    terminado igual del lado del servidor) - navegá a /exports para
+    buscarlo a mano en vez de tener que volver a generarlo.
+    """
+    files = sorted(
+        (f for f in EXPORT_DIR.iterdir() if f.is_file()),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+    rows = "\n".join(
+        f'<tr><td>{f.name}</td><td>{f.stat().st_size / (1024 * 1024):.1f} MB</td>'
+        f'<td>{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(f.stat().st_mtime))}</td>'
+        f'<td><a href="/exports/{f.name}">Descargar</a></td></tr>'
+        for f in files
+    )
+    html = f"""
+    <html><head><meta charset="utf-8"><title>Exports</title>
+    <style>
+        body {{ font-family: sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }}
+        table {{ border-collapse: collapse; width: 100%; }}
+        td, th {{ padding: 8px 12px; border-bottom: 1px solid #334155; text-align: left; }}
+        a {{ color: #818cf8; }}
+    </style></head>
+    <body>
+        <h2>Archivos exportados en el servidor</h2>
+        <table>
+            <tr><th>Archivo</th><th>Tamaño</th><th>Modificado</th><th></th></tr>
+            {rows or '<tr><td colspan="4">No hay archivos exportados todavía.</td></tr>'}
+        </table>
+    </body></html>
+    """
+    return HTMLResponse(content=html)
 
 
 @app.get("/exports/{filename}")
@@ -1949,12 +1993,17 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                     continue
                 yield event("cutting", f"Cortando clip {i}/{total_clips}: {clip.start} → {clip.end}", {"pct": pct, "current": i, "total": total_clips})
                 await asyncio.sleep(0)
-                try:
-                    await asyncio.to_thread(cut_single_clip, video_path, clip.start, clip.end, clip_path)
-                    clip_files.append(clip_path)
-                except Exception as e:
-                    yield event("cutting", f"⚠ Clip {i} falló: {str(e)[:60]}. Continuando...", {"pct": pct})
+                cut_error = None
+                async for kind, payload in run_blocking_with_heartbeat(cut_single_clip, video_path, clip.start, clip.end, clip_path):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "error":
+                        cut_error = payload
+                if cut_error:
+                    yield event("cutting", f"⚠ Clip {i} falló: {str(cut_error)[:60]}. Continuando...", {"pct": pct})
                     await asyncio.sleep(0)
+                else:
+                    clip_files.append(clip_path)
 
             if not clip_files:
                 yield event("error", "Ningún clip se pudo cortar."); return
@@ -1972,12 +2021,17 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                     continue
                 yield event("converting", f"Aplicando formato {target_w}×{target_h} a clip {i}/{total_scale}...", {"pct": pct, "current": i, "total": total_scale})
                 await asyncio.sleep(0)
-                try:
-                    await asyncio.to_thread(scale_to_platform, clip_path, scaled_path, target_w, target_h, max_dur)
-                    output_files.append(scaled_path)
-                except Exception as e:
-                    yield event("converting", f"⚠ Clip {i} falló al convertir: {str(e)[:60]}", {"pct": pct})
+                scale_error = None
+                async for kind, payload in run_blocking_with_heartbeat(scale_to_platform, clip_path, scaled_path, target_w, target_h, max_dur):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "error":
+                        scale_error = payload
+                if scale_error:
+                    yield event("converting", f"⚠ Clip {i} falló al convertir: {str(scale_error)[:60]}", {"pct": pct})
                     await asyncio.sleep(0)
+                else:
+                    output_files.append(scaled_path)
 
             if not output_files:
                 yield event("error", "Ningún clip se pudo convertir."); return
@@ -2094,13 +2148,23 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                         continue
                     yield event("cutting", f"Procesando slide {i}/{total_slides} (clip 1:1)...", {"pct": pct, "current": i, "total": total_slides})
                     await asyncio.sleep(0)
-                    try:
-                        await asyncio.to_thread(cut_single_clip, video_path, clip.start, clip.end, raw_clip)
-                        await asyncio.to_thread(scale_to_platform, raw_clip, out_clip, 1080, 1080, 60)
-                        output_files.append(out_clip)
-                    except Exception as e:
-                        yield event("cutting", f"⚠ Slide {i} falló: {str(e)[:60]}", {"pct": pct})
+                    slide_error = None
+                    async for kind, payload in run_blocking_with_heartbeat(cut_single_clip, video_path, clip.start, clip.end, raw_clip):
+                        if kind == "heartbeat":
+                            yield ": keep-alive\n\n"
+                        elif kind == "error":
+                            slide_error = payload
+                    if not slide_error:
+                        async for kind, payload in run_blocking_with_heartbeat(scale_to_platform, raw_clip, out_clip, 1080, 1080, 60):
+                            if kind == "heartbeat":
+                                yield ": keep-alive\n\n"
+                            elif kind == "error":
+                                slide_error = payload
+                    if slide_error:
+                        yield event("cutting", f"⚠ Slide {i} falló: {str(slide_error)[:60]}", {"pct": pct})
                         await asyncio.sleep(0)
+                    else:
+                        output_files.append(out_clip)
 
             elif input_data.platform == "ig_carrusel_placas":
                 for i, clip in enumerate(input_data.clips, 1):

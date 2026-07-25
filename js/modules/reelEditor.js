@@ -1,5 +1,5 @@
 import { state } from '../state.js';
-import { BACKEND_URL, PLATFORM_DATA, MAX_CLIPS_PER_EXPORT } from '../config.js';
+import { BACKEND_URL, PLATFORM_DATA, MAX_CLIPS_PER_EXPORT, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
@@ -213,11 +213,23 @@ export async function startReelExport() {
 
     const clips = selected.map(c => ({ start: c.start, end: c.end, label: c.label }));
 
+    // Watchdog: si no llega ningún byte en STREAM_STALL_MS, algo se colgó
+    // (conexión cortada sin que el navegador se entere) - abortamos y avisamos
+    // en vez de dejar la barra de progreso congelada para siempre.
+    const controller = new AbortController();
+    let stalled = false;
+    let watchdog = setTimeout(() => { stalled = true; controller.abort(); }, STREAM_STALL_MS);
+    const resetWatchdog = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => { stalled = true; controller.abort(); }, STREAM_STALL_MS);
+    };
+
     try {
         const res = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...source, clips, platform: state.currentPlatformKey })
+            body: JSON.stringify({ ...source, clips, platform: state.currentPlatformKey }),
+            signal: controller.signal
         });
         if (!res.ok || !res.body) throw new Error("Sin respuesta del servidor.");
 
@@ -227,6 +239,7 @@ export async function startReelExport() {
 
         while (true) {
             const { done, value } = await reader.read();
+            resetWatchdog();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
@@ -257,7 +270,13 @@ export async function startReelExport() {
         }
     } catch (e) {
         statusEl.className = "clip-export-status active error";
-        statusEl.textContent = "❌ Error: " + e.message;
+        if (stalled) {
+            statusEl.textContent = "❌ Se perdió la conexión con el servidor (sin respuesta por " + Math.round(STREAM_STALL_MS / 1000) + "s). Puede que el servidor haya seguido procesando igual: probá 'Generar' de nuevo, retoma desde donde quedó.";
+        } else {
+            statusEl.textContent = "❌ Error: " + e.message;
+        }
+    } finally {
+        clearTimeout(watchdog);
     }
 }
 

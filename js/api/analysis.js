@@ -1,4 +1,4 @@
-import { BACKEND_URL } from '../config.js';
+import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { state } from '../state.js';
 import { showLoader, updateProgress } from '../modules/loader.js';
 import { saveSession } from '../modules/sessions.js';
@@ -26,7 +26,7 @@ export async function analyzeUrlStream() {
             body: JSON.stringify({ url: urlInput, engine: getSelectedEngine() })
         });
     } catch (e) {
-        if (e.name === 'AbortError') {
+        if (e.name === 'AbortError' && !state._lastStreamStalled) {
             console.log("Análisis detenido por el usuario.");
             return;
         }
@@ -37,7 +37,11 @@ export async function analyzeUrlStream() {
         // arrancaba una descarga+transcripción entera de nuevo. Mejor
         // avisar claro y dejar que decida si reintenta.
         console.error("Streaming falló:", e);
-        alert("Se perdió la conexión con el servidor durante el análisis. No se perdió el link, pero hay que reintentar 'Procesar Enlace'.");
+        if (state._lastStreamStalled) {
+            alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). El servidor puede haber seguido trabajando igual: reintentá 'Procesar Enlace' en un rato.`);
+        } else {
+            alert("Se perdió la conexión con el servidor durante el análisis. No se perdió el link, pero hay que reintentar 'Procesar Enlace'.");
+        }
     } finally {
         showLoader(false);
     }
@@ -89,12 +93,16 @@ export async function analyzeLocalFileDirect() {
             body: formData
         });
     } catch (e) {
-        if (e.name === 'AbortError') {
+        if (e.name === 'AbortError' && !state._lastStreamStalled) {
             console.log("Análisis detenido por el usuario.");
             return;
         }
         console.error("Streaming falló:", e);
-        alert("Se perdió la conexión con el servidor durante el análisis. Volvé a subir el archivo para reintentar.");
+        if (state._lastStreamStalled) {
+            alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). El servidor puede haber seguido trabajando igual: reintentá en un rato.`);
+        } else {
+            alert("Se perdió la conexión con el servidor durante el análisis. Volvé a subir el archivo para reintentar.");
+        }
     } finally {
         showLoader(false);
     }
@@ -109,6 +117,22 @@ export function stopCurrentAnalysis() {
 // Cliente SSE básico sobre fetch (lee chunks line by line)
 export async function streamingFetch(url, opts) {
     state.currentAbortController = new AbortController();
+    state._lastStreamStalled = false;
+    // Watchdog: si no llega ningún byte en STREAM_STALL_MS, la conexión se
+    // colgó (el backend manda un keep-alive cada 20s en los pasos largos) -
+    // abortamos y marcamos el motivo para que el caller avise en vez de
+    // dejar la barra de progreso congelada para siempre.
+    let watchdog = setTimeout(() => {
+        state._lastStreamStalled = true;
+        state.currentAbortController.abort();
+    }, STREAM_STALL_MS);
+    const resetWatchdog = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => {
+            state._lastStreamStalled = true;
+            state.currentAbortController.abort();
+        }, STREAM_STALL_MS);
+    };
     try {
         const res = await fetch(url, { ...opts, signal: state.currentAbortController.signal });
         if (!res.ok || !res.body) throw new Error("Servidor sin respuesta streaming.");
@@ -119,6 +143,7 @@ export async function streamingFetch(url, opts) {
 
         while (true) {
             const { done, value } = await reader.read();
+            resetWatchdog();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
@@ -144,6 +169,7 @@ export async function streamingFetch(url, opts) {
 
         if (finalResult) saveSession(finalResult);
     } finally {
+        clearTimeout(watchdog);
         state.currentAbortController = null;
     }
 }
