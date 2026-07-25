@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { escapeHtml } from '../utils/dom.js';
 import { showLoader } from './loader.js';
-import { streamingFetch } from '../api/analysis.js';
+import { streamingFetch, getSelectedEngine } from '../api/analysis.js';
 import { BACKEND_URL } from '../config.js';
 
 /**
@@ -104,7 +104,8 @@ export async function processInspected(convertToAudio, conversionMode) {
             body: JSON.stringify({
                 temp_path: tempPath,
                 convert_to_audio: convertToAudio,
-                conversion_mode: conversionMode || "copy"
+                conversion_mode: conversionMode || "copy",
+                engine: getSelectedEngine()
             })
         });
     } catch (e) {

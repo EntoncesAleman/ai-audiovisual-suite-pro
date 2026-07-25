@@ -10,13 +10,18 @@ import { state } from '../state.js';
  * (y ya mostró el alert correspondiente).
  */
 export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
-    if (state.currentData && state.currentData.cache_key) {
-        return { cache_key: state.currentData.cache_key };
-    }
-
     const url = document.getElementById(urlInputId).value.trim();
     const fileInput = document.getElementById(fileInputId);
     const file = fileInput && fileInput.files.length > 0 ? fileInput.files[0] : null;
+
+    if (state.currentData && state.currentData.cache_key && !file) {
+        // Mandamos la URL igual aunque haya cache_key: el disco de Render es
+        // efímero, así que si el server se reinició desde que se analizó el
+        // video, el cache del video ya no existe ahí aunque el frontend
+        // todavía lo recuerde. El backend prueba cache primero y si no está
+        // cae en descargar de la URL en vez de fallar con "falta URL".
+        return { cache_key: state.currentData.cache_key, url };
+    }
 
     if (!url && !file) {
         alert("Pegá la URL del video fuente o seleccioná el archivo local antes de exportar.");

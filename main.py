@@ -12,7 +12,7 @@ import asyncio
 import zipfile
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -158,6 +158,7 @@ else:
 
 class UrlInput(BaseModel):
     url: str
+    engine: str = "auto"  # "auto" (Gemini + Groq de respaldo) | "gemini" | "groq"
 
 
 # ============================================================
@@ -243,6 +244,31 @@ def _build_ydl_opts_with_auth(base_opts: dict) -> list:
     return strategies
 
 
+async def run_blocking_with_heartbeat(func, *args, interval: float = 20.0, **kwargs):
+    """
+    Corre `func` (bloqueante) en un thread aparte y va yieldeando
+    ("heartbeat", None) cada `interval` segundos mientras espera, terminando
+    con ("result", valor) o ("error", excepcion).
+
+    Sirve para pasos largos y silenciosos (descargar el video, subir/procesar
+    con Gemini) donde antes no salía ningún byte por el stream SSE durante
+    varios minutos: el proxy de Render puede matar la conexión por verla
+    inactiva, y el frontend perdía todo el progreso sin aviso. Mandando un
+    comentario de keep-alive periódico evitamos ese corte.
+    """
+    task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=interval)
+        if done:
+            break
+        yield ("heartbeat", None)
+    try:
+        result = task.result()
+        yield ("result", result)
+    except Exception as e:
+        yield ("error", e)
+
+
 def download_youtube_video(url: str) -> str:
     extractor_args = {}
     if POT_PROVIDER_BASE_URL:
@@ -322,8 +348,12 @@ MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "65536"))   # tope de sal
 GEMINI_MODELS = [
     m.strip() for m in os.getenv(
         "GEMINI_MODELS",
+        # gemini-2.5-flash-lite fue dado de baja por Google (404 NOT_FOUND
+        # permanente, "no longer available to new users") - sacado de la
+        # lista default para no desperdiciar reintentos contra un modelo
+        # que nunca va a responder.
         "gemini-2.0-flash,gemini-2.0-flash-lite,gemini-2.5-flash,"
-        "gemini-2.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash"
+        "gemini-3.1-flash-lite,gemini-3.5-flash"
     ).split(",") if m.strip()
 ]
 
@@ -517,227 +547,6 @@ def split_video_in_chunks(video_path: str, chunk_seconds: int) -> list:
         offset += chunk_seconds
         idx += 1
     return chunks
-
-
-# ============================================================
-# VAD (Voice Activity Detection): recortar silencios/música antes de
-# transcribir, para que Gemini nunca "escuche" esos tramos y alucine
-# texto donde no hay voz real (ej. loops tipo "no, no, no..." o
-# "que venga, que tenga, que venga..." durante cortes musicales).
-# ============================================================
-
-try:
-    import webrtcvad
-    _VAD_AVAILABLE = True
-except ImportError:
-    _VAD_AVAILABLE = False
-    print("⚠ webrtcvad no disponible: se transcribe sin recorte de silencios/música.")
-
-VAD_FRAME_MS = 30
-VAD_AGGRESSIVENESS = int(os.getenv("VAD_AGGRESSIVENESS", "2"))  # 0-3, mas alto = mas estricto para clasificar como voz
-VAD_PAD_MS = 250          # margen antes/despues de cada tramo de voz detectado, para no cortar palabras
-VAD_MERGE_GAP_MS = 700    # tramos de voz separados por menos de esto se funden en uno solo
-VAD_MIN_SEGMENT_MS = 200  # tramos mas cortos que esto (ya con padding) se descartan como ruido
-
-
-def _extract_pcm16_mono(source_path: str, sample_rate: int = 16000) -> str:
-    """Convierte a WAV PCM 16-bit mono, el formato que exige webrtcvad."""
-    import subprocess
-    output_path = f"{os.path.splitext(source_path)[0]}_vad16k.wav"
-    cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-i", source_path,
-        "-ac", "1", "-ar", str(sample_rate), "-f", "wav",
-        output_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
-        raise Exception(f"ffmpeg (extracción PCM para VAD) falló: {result.stderr[:200]}")
-    return output_path
-
-
-def _read_wav_pcm16(wav_path: str):
-    """Lee un WAV PCM 16-bit mono y devuelve (sample_rate, bytes crudos)."""
-    import wave
-    with wave.open(wav_path, "rb") as wf:
-        if wf.getsampwidth() != 2:
-            raise Exception("Se esperaba PCM 16-bit para VAD.")
-        sample_rate = wf.getframerate()
-        raw = wf.readframes(wf.getnframes())
-    return sample_rate, raw
-
-
-def _merge_vad_segments(raw_segments: list, total_duration: float) -> list:
-    """Aplica padding y fusiona tramos de voz cercanos entre sí, descartando ruido corto."""
-    if not raw_segments:
-        return []
-
-    pad = VAD_PAD_MS / 1000.0
-    merge_gap = VAD_MERGE_GAP_MS / 1000.0
-
-    padded = [(max(0, s - pad), min(total_duration, e + pad)) for s, e in raw_segments]
-
-    merged = [padded[0]]
-    for s, e in padded[1:]:
-        last_s, last_e = merged[-1]
-        if s - last_e <= merge_gap:
-            merged[-1] = (last_s, max(last_e, e))
-        else:
-            merged.append((s, e))
-
-    min_dur = VAD_MIN_SEGMENT_MS / 1000.0
-    return [(s, e) for s, e in merged if (e - s) >= min_dur]
-
-
-def detect_speech_segments(audio_path: str):
-    """
-    Corre VAD sobre el audio y devuelve una lista de tramos (start_sec, end_sec)
-    donde hay voz humana, ya fusionados y con padding.
-    Devuelve None si webrtcvad no está disponible (el caller debe procesar
-    el audio entero, sin recorte, igual que antes). Devuelve [] si no se
-    detectó voz humana en absoluto.
-    """
-    if not _VAD_AVAILABLE:
-        return None
-
-    pcm_wav = _extract_pcm16_mono(audio_path)
-    try:
-        sample_rate, raw = _read_wav_pcm16(pcm_wav)
-        vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
-
-        frame_bytes = int(sample_rate * (VAD_FRAME_MS / 1000.0)) * 2  # 16-bit = 2 bytes/sample
-        n_frames = (len(raw) - frame_bytes + 1) // frame_bytes if len(raw) >= frame_bytes else 0
-
-        flags = []
-        for i in range(n_frames):
-            frame = raw[i * frame_bytes:(i + 1) * frame_bytes]
-            try:
-                flags.append(vad.is_speech(frame, sample_rate))
-            except Exception:
-                flags.append(False)
-
-        if not flags:
-            return []
-
-        raw_segments = []
-        seg_start = None
-        for i, is_speech in enumerate(flags):
-            t = i * VAD_FRAME_MS / 1000.0
-            if is_speech and seg_start is None:
-                seg_start = t
-            elif not is_speech and seg_start is not None:
-                raw_segments.append((seg_start, t))
-                seg_start = None
-        if seg_start is not None:
-            raw_segments.append((seg_start, len(flags) * VAD_FRAME_MS / 1000.0))
-
-        total_duration = len(flags) * VAD_FRAME_MS / 1000.0
-        return _merge_vad_segments(raw_segments, total_duration)
-    finally:
-        if os.path.exists(pcm_wav):
-            try:
-                os.remove(pcm_wav)
-            except Exception:
-                pass
-
-
-def build_trimmed_audio(audio_path: str, segments: list, output_path: str) -> list:
-    """
-    Construye un audio nuevo concatenando solo los tramos con voz detectados.
-    Devuelve el mapping: lista de (trimmed_start, trimmed_end, original_start)
-    para poder traducir después los timestamps que devuelva Gemini (que van a
-    estar en el tiempo del audio ya recortado) de vuelta al tiempo real del video.
-
-    Usa un único filtro aselect (una sola expresión booleana con todos los
-    tramos) en vez de un nodo atrim+concat por tramo: con audio que tiene
-    muchas pausas cortas (charlas normales) el enfoque atrim+concat generaba
-    un filtergraph con cientos de nodos, que a ffmpeg le podía tardar varios
-    minutos en armar/ejecutar (se veía como el proceso "colgado"). aselect
-    hace una sola pasada sobre el audio sin importar cuántos tramos haya.
-    """
-    import subprocess
-
-    expr = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in segments)
-    filter_complex = f"aselect='{expr}',asetpts=N/SR/TB"
-
-    cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-i", audio_path,
-        "-af", filter_complex,
-        output_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    if result.returncode != 0:
-        raise Exception(f"ffmpeg (armado de audio recortado por VAD) falló: {result.stderr[:300]}")
-
-    mapping = []
-    cursor = 0.0
-    for s, e in segments:
-        dur = e - s
-        mapping.append((cursor, cursor + dur, s))
-        cursor += dur
-    return mapping
-
-
-def remap_time_through_vad(t: float, mapping: list) -> float:
-    """Traduce un instante del audio recortado de vuelta al tiempo original del video."""
-    if not mapping:
-        return t
-    for trimmed_start, trimmed_end, original_start in mapping:
-        if trimmed_start <= t <= trimmed_end:
-            return original_start + (t - trimmed_start)
-    # Fuera de rango (ej. Gemini redondeó más allá del final): usar el último tramo como referencia
-    last_trimmed_start, last_trimmed_end, last_original_start = mapping[-1]
-    if t > last_trimmed_end:
-        return last_original_start + (t - last_trimmed_start)
-    return t
-
-
-def remap_timestamps_in_transcript_vad(text: str, mapping: list) -> str:
-    """
-    Igual que shift_timestamps_in_transcript, pero usando el mapping de tramos
-    de VAD en vez de un offset constante: cada tramo puede tener un salto de
-    tiempo distinto respecto al anterior, por los huecos de silencio/música
-    que se recortaron entre uno y otro.
-    """
-    if not mapping:
-        return text
-    import re
-
-    def to_seconds(ts: str) -> float:
-        parts = [int(p) for p in ts.strip().split(":")]
-        if len(parts) == 2:
-            return parts[0] * 60 + parts[1]
-        if len(parts) == 3:
-            return parts[0] * 3600 + parts[1] * 60 + parts[2]
-        return 0.0
-
-    def to_ts(secs: float) -> str:
-        secs = round(secs)
-        h = secs // 3600
-        m = (secs % 3600) // 60
-        s = secs % 60
-        if h > 0:
-            return f"{h:02d}:{m:02d}:{s:02d}"
-        return f"{m:02d}:{s:02d}"
-
-    def replace_keyword_ts(match):
-        try:
-            new_secs = remap_time_through_vad(to_seconds(match.group(1)), mapping)
-            return f"TIMESTAMP: {to_ts(new_secs)}"
-        except Exception:
-            return match.group(0)
-
-    def replace_inline_ts(match):
-        try:
-            new_secs = remap_time_through_vad(to_seconds(match.group(1)), mapping)
-            return f"{to_ts(new_secs)}{match.group(2)}"
-        except Exception:
-            return match.group(0)
-
-    text = re.sub(r"TIMESTAMP:\s*(\d{1,2}:\d{2}(?::\d{2})?)", replace_keyword_ts, text)
-    text = re.sub(r"^(\d{1,2}:\d{2}(?::\d{2})?)(:\s)", replace_inline_ts, text, flags=re.MULTILINE)
-    return text
 
 
 def _collapse_repeated_runs(text: str, max_repeats: int = 3, max_phrase_words: int = 4) -> str:
@@ -1002,6 +811,16 @@ def _is_daily_quota_exhausted(e: Exception) -> bool:
     return is_quota_error and is_daily
 
 
+def _is_model_unavailable(e: Exception) -> bool:
+    """
+    True si el modelo fue dado de baja por Google (404 NOT_FOUND, "no longer
+    available"). Igual que la cuota diaria agotada: no sirve reintentar,
+    hay que descartar el modelo para el resto de esta sesión del server.
+    """
+    msg = str(e)
+    return "404" in msg and ("NOT_FOUND" in msg or "not found" in msg.lower() or "no longer available" in msg.lower())
+
+
 def _get_active_model() -> str | None:
     """Devuelve el primer modelo de GEMINI_MODELS que no tenga la cuota diaria agotada, o None."""
     for model in GEMINI_MODELS:
@@ -1068,6 +887,10 @@ def _call_gemini_with_retry(uploaded_file, max_attempts: int = 3):
                 print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Cambiando al siguiente modelo...")
                 _exhausted_models.add(model)
                 # No decrementar attempts_remaining: cuota diaria no es un fallo del intento
+            elif _is_model_unavailable(e):
+                print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo para el resto de esta sesión...")
+                _exhausted_models.add(model)
+                # No decrementar attempts_remaining: no es un fallo del intento, es un modelo muerto
             elif _is_quota_error(e):
                 wait = _extract_retry_delay(e)
                 print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s...")
@@ -1103,6 +926,9 @@ def _call_gemini_with_retry(uploaded_file, max_attempts: int = 3):
         last_error = e
         if _is_daily_quota_exhausted(e):
             print(f"   ⚠ Cuota DIARIA agotada para [{model}] en fallback. Cambiando de modelo...")
+            _exhausted_models.add(model)
+        elif _is_model_unavailable(e):
+            print(f"   ⚠ [{model}] fue dado de baja por Google (404) en fallback. Descartándolo...")
             _exhausted_models.add(model)
         elif _is_quota_error(e):
             wait = _extract_retry_delay(e)
@@ -1162,48 +988,67 @@ def _transcribe_with_groq_whisper(audio_path: str) -> str:
     return "\n".join(lines)
 
 
-def _process_single_video_file(video_path: str) -> str:
+def _normalize_engine(value: str) -> str:
+    """Clampea el motor pedido a uno de los 3 válidos, "auto" si viene vacío o inválido."""
+    value = (value or "auto").strip().lower()
+    return value if value in ("auto", "gemini", "groq") else "auto"
+
+
+def _process_single_video_file(video_path: str, engine: str = "auto") -> str:
     """
-    Extrae el audio del archivo (drásticamente menos tokens que video),
-    lo sube a Google Files, llama a Gemini y devuelve el transcript.
+    Extrae el audio del archivo (drásticamente menos tokens que video) y lo
+    transcribe. `engine` controla qué motor usar:
+    - "auto" (default): Gemini primero, Groq como red de contención si Gemini falla del todo.
+    - "gemini": solo Gemini (diarización real de speakers), sin fallback a Groq.
+    - "groq": solo Groq Whisper (rápido, cuota más generosa, sin diarización real).
     Audio usa ~32 tokens/seg vs ~290 tokens/seg de video — cabe en el free tier.
     """
     audio_path = None
     path_to_upload = video_path
 
-    # Intentar extraer audio para minimizar consumo de tokens
+    # Intentar extraer audio para minimizar consumo de tokens / tiempo de subida
     try:
         audio_path = convert_to_clean_audio(video_path, mode="mp3")
         path_to_upload = audio_path
         size_mb = round(os.path.getsize(audio_path) / (1024 * 1024), 2)
-        print(f"   Audio extraído: {os.path.basename(audio_path)} ({size_mb} MB). Subiendo a Google...")
+        print(f"   Audio extraído: {os.path.basename(audio_path)} ({size_mb} MB).")
     except Exception as e:
-        print(f"   ⚠ No se pudo extraer audio ({e}). Subiendo archivo original...")
+        print(f"   ⚠ No se pudo extraer audio ({e}). Se usa el archivo original.")
 
     try:
+        if engine == "groq":
+            if not GROQ_API_KEY:
+                raise Exception("Se pidió usar solo Groq pero GROQ_API_KEY no está configurada en el servidor.")
+            print("   Transcribiendo con Groq Whisper (motor forzado)...")
+            text = _transcribe_with_groq_whisper(path_to_upload)
+            print("   ✓ Transcripción obtenida vía Groq Whisper (sin diarización real de speakers).")
+            return _collapse_repeated_runs(text)
+
+        # engine == "auto" o "gemini": pasa por Gemini
+        print("   Subiendo a Google...")
         uploaded_file = client.files.upload(file=path_to_upload)
-
-        while uploaded_file.state.name == "PROCESSING":
-            time.sleep(6)
-            uploaded_file = client.files.get(name=uploaded_file.name)
-            print(f"   Google procesando {os.path.basename(path_to_upload)}...")
-
-        if uploaded_file.state.name == "FAILED":
-            raise Exception(f"La indexación de {os.path.basename(path_to_upload)} falló en Google.")
-
         try:
-            text = _call_gemini_with_retry(uploaded_file)
-        except Exception as gemini_error:
-            if GROQ_API_KEY:
-                print(f"   ⚠ Gemini falló ({gemini_error}). Probando fallback con Groq Whisper...")
-                try:
-                    text = _transcribe_with_groq_whisper(path_to_upload)
-                    print("   ✓ Transcripción obtenida vía Groq Whisper (sin diarización real de speakers).")
-                except Exception as groq_error:
-                    print(f"   ⚠ Groq Whisper también falló: {groq_error}")
-                    raise gemini_error
-            else:
-                raise
+            while uploaded_file.state.name == "PROCESSING":
+                time.sleep(6)
+                uploaded_file = client.files.get(name=uploaded_file.name)
+                print(f"   Google procesando {os.path.basename(path_to_upload)}...")
+
+            if uploaded_file.state.name == "FAILED":
+                raise Exception(f"La indexación de {os.path.basename(path_to_upload)} falló en Google.")
+
+            try:
+                text = _call_gemini_with_retry(uploaded_file)
+            except Exception as gemini_error:
+                if engine == "auto" and GROQ_API_KEY:
+                    print(f"   ⚠ Gemini falló ({gemini_error}). Probando fallback con Groq Whisper...")
+                    try:
+                        text = _transcribe_with_groq_whisper(path_to_upload)
+                        print("   ✓ Transcripción obtenida vía Groq Whisper (sin diarización real de speakers).")
+                    except Exception as groq_error:
+                        print(f"   ⚠ Groq Whisper también falló: {groq_error}")
+                        raise gemini_error
+                else:
+                    raise
         finally:
             try:
                 client.files.delete(name=uploaded_file.name)
@@ -1221,97 +1066,65 @@ def _process_single_video_file(video_path: str) -> str:
                 pass
 
 
-def process_video_smart(video_path: str, progress_callback=None) -> str:
+def process_video_smart(video_path: str, progress_callback=None, engine: str = "auto") -> str:
     """
-    Recorta silencios/música con VAD, decide si procesar el resultado entero
-    o partirlo en tramos según su duración, y devuelve la transcripción con
-    tiempo absoluto continuo desde 00:00 del video original (sin marcas de
-    tramo: si el texto le llega a otra IA con "=== TRAMO 2 ===" de por medio,
-    puede confundirse y devolver timestamps relativos al tramo en vez de al
-    video completo — por eso el resultado es siempre un único hilo).
+    Decide si procesar el video entero o partirlo en tramos según su
+    duración, y devuelve la transcripción con tiempo absoluto continuo
+    desde 00:00 del video original (sin marcas de tramo: si el texto le
+    llega a otra IA con "=== TRAMO 2 ===" de por medio, puede confundirse
+    y devolver timestamps relativos al tramo en vez de al video completo —
+    por eso el resultado es siempre un único hilo).
     progress_callback(stage, message) opcional para reportar avance.
+    engine: "auto" | "gemini" | "groq" (ver _process_single_video_file).
     """
     def report(stage, msg):
         if progress_callback:
             progress_callback(stage, msg)
         print(f"[{stage}] {msg}")
 
-    vad_mapping = None
-    working_path = video_path
+    duration_seconds = get_video_duration_seconds(video_path)
+    duration_minutes = duration_seconds / 60 if duration_seconds else 0
 
+    if duration_minutes > 0:
+        report("info", f"Duración a procesar: {duration_minutes:.1f} minutos")
+
+    # Si es corto o no pudimos detectar duración, procesamos entero
+    if duration_minutes == 0 or duration_minutes <= CHUNK_THRESHOLD_MIN:
+        report("analyzing", "Procesando (un solo tramo)...")
+        return _process_single_video_file(video_path, engine=engine)
+
+    # Largo: procesar por tramos
+    chunk_seconds = CHUNK_DURATION_MIN * 60
+    estimated_chunks = int((duration_seconds + chunk_seconds - 1) // chunk_seconds)
+    report("analyzing", f"Largo ({duration_minutes:.1f} min). Dividiendo en {estimated_chunks} tramos de {CHUNK_DURATION_MIN} min...")
+
+    chunks = split_video_in_chunks(video_path, chunk_seconds)
+    if len(chunks) <= 1:
+        report("info", "No se pudo partir; procesando entero como fallback.")
+        return _process_single_video_file(video_path, engine=engine)
+
+    full_transcript = []
     try:
-        report("analyzing", "Detectando tramos de silencio/música para recortar antes de transcribir...")
-        segments = detect_speech_segments(video_path)
-        if segments:
-            trimmed_path = f"{os.path.splitext(video_path)[0]}_vadtrim.mp3"
-            vad_mapping = build_trimmed_audio(video_path, segments, trimmed_path)
-            if vad_mapping and os.path.exists(trimmed_path):
-                working_path = trimmed_path
-                report("analyzing", f"Recorte de silencios/música listo: {vad_mapping[-1][1] / 60:.1f} min de voz real a transcribir.")
-            else:
-                vad_mapping = None
-        elif segments == []:
-            report("info", "No se detectó voz humana en el audio.")
-        # si segments es None (webrtcvad no disponible), se sigue sin recortar
-    except Exception as e:
-        print(f"⚠ VAD falló, se sigue sin recorte: {e}")
-        vad_mapping = None
-        working_path = video_path
-
-    try:
-        duration_seconds = get_video_duration_seconds(working_path)
-        duration_minutes = duration_seconds / 60 if duration_seconds else 0
-
-        if duration_minutes > 0:
-            report("info", f"Duración a procesar: {duration_minutes:.1f} minutos" + (" (ya recortada)" if vad_mapping else ""))
-
-        # Si es corto o no pudimos detectar duración, procesamos entero
-        if duration_minutes == 0 or duration_minutes <= CHUNK_THRESHOLD_MIN:
-            report("analyzing", "Procesando (un solo tramo)...")
-            text = _process_single_video_file(working_path)
-        else:
-            # Largo: procesar por tramos
-            chunk_seconds = CHUNK_DURATION_MIN * 60
-            estimated_chunks = int((duration_seconds + chunk_seconds - 1) // chunk_seconds)
-            report("analyzing", f"Largo ({duration_minutes:.1f} min). Dividiendo en {estimated_chunks} tramos de {CHUNK_DURATION_MIN} min...")
-
-            chunks = split_video_in_chunks(working_path, chunk_seconds)
-            if len(chunks) <= 1:
-                report("info", "No se pudo partir; procesando entero como fallback.")
-                text = _process_single_video_file(working_path)
-            else:
-                full_transcript = []
-                try:
-                    for i, (offset, chunk_path) in enumerate(chunks, start=1):
-                        if i > 1:
-                            report("analyzing", f"Pausa de {INTER_CHUNK_DELAY}s entre tramos (cuota Gemini)...")
-                            time.sleep(INTER_CHUNK_DELAY)
-                        report("analyzing", f"Procesando tramo {i}/{len(chunks)} (desde minuto {offset//60})...")
-                        chunk_text = _process_single_video_file(chunk_path)
-                        adjusted = shift_timestamps_in_transcript(chunk_text, offset)
-                        full_transcript.append(adjusted)
-                finally:
-                    # Limpieza local de los tramos creados
-                    for offset, chunk_path in chunks:
-                        if chunk_path != working_path and os.path.exists(chunk_path):
-                            try:
-                                os.remove(chunk_path)
-                            except Exception:
-                                pass
-                text = "\n".join(full_transcript)
-
-        if vad_mapping:
-            text = remap_timestamps_in_transcript_vad(text, vad_mapping)
-        return text
+        for i, (offset, chunk_path) in enumerate(chunks, start=1):
+            if i > 1:
+                report("analyzing", f"Pausa de {INTER_CHUNK_DELAY}s entre tramos (cuota Gemini)...")
+                time.sleep(INTER_CHUNK_DELAY)
+            report("analyzing", f"Procesando tramo {i}/{len(chunks)} (desde minuto {offset//60})...")
+            chunk_text = _process_single_video_file(chunk_path, engine=engine)
+            adjusted = shift_timestamps_in_transcript(chunk_text, offset)
+            full_transcript.append(adjusted)
     finally:
-        if working_path != video_path and os.path.exists(working_path):
-            try:
-                os.remove(working_path)
-            except Exception:
-                pass
+        # Limpieza local de los tramos creados
+        for offset, chunk_path in chunks:
+            if chunk_path != video_path and os.path.exists(chunk_path):
+                try:
+                    os.remove(chunk_path)
+                except Exception:
+                    pass
+    return "\n".join(full_transcript)
 
 
-async def process_video_with_gemini(video_path: str, cache_key: str = None):
+async def process_video_with_gemini(video_path: str, cache_key: str = None, engine: str = "auto"):
     """Versión no-streaming (compatible con el endpoint clásico)."""
     # Chequeo de cache
     if cache_key:
@@ -1323,7 +1136,7 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None):
 
     try:
         print("Iniciando procesamiento inteligente (con detección automática de duración)...")
-        text = await asyncio.to_thread(process_video_smart, video_path)
+        text = await asyncio.to_thread(process_video_smart, video_path, None, engine)
 
         result = {"title": "Metraje Completo Analizado", "raw_timeline": text, "from_cache": False, "cache_key": cache_key}
 
@@ -1337,7 +1150,7 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None):
         raise HTTPException(status_code=500, detail=f"Error en la IA: {str(e)}")
 
 
-async def process_video_streaming(video_path: str, cache_key: str = None):
+async def process_video_streaming(video_path: str, cache_key: str = None, engine: str = "auto"):
     """Versión streaming: emite eventos SSE con el progreso real."""
 
     def event(stage: str, message: str, data: dict = None):
@@ -1355,49 +1168,29 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
             yield event("done", "Listo (desde cache)", {"result": cached})
             return
 
-    vad_mapping = None
-    working_path = video_path
-
     try:
-        # 2. VAD: recortar silencios/música antes de subir nada a Gemini, para
-        #    que no alucine texto donde no hay voz real.
-        try:
-            yield event("analyzing", "Detectando tramos de silencio/música para recortar antes de transcribir...")
-            await asyncio.sleep(0)
-            segments = await asyncio.to_thread(detect_speech_segments, video_path)
-            if segments:
-                trimmed_path = f"{os.path.splitext(video_path)[0]}_vadtrim.mp3"
-                vad_mapping = await asyncio.to_thread(build_trimmed_audio, video_path, segments, trimmed_path)
-                if vad_mapping and os.path.exists(trimmed_path):
-                    working_path = trimmed_path
-                    yield event("analyzing", f"Recorte listo: {vad_mapping[-1][1] / 60:.1f} min de voz real a transcribir.")
-                    await asyncio.sleep(0)
-                else:
-                    vad_mapping = None
-            elif segments == []:
-                yield event("error", "No se detectó voz humana en el audio.")
-                return
-            # si segments es None (webrtcvad no disponible), se sigue sin recortar
-        except Exception as e:
-            print(f"⚠ VAD falló, se sigue sin recorte: {e}")
-            vad_mapping = None
-            working_path = video_path
-
-        # 3. Detectar duración y decidir si procesar entero o por tramos
-        duration_seconds = await asyncio.to_thread(get_video_duration_seconds, working_path)
+        # 2. Detectar duración y decidir si procesar entero o por tramos
+        duration_seconds = await asyncio.to_thread(get_video_duration_seconds, video_path)
         duration_minutes = duration_seconds / 60 if duration_seconds else 0
 
         if duration_minutes > 0:
-            yield event("info", f"Duración a procesar: {duration_minutes:.1f} minutos" + (" (ya recortada)" if vad_mapping else ""))
+            yield event("info", f"Duración a procesar: {duration_minutes:.1f} minutos")
 
-        # 4. Procesamiento (entero o por tramos)
+        # 3. Procesamiento (entero o por tramos)
         if duration_minutes == 0 or duration_minutes <= CHUNK_THRESHOLD_MIN:
             yield event("uploading", "Procesando en un solo tramo...")
             await asyncio.sleep(0)
-            try:
-                text = await asyncio.to_thread(_process_single_video_file, working_path)
-            except Exception as e:
-                yield event("error", str(e))
+            text = None
+            process_error = None
+            async for kind, payload in run_blocking_with_heartbeat(_process_single_video_file, video_path, engine=engine):
+                if kind == "heartbeat":
+                    yield ": keep-alive\n\n"
+                elif kind == "result":
+                    text = payload
+                else:
+                    process_error = payload
+            if process_error:
+                yield event("error", str(process_error))
                 return
         else:
             # Largo: tramos
@@ -1406,13 +1199,20 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
             yield event("analyzing", f"Largo ({duration_minutes:.1f} min). Partiendo en {estimated} tramos de {CHUNK_DURATION_MIN} min...")
             await asyncio.sleep(0)
 
-            chunks = await asyncio.to_thread(split_video_in_chunks, working_path, chunk_seconds)
+            chunks = await asyncio.to_thread(split_video_in_chunks, video_path, chunk_seconds)
             if len(chunks) <= 1:
                 yield event("analyzing", "No se pudo partir; procesando completo...")
-                try:
-                    text = await asyncio.to_thread(_process_single_video_file, working_path)
-                except Exception as e:
-                    yield event("error", str(e))
+                text = None
+                process_error = None
+                async for kind, payload in run_blocking_with_heartbeat(_process_single_video_file, video_path, engine=engine):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "result":
+                        text = payload
+                    else:
+                        process_error = payload
+                if process_error:
+                    yield event("error", str(process_error))
                     return
             else:
                 full_transcript = []
@@ -1423,10 +1223,17 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
                             await asyncio.sleep(INTER_CHUNK_DELAY)
                         yield event("analyzing", f"Tramo {i}/{len(chunks)} — desde minuto {offset//60} (subiendo y analizando)...")
                         await asyncio.sleep(0)
-                        try:
-                            chunk_text = await asyncio.to_thread(_process_single_video_file, chunk_path)
-                        except Exception as e:
-                            yield event("error", f"Falló el tramo {i}: {e}")
+                        chunk_text = None
+                        process_error = None
+                        async for kind, payload in run_blocking_with_heartbeat(_process_single_video_file, chunk_path, engine=engine):
+                            if kind == "heartbeat":
+                                yield ": keep-alive\n\n"
+                            elif kind == "result":
+                                chunk_text = payload
+                            else:
+                                process_error = payload
+                        if process_error:
+                            yield event("error", f"Falló el tramo {i}: {process_error}")
                             return
                         adjusted = shift_timestamps_in_transcript(chunk_text, offset)
                         full_transcript.append(adjusted)
@@ -1434,15 +1241,12 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
                         await asyncio.sleep(0)
                 finally:
                     for offset, chunk_path in chunks:
-                        if chunk_path != working_path and os.path.exists(chunk_path):
+                        if chunk_path != video_path and os.path.exists(chunk_path):
                             try:
                                 os.remove(chunk_path)
                             except Exception:
                                 pass
                 text = "\n".join(full_transcript)
-
-        if vad_mapping:
-            text = remap_timestamps_in_transcript_vad(text, vad_mapping)
 
         result = {
             "title": "Metraje Completo Analizado",
@@ -1458,12 +1262,6 @@ async def process_video_streaming(video_path: str, cache_key: str = None):
 
     except Exception as e:
         yield event("error", f"Error en el procesamiento: {str(e)}")
-    finally:
-        if working_path != video_path and os.path.exists(working_path):
-            try:
-                os.remove(working_path)
-            except Exception:
-                pass
 
 
 # ============================================================
@@ -1480,21 +1278,22 @@ async def analyze_url(input_data: UrlInput):
 
     video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
     try:
-        return await process_video_with_gemini(video_path, cache_key=cache_key)
+        return await process_video_with_gemini(video_path, cache_key=cache_key, engine=_normalize_engine(input_data.engine))
     finally:
-        if os.path.exists(video_path):
-            os.remove(video_path)
+        # Igual que la version streaming: lo dejamos cacheado para exportar
+        # clips despues sin volver a descargarlo de la URL.
+        cache_video_store(cache_key, video_path)
 
 
 @app.post("/analyze-video")
-async def analyze_video(file: UploadFile = File(...)):
+async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto")):
     temp_dir = tempfile.gettempdir()
     video_path = os.path.join(temp_dir, file.filename)
     with open(video_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     try:
         cache_key = file_hash(video_path)
-        return await process_video_with_gemini(video_path, cache_key=cache_key)
+        return await process_video_with_gemini(video_path, cache_key=cache_key, engine=_normalize_engine(engine))
     finally:
         if os.path.exists(video_path):
             os.remove(video_path)
@@ -1508,6 +1307,7 @@ async def analyze_video(file: UploadFile = File(...)):
 async def analyze_url_stream(input_data: UrlInput):
     """Versión streaming: el frontend recibe eventos de progreso en tiempo real."""
     cache_key = url_hash(input_data.url)
+    engine = _normalize_engine(input_data.engine)
 
     async def generator():
         # Cache hit inmediato
@@ -1520,14 +1320,22 @@ async def analyze_url_stream(input_data: UrlInput):
 
         # Descarga
         yield f"data: {json.dumps({'stage': 'downloading', 'message': 'Descargando video desde la URL...'}, ensure_ascii=False)}\n\n"
-        try:
-            video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
-        except HTTPException as e:
-            yield f"data: {json.dumps({'stage': 'error', 'message': e.detail}, ensure_ascii=False)}\n\n"
+        video_path = None
+        download_error = None
+        async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+            if kind == "heartbeat":
+                yield ": keep-alive\n\n"
+            elif kind == "result":
+                video_path = payload
+            else:
+                download_error = payload
+        if download_error:
+            msg = download_error.detail if isinstance(download_error, HTTPException) else str(download_error)
+            yield f"data: {json.dumps({'stage': 'error', 'message': msg}, ensure_ascii=False)}\n\n"
             return
 
         try:
-            async for chunk in process_video_streaming(video_path, cache_key=cache_key):
+            async for chunk in process_video_streaming(video_path, cache_key=cache_key, engine=engine):
                 yield chunk
         finally:
             # En vez de borrarlo, lo dejamos cacheado para poder exportar clips
@@ -1538,7 +1346,7 @@ async def analyze_url_stream(input_data: UrlInput):
 
 
 @app.post("/analyze-video-stream")
-async def analyze_video_stream(file: UploadFile = File(...)):
+async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form("auto")):
     """Versión streaming para archivos locales."""
     temp_dir = tempfile.gettempdir()
     video_path = os.path.join(temp_dir, file.filename)
@@ -1546,10 +1354,11 @@ async def analyze_video_stream(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     cache_key = file_hash(video_path)
+    engine = _normalize_engine(engine)
 
     async def generator():
         try:
-            async for chunk in process_video_streaming(video_path, cache_key=cache_key):
+            async for chunk in process_video_streaming(video_path, cache_key=cache_key, engine=engine):
                 yield chunk
         finally:
             # En vez de borrarlo, lo dejamos cacheado para poder exportar clips
@@ -1590,6 +1399,7 @@ class ProcessInspectedInput(BaseModel):
     temp_path: str
     convert_to_audio: bool = False
     conversion_mode: str = "copy"  # 'copy' (m4a) o 'mp3'
+    engine: str = "auto"  # "auto" (Gemini + Groq de respaldo) | "gemini" | "groq"
 
 
 @app.post("/process-inspected")
@@ -1625,7 +1435,7 @@ async def process_inspected(input_data: ProcessInspectedInput):
 
             # Procesamiento normal con cacheo
             cache_key = file_hash(path_to_process)
-            async for chunk in process_video_streaming(path_to_process, cache_key=cache_key):
+            async for chunk in process_video_streaming(path_to_process, cache_key=cache_key, engine=_normalize_engine(input_data.engine)):
                 yield chunk
         finally:
             # Limpieza de archivos intermedios (ej: audio convertido)
@@ -1887,10 +1697,16 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
             else:
                 yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...", {"pct": 5})
                 await asyncio.sleep(0)
-                try:
-                    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
-                except HTTPException as e:
-                    yield event("error", e.detail)
+                download_error = None
+                async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "result":
+                        video_path = payload
+                    else:
+                        download_error = payload
+                if download_error:
+                    yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error))
                     return
                 delete_video_after = True
 
@@ -2029,10 +1845,16 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             else:
                 yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
-                try:
-                    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
-                except HTTPException as e:
-                    yield event("error", e.detail); return
+                download_error = None
+                async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "result":
+                        video_path = payload
+                    else:
+                        download_error = payload
+                if download_error:
+                    yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error)); return
                 delete_video_after = True
 
             clip_files = []
@@ -2147,10 +1969,16 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             else:
                 yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
-                try:
-                    video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
-                except HTTPException as e:
-                    yield event("error", e.detail); return
+                download_error = None
+                async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "result":
+                        video_path = payload
+                    else:
+                        download_error = payload
+                if download_error:
+                    yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error)); return
                 delete_video_after = True
 
             output_files = []

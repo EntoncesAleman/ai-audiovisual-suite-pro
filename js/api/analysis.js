@@ -8,6 +8,12 @@ import { showInspectionModal } from '../modules/modal.js';
 // ANÁLISIS (con streaming de progreso)
 // ============================================================
 
+// "auto" (Gemini + Groq de respaldo) | "gemini" | "groq" — elegido en el selector del panel de ingreso.
+export function getSelectedEngine() {
+    const el = document.getElementById('transcriptEngine');
+    return el ? el.value : "auto";
+}
+
 export async function analyzeUrlStream() {
     const urlInput = document.getElementById('streamUrl').value.trim();
     if (!urlInput) return alert("Pega un link primero.");
@@ -17,27 +23,21 @@ export async function analyzeUrlStream() {
         await streamingFetch(`${BACKEND_URL}/analyze-url-stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: urlInput })
+            body: JSON.stringify({ url: urlInput, engine: getSelectedEngine() })
         });
     } catch (e) {
         if (e.name === 'AbortError') {
             console.log("Análisis detenido por el usuario.");
             return;
         }
-        // Fallback al endpoint clásico si el streaming no está disponible
-        console.warn("Streaming falló, usando endpoint clásico:", e);
-        try {
-            const res = await fetch(`${BACKEND_URL}/analyze-url`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: urlInput })
-            });
-            if (!res.ok) throw new Error("Error en el servidor.");
-            const data = await res.json();
-            saveSession(data);
-        } catch (err) {
-            alert(err.message);
-        }
+        // Antes acá se reintentaba todo de cero contra el endpoint clásico
+        // sin avisar nada: si la conexión se cortaba a mitad de un análisis
+        // largo (proxy matando la conexión, server reiniciando, etc.) el
+        // usuario perdía todo el progreso sin enterarse de qué pasó y
+        // arrancaba una descarga+transcripción entera de nuevo. Mejor
+        // avisar claro y dejar que decida si reintenta.
+        console.error("Streaming falló:", e);
+        alert("Se perdió la conexión con el servidor durante el análisis. No se perdió el link, pero hay que reintentar 'Procesar Enlace'.");
     } finally {
         showLoader(false);
     }
@@ -82,6 +82,7 @@ export async function analyzeLocalFileDirect() {
     showLoader(true);
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);
+    formData.append("engine", getSelectedEngine());
     try {
         await streamingFetch(`${BACKEND_URL}/analyze-video-stream`, {
             method: 'POST',
@@ -92,15 +93,8 @@ export async function analyzeLocalFileDirect() {
             console.log("Análisis detenido por el usuario.");
             return;
         }
-        console.warn("Streaming falló, usando endpoint clásico:", e);
-        try {
-            const res = await fetch(`${BACKEND_URL}/analyze-video`, { method: 'POST', body: formData });
-            if (!res.ok) throw new Error("Error interno.");
-            const data = await res.json();
-            saveSession(data);
-        } catch (err) {
-            alert(err.message);
-        }
+        console.error("Streaming falló:", e);
+        alert("Se perdió la conexión con el servidor durante el análisis. Volvé a subir el archivo para reintentar.");
     } finally {
         showLoader(false);
     }

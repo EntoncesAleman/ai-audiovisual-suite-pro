@@ -43,6 +43,12 @@
         <div class="dashboard-grid">
             <div class="card">
                 <h3>Ingreso de Audio/Video o Stream</h3>
+                <label>Motor de transcripción:</label>
+                <select id="transcriptEngine">
+                    <option value="auto" selected>🤖 Automático (Gemini, y Groq de respaldo si Gemini falla)</option>
+                    <option value="gemini">✨ Solo Gemini (diarización real de speakers, cuota más limitada)</option>
+                    <option value="groq">⚡ Solo Groq (rápido, mucha cuota, sin diarización real)</option>
+                </select>
                 <label>Pegar URL del Audio/Video:</label>
                 <input type="text" id="streamUrl" placeholder="Pega el enlace de YouTube o Drive aquí...">
                 <button class="primary" onclick="analyzeUrlStream()">Procesar Enlace</button>

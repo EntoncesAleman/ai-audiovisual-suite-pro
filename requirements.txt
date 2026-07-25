@@ -7,4 +7,3 @@ python-multipart==0.0.32
 requests==2.34.2
 yt-dlp==2026.7.4
 bgutil-ytdlp-pot-provider
-webrtcvad-wheels==2.0.14
