@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../Documents/free-llm-api-resources"
+		}
+	],
+	"settings": {
+		"claudeCodeChat.permissions.yoloMode": true
+	}
+}

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesión · AI Audiovisual Suite Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/login.css">
+</head>
+<body>
+
+    <div class="cosmos" aria-hidden="true">
+        <div class="cosmos__stars"></div>
+        <div class="cosmos__galaxy"></div>
+        <div class="cosmos__ruins"></div>
+        <div class="cosmos__horizon-glow"></div>
+        <div class="cosmos__terrain"></div>
+        <div class="cosmos__grain"></div>
+        <div class="cosmos__vignette"></div>
+    </div>
+
+    <div class="stage">
+        <header class="mark">
+            <span class="mark__wordmark">AI Audiovisual Suite</span>
+            <span class="mark__tagline">Escaneo profundo continuo, sin límites de duración.</span>
+        </header>
+
+        <section class="gate">
+            <div class="gate__box">
+
+                <p class="gate__eyebrow">Acceso</p>
+                <h1 class="gate__title">Iniciar sesión</h1>
+                <p class="gate__sub">Entrá para ver tus sesiones y análisis guardados.</p>
+
+                <form class="gate__form" id="loginForm" novalidate>
+                    <div class="field">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" placeholder="vos@estudio.com" autocomplete="username">
+                    </div>
+
+                    <div class="field">
+                        <label for="password">Contraseña</label>
+                        <div class="field__row">
+                            <input type="password" id="password" name="password" placeholder="••••••••••" autocomplete="current-password">
+                            <button type="button" class="field__toggle" id="togglePassword" aria-label="Mostrar contraseña" aria-pressed="false">
+                                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12Z"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="gate__row">
+                        <label class="check">
+                            <input type="checkbox" id="remember" checked>
+                            <span class="check__box"></span>
+                            <span>Mantener sesión iniciada</span>
+                        </label>
+                        <a href="#" class="gate__link">¿Olvidaste tu contraseña?</a>
+                    </div>
+
+                    <button type="submit" class="gate__submit" id="submitBtn">
+                        <span class="gate__submit-label">Entrar</span>
+                    </button>
+                </form>
+
+                <p class="gate__footer">Acceso restringido al equipo de producción.</p>
+            </div>
+        </section>
+    </div>
+
+<script src="js/login.js"></script>
+</body>
+</html>

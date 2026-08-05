@@ -1,0 +1,472 @@
+/* ============================================================
+   TOKENS — retrofuturismo cósmico pintado (aerógrafo, cálido/frío)
+   ============================================================ */
+:root {
+    --void: #050b18;
+    --flare: #ffab5c;
+    --sun: #ffd27a;
+    --sun-core: #fff6e0;
+
+    --ink: #f3ead8;
+    --ink-dim: #a9bede;
+    --ink-faint: #64749a;
+    --line: rgba(234, 245, 255, 0.16);
+    --card: rgba(6, 12, 24, 0.82);
+
+    --font-display: 'Cinzel', 'Georgia', serif;
+    --font-body: 'EB Garamond', 'Georgia', serif;
+    --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--void);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; }
+
+:focus-visible {
+    outline: 2px solid var(--sun);
+    outline-offset: 2px;
+}
+
+/* ============================================================
+   COSMOS — escena de fondo (elemento de firma)
+   ============================================================ */
+.cosmos {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    background: linear-gradient(180deg, #050b18 0%, #0a1830 32%, #123362 60%, #1c4a85 84%, #2f6bb0 100%);
+}
+
+.cosmos__stars {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    background-image:
+        radial-gradient(1.4px 1.4px at 8% 18%, rgba(234, 245, 255, .9), transparent),
+        radial-gradient(1px 1px at 22% 8%, rgba(234, 245, 255, .6), transparent),
+        radial-gradient(1.6px 1.6px at 35% 26%, rgba(255, 255, 255, .85), transparent),
+        radial-gradient(1px 1px at 48% 12%, rgba(234, 245, 255, .5), transparent),
+        radial-gradient(1.2px 1.2px at 62% 20%, rgba(234, 245, 255, .8), transparent),
+        radial-gradient(1px 1px at 78% 6%, rgba(234, 245, 255, .5), transparent),
+        radial-gradient(1.4px 1.4px at 90% 22%, rgba(255, 255, 255, .7), transparent),
+        radial-gradient(1px 1px at 12% 45%, rgba(234, 245, 255, .5), transparent),
+        radial-gradient(1.3px 1.3px at 30% 55%, rgba(234, 245, 255, .65), transparent),
+        radial-gradient(1px 1px at 55% 48%, rgba(234, 245, 255, .4), transparent),
+        radial-gradient(1px 1px at 85% 50%, rgba(234, 245, 255, .5), transparent);
+    background-size: 900px 600px;
+    background-repeat: repeat;
+    opacity: .9;
+}
+
+/* Galaxia difusa en el cielo alto: banda de nebulosa inclinada, sin filter:blur
+   (backdrop/filter blur son carísimos en renderizado por software — se logra
+   la suavidad solo con paradas de degradé, no con blur de capa). */
+.cosmos__galaxy {
+    position: absolute;
+    z-index: 2;
+    top: -14vh;
+    left: 6vw;
+    width: 100vw;
+    height: 66vh;
+    background: radial-gradient(ellipse 55% 38% at 48% 32%,
+        rgba(234, 245, 255, .42) 0%,
+        rgba(127, 184, 255, .38) 30%,
+        rgba(47, 107, 176, .22) 55%,
+        transparent 75%);
+    transform: rotate(-7deg);
+    mix-blend-mode: screen;
+}
+
+/* Resplandor bajo, luz fría de la galaxia rozando el horizonte —
+   con apenas un toque cálido justo donde toca las ruinas. */
+.cosmos__horizon-glow {
+    position: absolute;
+    z-index: 3;
+    left: -10%;
+    right: -10%;
+    top: 54vh;
+    height: 30vh;
+    background: linear-gradient(180deg,
+        transparent 0%,
+        rgba(127, 184, 255, .10) 30%,
+        rgba(169, 212, 255, .26) 58%,
+        rgba(234, 245, 255, .34) 76%,
+        rgba(255, 184, 112, .18) 90%,
+        transparent 100%);
+    animation: glow-breathe 9s ease-in-out infinite;
+}
+
+@keyframes glow-breathe {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .72; }
+}
+
+/* Terreno alienígena: silueta de dunas/cráteres recortada con clip-path */
+.cosmos__terrain {
+    position: absolute;
+    z-index: 5;
+    left: 0; right: 0;
+    bottom: 0;
+    height: 26vh;
+    background: var(--void);
+    clip-path: polygon(
+        0% 46%, 9% 34%, 19% 42%, 31% 24%, 44% 38%,
+        58% 18%, 71% 32%, 84% 22%, 93% 36%, 100% 28%,
+        100% 100%, 0% 100%
+    );
+}
+
+/* Ruinas: skyline de torres/monolitos quebrados, un solo elemento con clip-path */
+.cosmos__ruins {
+    position: absolute;
+    z-index: 4;
+    left: 0; right: 0;
+    bottom: 20vh;
+    height: 18vh;
+    background: var(--void);
+    opacity: .96;
+    clip-path: polygon(
+        0% 100%, 0% 74%, 3% 74%, 3% 46%, 6% 46%, 6% 80%,
+        12% 80%, 12% 24%, 15% 24%, 15% 64%, 22% 64%, 22% 70%,
+        28% 70%, 28% 18%, 31% 18%, 31% 58%, 38% 58%, 38% 72%,
+        44% 72%, 44% 34%, 47% 34%, 47% 66%, 54% 66%, 54% 12%,
+        57% 12%, 57% 60%, 64% 60%, 64% 76%, 70% 76%, 70% 28%,
+        73% 28%, 73% 62%, 80% 62%, 80% 48%, 85% 48%, 85% 82%,
+        92% 82%, 92% 38%, 96% 38%, 96% 68%, 100% 68%, 100% 100%
+    );
+}
+
+.cosmos__grain {
+    position: absolute;
+    z-index: 6;
+    inset: 0;
+    opacity: .06;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 160px 160px;
+}
+
+.cosmos__vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(130% 90% at 30% 100%, transparent 35%, rgba(6, 5, 16, .78) 100%);
+}
+
+/* ============================================================
+   MARK — wordmark discreto (el arte es el protagonista, no el logo)
+   ============================================================ */
+.mark {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mark__wordmark {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.mark__tagline {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: 15px;
+    color: var(--ink-dim);
+}
+
+/* ============================================================
+   STAGE / GATE — panel de acceso, asimétrico (regla de tercios)
+   ============================================================ */
+.stage {
+    position: relative;
+    z-index: 2;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 40px;
+}
+
+.gate {
+    margin-top: auto;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.gate__box {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 32px 30px;
+    box-shadow: 0 30px 80px rgba(6, 5, 16, .5);
+}
+
+.gate__eyebrow {
+    font-family: var(--font-display);
+    font-size: 12px;
+    letter-spacing: .24em;
+    text-transform: uppercase;
+    color: var(--sun);
+    margin: 0 0 10px 0;
+}
+
+.gate__title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 26px;
+    margin: 0;
+    color: var(--ink);
+}
+
+.gate__sub {
+    font-family: var(--font-body);
+    margin: 10px 0 30px 0;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+}
+
+.gate__form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.field label {
+    display: block;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-dim);
+    margin-bottom: 7px;
+    letter-spacing: .02em;
+}
+
+.field input[type="email"],
+.field input[type="password"],
+.field input[type="text"] {
+    width: 100%;
+    background: rgba(6, 5, 16, .38);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    padding: 11px 14px;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.field input::placeholder { color: var(--ink-faint); }
+
+.field input:hover { border-color: rgba(243, 234, 216, .3); }
+
+.field input:focus {
+    outline: none;
+    border-color: var(--sun);
+    background: rgba(6, 5, 16, .55);
+}
+
+.field__row {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.field__row input { padding-right: 44px; }
+
+.field__toggle {
+    position: absolute;
+    right: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--ink-faint);
+    cursor: pointer;
+}
+
+.field__toggle:hover { color: var(--ink-dim); background: rgba(243, 234, 216, .08); }
+.field__toggle[aria-pressed="true"] { color: var(--sun); }
+
+.gate__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    margin-top: -2px;
+}
+
+.check {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--ink-dim);
+    cursor: pointer;
+    user-select: none;
+}
+
+.check input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.check__box {
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(6, 5, 16, .38);
+    flex: none;
+    position: relative;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.check input:checked + .check__box {
+    background: var(--sun);
+    border-color: var(--sun);
+}
+
+.check input:checked + .check__box::after {
+    content: "";
+    position: absolute;
+    left: 5px; top: 2px;
+    width: 4px; height: 8px;
+    border: solid #0a0818;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.check input:focus-visible + .check__box {
+    outline: 2px solid var(--sun);
+    outline-offset: 2px;
+}
+
+.gate__link {
+    color: var(--ink-dim);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+}
+
+.gate__link:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+.gate__submit {
+    position: relative;
+    margin-top: 4px;
+    width: 100%;
+    background: linear-gradient(135deg, var(--sun) 0%, var(--flare) 100%);
+    color: #2a1200;
+    border: none;
+    border-radius: 6px;
+    padding: 13px;
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: filter .15s ease, transform .05s ease;
+}
+
+.gate__submit:hover { filter: brightness(1.08); }
+.gate__submit:active { transform: translateY(1px); }
+
+.gate__submit.is-loading .gate__submit-label { opacity: 0; }
+
+.gate__submit::after {
+    content: "";
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 16px; height: 16px;
+    margin: -8px 0 0 -8px;
+    border-radius: 50%;
+    border: 2px solid rgba(42, 18, 0, .35);
+    border-top-color: #2a1200;
+    opacity: 0;
+    animation: spin .7s linear infinite;
+}
+
+.gate__submit.is-loading::after { opacity: 1; }
+
+.field.is-error input {
+    border-color: var(--flare);
+    animation: shake .32s ease;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25%      { transform: translateX(-4px); }
+    75%      { transform: translateX(4px); }
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.gate__footer {
+    font-family: var(--font-ui);
+    margin: 26px 0 0 0;
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-align: center;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 720px) {
+    .stage {
+        padding: 24px;
+    }
+
+    .gate {
+        justify-content: center;
+    }
+
+    .cosmos__galaxy {
+        height: 50vh;
+    }
+
+    .cosmos__horizon-glow {
+        top: 44vh;
+    }
+
+    .cosmos__terrain { height: 20vh; }
+    .cosmos__ruins { bottom: 15vh; height: 14vh; }
+
+    .gate__box {
+        max-width: 420px;
+        padding: 26px 22px;
+    }
+}
+
+@media (max-width: 420px) {
+    .mark__tagline { display: none; }
+}
+
+/* ============================================================
+   MOTION PREFERENCES
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+    .cosmos__horizon-glow,
+    .gate__submit::after {
+        animation: none !important;
+    }
+}
