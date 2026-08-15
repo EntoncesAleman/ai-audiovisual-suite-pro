@@ -49,8 +49,8 @@ export function openReader() {
         alert("Primero cargá o procesá una sesión.");
         return;
     }
-    document.getElementById('readerTitle').textContent =
-        `📖 ${state.currentData.title || 'Desgrabación'}`;
+    document.getElementById('readerTitleText').textContent =
+        state.currentData.title || 'Desgrabación';
     document.getElementById('readerOverlay').classList.add('active');
     document.body.style.overflow = 'hidden';
     renderReader();

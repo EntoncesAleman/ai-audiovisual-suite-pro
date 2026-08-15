@@ -1,0 +1,47 @@
+#!/bin/bash
+# Ejecutable del .app. Vive en <proyecto>/AI Audiovisual Suite Pro.app/Contents/MacOS/,
+# así que subiendo 3 niveles se llega a la carpeta del proyecto - el .app
+# viaja pegado al código (AirDrop, git clone, lo que sea), no depende de
+# ninguna ruta fija.
+PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$PROJECT_DIR" || exit 1
+
+LOG_FILE="/tmp/ai_audiovisual_suite_app.log"
+
+notify() {
+    osascript -e "display notification \"$1\" with title \"AI Audiovisual Suite Pro\"" >/dev/null 2>&1
+}
+
+# Primera vez (todavía no hay venv o .env armados): esto necesita que el
+# usuario vea/responda cosas (instalar Homebrew si falta, pegar la API key),
+# así que no lo hacemos en silencio - abrimos una Terminal real con
+# iniciar.command, que ya sabe manejar todo ese flujo interactivo.
+if [ ! -f "venv/bin/activate" ] || [ ! -f ".env" ]; then
+    open -a Terminal "$PROJECT_DIR/iniciar.command"
+    exit 0
+fi
+
+# Si ya hay un servidor nuestro respondiendo en 8000, no arranques otro -
+# solo abrí el navegador (evita duplicar procesos si el .app se abre dos veces).
+if ! curl -s -o /dev/null -m 2 "http://localhost:8000/"; then
+    notify "Arrancando el servidor..."
+    source venv/bin/activate
+    nohup uvicorn main:app --host 0.0.0.0 --port 8000 > "$LOG_FILE" 2>&1 &
+    disown
+
+    # Esperar a que responda antes de abrir el navegador (hasta ~90s: la
+    # primera carga de módulos puede tardar, sobre todo en disco de red).
+    ready=0
+    for i in $(seq 1 45); do
+        if curl -s -o /dev/null -m 2 "http://localhost:8000/"; then
+            ready=1
+            break
+        fi
+        sleep 2
+    done
+    if [ "$ready" -eq 0 ]; then
+        notify "El servidor está tardando más de lo normal en arrancar. Revisá $LOG_FILE"
+    fi
+fi
+
+open "http://localhost:8000"

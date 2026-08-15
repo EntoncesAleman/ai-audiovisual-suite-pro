@@ -3,11 +3,19 @@ import { BACKEND_URL, PLATFORM_DATA, MAX_CLIPS_PER_EXPORT, STREAM_STALL_MS } fro
 import { escapeHtml, setExportProgress, resetExportProgress } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
+import { authHeaders } from '../utils/storage.js';
 
 function isVideoEnfoque(key) {
     if (!state.PROMPTS_LIBRARY) return false;
     return state.PROMPTS_LIBRARY.enfoques?.[key]?.categoria === "video";
 }
+
+// Iconos usados en botones cuya etiqueta cambia por JS (no se puede usar
+// textContent ahí sin borrar el ícono - ver updateVideoPanel/toggleAiImport).
+const ICON_FILM = '<svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M7 3v18M17 3v18M2 8h5M2 16h5M17 8h5M17 16h5"/></svg>';
+const ICON_IMAGE = '<svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>';
+const ICON_INBOX = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/></svg>';
+const ICON_CLOSE = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
 export function updateVideoPanel() {
     const type = document.getElementById("promptType").value;
@@ -30,11 +38,11 @@ export function updateVideoPanel() {
 
             const btn = document.getElementById("btnExportReel");
             if (pdata.isPlatesCarousel) {
-                btn.textContent = "🖼 Generar placas de texto (ZIP)";
+                btn.innerHTML = `${ICON_IMAGE} Generar placas de texto (ZIP)`;
             } else if (pdata.isClipsCarousel) {
-                btn.textContent = "🎬 Generar clips 1:1 (ZIP)";
+                btn.innerHTML = `${ICON_FILM} Generar clips 1:1 (ZIP)`;
             } else {
-                btn.textContent = `🎬 Generar ${pdata.label}`;
+                btn.innerHTML = `${ICON_FILM} Generar ${escapeHtml(pdata.label)}`;
             }
         }
         const srcUrl = document.getElementById("clipSourceUrl").value || (state.currentData && state.currentData.source_url) || "";
@@ -105,7 +113,7 @@ export function toggleAiImport() {
     const btn = document.getElementById("btnAiImport");
     const isOpen = body.classList.toggle("open");
     btn.classList.toggle("open", isOpen);
-    btn.textContent = isOpen ? "✕ Cerrar importador" : "📥 Importar respuesta de IA";
+    btn.innerHTML = isOpen ? `${ICON_CLOSE} Cerrar importador` : `${ICON_INBOX} Importar respuesta de IA`;
 }
 
 export function importAiTimestamps() {
@@ -227,7 +235,7 @@ export async function startReelExport() {
     try {
         const res = await fetch(endpoint, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { ...authHeaders(), "Content-Type": "application/json" },
             body: JSON.stringify({ ...source, clips, platform: state.currentPlatformKey }),
             signal: controller.signal
         });

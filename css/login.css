@@ -405,6 +405,13 @@ a { color: inherit; }
 
 .gate__submit.is-loading::after { opacity: 1; }
 
+.gate__error {
+    margin: -6px 0 4px;
+    font-size: 13px;
+    color: var(--flare);
+    text-align: center;
+}
+
 .field.is-error input {
     border-color: var(--flare);
     animation: shake .32s ease;

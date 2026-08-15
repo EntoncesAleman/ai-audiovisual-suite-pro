@@ -19,4 +19,10 @@ export const state = {
     // true si el último streamingFetch se cortó por el watchdog de stall
     // (sin datos por STREAM_STALL_MS), no porque el usuario le dio "Detener".
     _lastStreamStalled: false,
+
+    // Flujo de pasos (1 Ingreso, 2 Prompt, 3 Exportar, ver modules/steps.js).
+    // maxReachedStep controla hasta qué paso se puede saltar clickeando el
+    // stepper (no dejamos "adelantarse" a un paso que todavía no aplica).
+    currentStep: 1,
+    maxReachedStep: 1,
 };

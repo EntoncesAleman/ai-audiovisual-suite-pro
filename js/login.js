@@ -1,5 +1,13 @@
-// Pantalla de login: por ahora es solo interfaz, sin autenticación real todavía.
-// La escena cósmica de fondo es puro CSS (sin JS); acá solo va la interacción del formulario.
+// Pantalla de login. La escena cósmica de fondo es puro CSS (sin JS);
+// acá va la interacción del formulario y la verificación real contra el
+// backend (ver main.py: require_api_key / GET /auth/check).
+//
+// No hay usuarios/roles todavía - "iniciar sesión" hoy significa "conocer
+// el API_ACCESS_KEY compartido que configuró quien deployó el servidor".
+// El campo de email no se valida contra nada real (no hay backend de
+// usuarios); se pide igual para no romper el diseño de la pantalla, pero
+// lo único que realmente se verifica es la contraseña como API key.
+import { setApiKey, clearApiKey } from './utils/storage.js';
 
 function setupPasswordToggle() {
     const btn = document.getElementById('togglePassword');
@@ -14,6 +22,13 @@ function setupPasswordToggle() {
     });
 }
 
+function showGateError(message) {
+    const errorEl = document.getElementById('gateError');
+    if (!errorEl) return;
+    errorEl.textContent = message;
+    errorEl.hidden = !message;
+}
+
 function setupForm() {
     const form = document.getElementById('loginForm');
     const submitBtn = document.getElementById('submitBtn');
@@ -21,8 +36,9 @@ function setupForm() {
     const password = document.getElementById('password');
     if (!form || !submitBtn) return;
 
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        showGateError('');
 
         const fields = [email, password];
         let hasError = false;
@@ -36,14 +52,35 @@ function setupForm() {
         });
         if (hasError) return;
 
-        // Todavía no hay backend de autenticación conectado: esto es solo
-        // la micro-interacción visual del botón (sin envío real).
         submitBtn.classList.add('is-loading');
         submitBtn.disabled = true;
-        setTimeout(() => {
+
+        try {
+            const res = await fetch(`${window.location.origin}/auth/check`, {
+                headers: { 'X-API-Key': password.value }
+            });
+            if (res.ok) {
+                // auth_enabled=false significa que el servidor no tiene
+                // API_ACCESS_KEY configurada: no hay nada que validar
+                // todavía, cualquier clave "pasa". Igual guardamos lo que
+                // se ingresó para que, el día que se active, ya quede listo.
+                setApiKey(password.value);
+                window.location.href = '/';
+                return;
+            }
+            if (res.status === 401) {
+                clearApiKey();
+                document.getElementById('password').closest('.field').classList.add('is-error');
+                showGateError('Contraseña incorrecta.');
+            } else {
+                showGateError(`El servidor respondió con un error (HTTP ${res.status}). Probá de nuevo en un momento.`);
+            }
+        } catch (err) {
+            showGateError('No se pudo contactar al servidor. Revisá tu conexión e intentá de nuevo.');
+        } finally {
             submitBtn.classList.remove('is-loading');
             submitBtn.disabled = false;
-        }, 1100);
+        }
     });
 }
 

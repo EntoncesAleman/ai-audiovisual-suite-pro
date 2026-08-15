@@ -33,6 +33,7 @@ export const MAX_CLIPS_PER_EXPORT = 4;
 export const STREAM_STALL_MS = 90 * 1000;
 
 export const STAGE_PROGRESS = {
+    queued: { pct: 5, label: "⏳ Esperando turno (otra operación en curso)" },
     downloading: { pct: 15, label: "📥 Descargando video" },
     uploading: { pct: 30, label: "☁ Subiendo a Google" },
     indexing: { pct: 55, label: "🔬 Google indexando (audio + frames)" },

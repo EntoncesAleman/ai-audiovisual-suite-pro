@@ -1,10 +1,12 @@
 import { BACKEND_URL } from '../config.js';
 import { state } from '../state.js';
-import { getSessions, setSessions } from '../utils/storage.js';
+import { getSessions, setSessions, authHeaders, clearUrlDraft } from '../utils/storage.js';
 import { renderClipsList } from './clips.js';
 import { renderReelClipsList, updateVideoPanel } from './reelEditor.js';
 import { generateIAPrompt } from './prompts.js';
 import { toggleEdit } from './timeline.js';
+import { revealStep1Next, openAnalyzedSession, resetSteps } from './steps.js';
+import { closeHistoryDrawer } from './drawer.js';
 
 export function saveSession(data) {
     if (state._pendingSourceUrl) { data.source_url = state._pendingSourceUrl; state._pendingSourceUrl = ""; }
@@ -41,12 +43,13 @@ export function loadSessionById(id) {
     let item = sessions.find(s => s.id === id);
     if (item) {
         state.currentSessionId = id;
-        loadSessionData(item.data);
+        loadSessionData(item.data, true);
         renderSessions();
     }
+    closeHistoryDrawer();
 }
 
-export function loadSessionData(data) {
+export function loadSessionData(data, fromHistory = false) {
     state.currentData = data;
     state.originalTimeline = data.raw_timeline || "No hay líneas de tiempo registradas.";
     document.getElementById('resTimeline').innerText = state.originalTimeline;
@@ -66,6 +69,16 @@ export function loadSessionData(data) {
     renderReelClipsList();
     updateVideoPanel();
     generateIAPrompt();
+
+    // Sesión recién analizada: quedate en el paso 1 y mostrá "Siguiente"
+    // para que el usuario decida cuándo avanzar. Sesión del historial (ya
+    // analizada de antes): saltar directo al paso 2, no tiene sentido
+    // hacer pasar de nuevo por el botón.
+    if (fromHistory) {
+        openAnalyzedSession();
+    } else {
+        revealStep1Next();
+    }
 }
 
 export function startNewSession() {
@@ -75,6 +88,8 @@ export function startNewSession() {
     document.getElementById('localFile').value = "";
     document.getElementById('resultBlock').style.display = 'none';
     document.getElementById('promptOutput').innerText = "Carga un análisis para generar el prompt dinámico...";
+    clearUrlDraft();
+    resetSteps();
     renderSessions();
 }
 
@@ -89,17 +104,19 @@ export function deleteSession(event, id) {
 
 export async function clearServerCache() {
     const btn = document.getElementById('btnClearCache');
-    const original = btn.textContent;
+    // Guardamos el HTML original (con el ícono), no el textContent (lo
+    // perdería): este botón cambia de texto temporalmente mientras borra.
+    const original = btn.innerHTML;
     btn.textContent = '⏳ Borrando...';
     btn.disabled = true;
     try {
-        const res = await fetch(`${BACKEND_URL}/cache-clear`, { method: 'POST' });
+        const res = await fetch(`${BACKEND_URL}/cache-clear`, { method: 'POST', headers: authHeaders() });
         const data = await res.json();
         btn.textContent = `✅ ${data.deleted} análisis borrados`;
-        setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 3000);
+        setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 3000);
     } catch (e) {
         btn.textContent = '❌ Error al borrar';
-        setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 3000);
+        setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 3000);
     }
 }
 

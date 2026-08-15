@@ -12,7 +12,7 @@ import asyncio
 import zipfile
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,7 +34,12 @@ app = FastAPI(title="AI Audiovisual Suite - Backend de Escaneo Continuo")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # No usamos cookies para nada (la sesión viaja por header X-API-Key, ver
+    # más abajo), así que no hace falta allow_credentials=True. Dejarlo en
+    # True junto con allow_origins=["*"] es la combinación que habilita un
+    # navegador a mandar credenciales cross-origin sin querer - sin uso real
+    # hoy, pero mejor no dejarla activa para cuando haya sesiones de verdad.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -49,6 +54,34 @@ if not GEMINI_API_KEY:
     )
 
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+# ------------------------------------------------------------------
+# Acceso a la API: la pantalla de login (login.html) todavía no tenía
+# ningún backend real detrás - cualquiera con la URL podía pegarle a los
+# endpoints de análisis/exportación (consumo de cuota Gemini/Groq, CPU,
+# memoria) sin autenticarse. API_ACCESS_KEY es un secreto compartido
+# simple (no hay usuarios/roles todavía) que el login pide una vez y
+# guarda en el navegador, mandándolo de ahí en más como header X-API-KEY.
+# Si no se configura esta variable de entorno, el chequeo queda
+# desactivado (igual que el comportamiento de antes) para no romper
+# despliegues existentes que todavía no la seteen a propósito.
+API_ACCESS_KEY = os.getenv("API_ACCESS_KEY")
+if not API_ACCESS_KEY:
+    print(
+        "⚠ API_ACCESS_KEY no configurada: los endpoints de análisis/exportación "
+        "quedan SIN autenticación (cualquiera con la URL puede usarlos). "
+        "Definila como variable de entorno para activar el login."
+    )
+
+
+def require_api_key(x_api_key: str | None = Header(default=None)):
+    """Dependency de FastAPI: exige el header X-API-Key en los endpoints
+    protegidos cuando API_ACCESS_KEY está configurada. Si no está
+    configurada, no bloquea nada (ver comentario arriba)."""
+    if not API_ACCESS_KEY:
+        return
+    if not x_api_key or x_api_key != API_ACCESS_KEY:
+        raise HTTPException(status_code=401, detail="API key inválida o faltante. Iniciá sesión de nuevo.")
 
 # Groq (opcional): último recurso cuando TODOS los modelos Gemini agotaron su cuota diaria.
 # Sin diarización de speakers reales (Whisper no la hace), pero mantiene la app funcionando
@@ -185,6 +218,22 @@ def url_hash(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
+def _safe_upload_filename(filename: str) -> str:
+    """
+    Devuelve solo el nombre base de un filename recibido en un upload
+    multipart, sin separadores de path. Ese filename lo controla quien
+    hace el request, así que nunca hay que usarlo tal cual para construir
+    una ruta en disco: os.path.join descarta la ruta base si el segundo
+    argumento es una ruta absoluta (ej. "/etc/algo"), y un ".." en medio
+    del nombre permite escapar del directorio temporal igual. Ambos casos
+    permitían escritura de archivo arbitraria antes de este chequeo.
+    """
+    name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not name or set(name) <= {"."}:
+        name = "upload"
+    return name
+
+
 def deterministic_export_id(*parts: str) -> str:
     """
     ID de exportación estable a partir de la fuente + los clips pedidos (en
@@ -286,6 +335,69 @@ async def run_blocking_with_heartbeat(func, *args, interval: float = 20.0, **kwa
         yield ("result", result)
     except Exception as e:
         yield ("error", e)
+
+
+# ------------------------------------------------------------------
+# Límite de concurrencia y guard de memoria para operaciones pesadas
+# ------------------------------------------------------------------
+# En el free tier de Render (512MB) dos análisis/exports pesados corriendo
+# en simultáneo son casi garantía de que el sistema operativo mate el
+# proceso por quedarse sin memoria - eso se vio como un reinicio "limpio"
+# del servidor a mitad de una operación (sin traceback, porque lo mata el
+# OS desde afuera). Este semáforo fuerza que solo una operación pesada
+# (analizar o exportar) corra a la vez; MAX_CONCURRENT_HEAVY_OPS es
+# configurable por si esto corre en una máquina con más RAM.
+MAX_CONCURRENT_HEAVY_OPS = int(os.getenv("MAX_CONCURRENT_HEAVY_OPS", "1"))
+_heavy_ops_semaphore = asyncio.Semaphore(MAX_CONCURRENT_HEAVY_OPS)
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+# Umbral de memoria libre por debajo del cual preferimos frenar ANTES de
+# arrancar ffmpeg/subir a Gemini, con un mensaje claro, en vez de dejar
+# que el sistema operativo mate el proceso a mitad de camino.
+MIN_FREE_MB_FOR_HEAVY_OP = int(os.getenv("MIN_FREE_MB_FOR_HEAVY_OP", "150"))
+
+
+async def _wait_for_heavy_slot(interval: float = 15.0):
+    """
+    Espera su turno para el semáforo de operaciones pesadas, yieldeando
+    cada `interval` segundos mientras hace cola (heartbeat) para que el
+    watchdog de stall del frontend (sin bytes por STREAM_STALL_MS) no
+    salte creyendo que la conexión se colgó. Al terminar, el semáforo
+    queda tomado (llamar siempre a _heavy_ops_semaphore.release() en un
+    finally del lado del caller).
+    """
+    task = asyncio.create_task(_heavy_ops_semaphore.acquire())
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=interval)
+        if done:
+            return
+        yield True
+
+
+def _memory_headroom_error() -> str | None:
+    """
+    Devuelve un mensaje de error si la memoria libre está por debajo del
+    umbral, o None si hay margen suficiente (o si psutil no está
+    instalado, en cuyo caso no bloqueamos nada - mismo comportamiento
+    que antes de este chequeo).
+    """
+    if psutil is None:
+        return None
+    try:
+        available_mb = psutil.virtual_memory().available / (1024 * 1024)
+    except Exception:
+        return None
+    if available_mb < MIN_FREE_MB_FOR_HEAVY_OP:
+        return (
+            f"Memoria disponible baja en el servidor ({available_mb:.0f}MB libres, "
+            f"mínimo {MIN_FREE_MB_FOR_HEAVY_OP}MB). Esperá un momento y reintentá, "
+            f"o probá con menos clips a la vez."
+        )
+    return None
 
 
 def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "") -> str:
@@ -1049,17 +1161,15 @@ def _process_single_video_file(video_path: str, engine: str = "auto") -> str:
     - "groq": solo Groq Whisper (rápido, cuota más generosa, sin diarización real).
     Audio usa ~32 tokens/seg vs ~290 tokens/seg de video — cabe en el free tier.
     """
-    audio_path = None
-    path_to_upload = video_path
-
-    # Intentar extraer audio para minimizar consumo de tokens / tiempo de subida
-    try:
-        audio_path = convert_to_clean_audio(video_path, mode="mp3")
-        path_to_upload = audio_path
-        size_mb = round(os.path.getsize(audio_path) / (1024 * 1024), 2)
-        print(f"   Audio extraído: {os.path.basename(audio_path)} ({size_mb} MB).")
-    except Exception as e:
-        print(f"   ⚠ No se pudo extraer audio ({e}). Se usa el archivo original.")
+    # Extraer audio SIEMPRE antes de mandar nada a transcribir - nunca se
+    # sube el video completo (para archivos locales, source_path acá puede
+    # ser un video de verdad, a diferencia del flujo por URL que ya baja
+    # solo audio). Menos tokens/tiempo de subida, y evita mandarle un video
+    # entero a Gemini/Groq si la extracción llegara a fallar en silencio.
+    audio_path = convert_to_clean_audio(video_path, mode="mp3")
+    path_to_upload = audio_path
+    size_mb = round(os.path.getsize(audio_path) / (1024 * 1024), 2)
+    print(f"   Audio extraído: {os.path.basename(audio_path)} ({size_mb} MB).")
 
     try:
         if engine == "groq":
@@ -1180,7 +1290,15 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None, engi
             cached["from_cache"] = True
             return cached
 
+    # Mismo semáforo/guard de memoria que las versiones streaming (ver
+    # comentario junto a _heavy_ops_semaphore) - este endpoint clásico hace
+    # el mismo trabajo pesado y se había quedado afuera de esa protección.
+    await _heavy_ops_semaphore.acquire()
     try:
+        mem_error = _memory_headroom_error()
+        if mem_error:
+            raise HTTPException(status_code=503, detail=mem_error)
+
         print("Iniciando procesamiento inteligente (con detección automática de duración)...")
         text = await asyncio.to_thread(process_video_smart, video_path, None, engine)
 
@@ -1191,9 +1309,13 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None, engi
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error en Gemini: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error en la IA: {str(e)}")
+    finally:
+        _heavy_ops_semaphore.release()
 
 
 async def process_video_streaming(video_path: str, cache_key: str = None, engine: str = "auto"):
@@ -1205,7 +1327,7 @@ async def process_video_streaming(video_path: str, cache_key: str = None, engine
             payload.update(data)
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    # 1. Cache check
+    # 1. Cache check (sin pasar por el semáforo: no hace trabajo pesado)
     if cache_key:
         cached = cache_get(cache_key)
         if cached:
@@ -1214,15 +1336,25 @@ async def process_video_streaming(video_path: str, cache_key: str = None, engine
             yield event("done", "Listo (desde cache)", {"result": cached})
             return
 
+    # 2. Cola por el semáforo de operaciones pesadas (ver comentario junto a
+    # _heavy_ops_semaphore) - si hay otra en curso, avisamos y esperamos
+    # nuestro turno en vez de sumar presión de memoria en simultáneo.
+    async for _ in _wait_for_heavy_slot():
+        yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
     try:
-        # 2. Detectar duración y decidir si procesar entero o por tramos
+        mem_error = _memory_headroom_error()
+        if mem_error:
+            yield event("error", mem_error)
+            return
+
+        # 3. Detectar duración y decidir si procesar entero o por tramos
         duration_seconds = await asyncio.to_thread(get_video_duration_seconds, video_path)
         duration_minutes = duration_seconds / 60 if duration_seconds else 0
 
         if duration_minutes > 0:
             yield event("info", f"Duración a procesar: {duration_minutes:.1f} minutos")
 
-        # 3. Procesamiento (entero o por tramos)
+        # 4. Procesamiento (entero o por tramos)
         if duration_minutes == 0 or duration_minutes <= CHUNK_THRESHOLD_MIN:
             yield event("uploading", "Procesando en un solo tramo...")
             await asyncio.sleep(0)
@@ -1308,13 +1440,15 @@ async def process_video_streaming(video_path: str, cache_key: str = None, engine
 
     except Exception as e:
         yield event("error", f"Error en el procesamiento: {str(e)}")
+    finally:
+        _heavy_ops_semaphore.release()
 
 
 # ============================================================
 # ENDPOINTS CLÁSICOS (mantenidos por compatibilidad)
 # ============================================================
 
-@app.post("/analyze-url")
+@app.post("/analyze-url", dependencies=[Depends(require_api_key)])
 async def analyze_url(input_data: UrlInput):
     cache_key = url_hash(input_data.url)
     cached = cache_get(cache_key)
@@ -1334,10 +1468,10 @@ async def analyze_url(input_data: UrlInput):
             os.remove(video_path)
 
 
-@app.post("/analyze-video")
+@app.post("/analyze-video", dependencies=[Depends(require_api_key)])
 async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto")):
     temp_dir = tempfile.gettempdir()
-    video_path = os.path.join(temp_dir, file.filename)
+    video_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}")
     with open(video_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     try:
@@ -1352,7 +1486,7 @@ async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto")
 # ENDPOINTS CON STREAMING DE PROGRESO (nuevos)
 # ============================================================
 
-@app.post("/analyze-url-stream")
+@app.post("/analyze-url-stream", dependencies=[Depends(require_api_key)])
 async def analyze_url_stream(input_data: UrlInput):
     """Versión streaming: el frontend recibe eventos de progreso en tiempo real."""
     cache_key = url_hash(input_data.url)
@@ -1396,11 +1530,11 @@ async def analyze_url_stream(input_data: UrlInput):
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
-@app.post("/analyze-video-stream")
+@app.post("/analyze-video-stream", dependencies=[Depends(require_api_key)])
 async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form("auto")):
     """Versión streaming para archivos locales."""
     temp_dir = tempfile.gettempdir()
-    video_path = os.path.join(temp_dir, file.filename)
+    video_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}")
     with open(video_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
@@ -1423,7 +1557,7 @@ async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form(
 # ENDPOINTS DE INSPECCIÓN Y CONVERSIÓN (opcionales, manuales)
 # ============================================================
 
-@app.post("/inspect-file")
+@app.post("/inspect-file", dependencies=[Depends(require_api_key)])
 async def inspect_file(file: UploadFile = File(...)):
     """
     Recibe un archivo, lo analiza con ffprobe y devuelve qué tiene adentro.
@@ -1432,10 +1566,9 @@ async def inspect_file(file: UploadFile = File(...)):
     Después de inspeccionar, deja el archivo en una ruta temporal y devuelve
     esa ruta junto con la info, para que el siguiente paso lo use.
     """
-    import uuid
     temp_dir = tempfile.gettempdir()
     # Generamos un nombre único para que dos archivos con el mismo nombre no choquen
-    safe_name = f"inspect_{uuid.uuid4().hex[:8]}_{file.filename}"
+    safe_name = f"inspect_{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}"
     temp_path = os.path.join(temp_dir, safe_name)
 
     with open(temp_path, "wb") as buffer:
@@ -1453,7 +1586,7 @@ class ProcessInspectedInput(BaseModel):
     engine: str = "auto"  # "auto" (Gemini + Groq de respaldo) | "gemini" | "groq"
 
 
-@app.post("/process-inspected")
+@app.post("/process-inspected", dependencies=[Depends(require_api_key)])
 async def process_inspected(input_data: ProcessInspectedInput):
     """
     Procesa un archivo previamente inspeccionado con /inspect-file.
@@ -1526,7 +1659,7 @@ def cache_stats():
     }
 
 
-@app.post("/cache-clear")
+@app.post("/cache-clear", dependencies=[Depends(require_api_key)])
 def cache_clear():
     """Vacía el cache."""
     deleted = 0
@@ -1713,7 +1846,7 @@ class ExportClipsInput(BaseModel):
     clips: list[ClipSpec]
 
 
-@app.post("/export-clips")
+@app.post("/export-clips", dependencies=[Depends(require_api_key)])
 async def export_clips_endpoint(input_data: ExportClipsInput):
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
@@ -1737,6 +1870,11 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
             yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT} para no quedarse sin memoria en el servidor.")
             return
 
+        # Cola por el semáforo de operaciones pesadas (ver comentario junto a
+        # _heavy_ops_semaphore) antes de tocar disco/red/ffmpeg.
+        async for _ in _wait_for_heavy_slot():
+            yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
+
         export_id = deterministic_export_id(
             effective_cache_key or input_data.video_path or "local",
             *[f"{c.start}-{c.end}-{c.label}" for c in input_data.clips],
@@ -1747,6 +1885,11 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         delete_video_after = False  # el cacheado NO se borra: lo puede volver a usar otra exportacion
 
         try:
+            mem_error = _memory_headroom_error()
+            if mem_error:
+                yield event("error", mem_error)
+                return
+
             if cached_video:
                 video_path = cached_video
             elif input_data.video_path:
@@ -1842,6 +1985,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 shutil.rmtree(str(clip_dir), ignore_errors=True)
             except Exception:
                 pass
+            _heavy_ops_semaphore.release()
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -1923,7 +2067,7 @@ class CarouselExportInput(BaseModel):
     platform: str
 
 
-@app.post("/export-reel")
+@app.post("/export-reel", dependencies=[Depends(require_api_key)])
 async def export_reel_endpoint(input_data: ReelExportInput):
     """Descarga, corta, une y convierte clips al formato de la plataforma. Devuelve un MP4."""
 
@@ -1946,6 +2090,10 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         if not cfg:
             yield event("error", f"Plataforma desconocida: {input_data.platform}"); return
 
+        # Cola por el semáforo de operaciones pesadas antes de tocar disco/red/ffmpeg.
+        async for _ in _wait_for_heavy_slot():
+            yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
+
         target_w, target_h, max_dur = cfg
         export_id = deterministic_export_id(
             effective_cache_key or input_data.video_path or "local",
@@ -1958,6 +2106,11 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         delete_video_after = False
 
         try:
+            mem_error = _memory_headroom_error()
+            if mem_error:
+                yield event("error", mem_error)
+                return
+
             if cached_video:
                 video_path = cached_video
             elif input_data.video_path:
@@ -2072,11 +2225,12 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                 except: pass
             try: shutil.rmtree(str(clip_dir), ignore_errors=True)
             except: pass
+            _heavy_ops_semaphore.release()
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
-@app.post("/export-carousel")
+@app.post("/export-carousel", dependencies=[Depends(require_api_key)])
 async def export_carousel_endpoint(input_data: CarouselExportInput):
     """Genera un carrusel: clips 1:1 (ZIP de MP4) o placas de texto (ZIP de JPG)."""
 
@@ -2100,6 +2254,10 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         if input_data.platform == "ig_carrusel_clips" and len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
             yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT}."); return
 
+        # Cola por el semáforo de operaciones pesadas antes de tocar disco/red/ffmpeg.
+        async for _ in _wait_for_heavy_slot():
+            yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
+
         export_id = deterministic_export_id(
             effective_cache_key or input_data.video_path or "local",
             input_data.platform,
@@ -2111,6 +2269,11 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
         delete_video_after = False
 
         try:
+            mem_error = _memory_headroom_error()
+            if mem_error:
+                yield event("error", mem_error)
+                return
+
             if cached_video:
                 video_path = cached_video
             elif input_data.video_path:
@@ -2218,6 +2381,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                 except: pass
             try: shutil.rmtree(str(carousel_dir), ignore_errors=True)
             except: pass
+            _heavy_ops_semaphore.release()
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -2233,14 +2397,26 @@ def read_root():
 
 @app.get("/login")
 def read_login():
-    """Pantalla de login (todavía sin autenticación real conectada)."""
+    """Pantalla de login."""
     login_html = PROJECT_DIR / "login.html"
     if login_html.exists():
         return FileResponse(str(login_html), media_type="text/html")
     return {"status": "login.html no encontrado en el directorio del proyecto."}
 
 
-@app.get("/debug/ytdlp-info")
+@app.get("/auth/check", dependencies=[Depends(require_api_key)])
+def auth_check():
+    """
+    El login (login.html/login.js) le pega a este endpoint con el header
+    X-API-Key para saber si la clave ingresada es válida antes de guardarla
+    y dejar pasar al usuario. Si API_ACCESS_KEY no está configurada en el
+    servidor, require_api_key no bloquea nada y esto siempre devuelve ok
+    (coherente con que, en ese caso, ningún otro endpoint pide autenticación).
+    """
+    return {"ok": True, "auth_enabled": bool(API_ACCESS_KEY)}
+
+
+@app.get("/debug/ytdlp-info", dependencies=[Depends(require_api_key)])
 def debug_ytdlp_info():
     """
     Diagnostico temporal: confirma si el plugin bgutil-ytdlp-pot-provider esta

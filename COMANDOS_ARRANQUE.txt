@@ -1,33 +1,285 @@
 ============================================================
-  AI Audiovisual Suite Pro — Comandos para arrancar
+  AI Audiovisual Suite Pro — Guía para instalar y arrancar
+  (paso a paso, sin dar nada por sabido)
 ============================================================
 
-Abrir PowerShell o CMD en la carpeta del proyecto, luego:
+Este archivo tiene tres partes:
+  A) Qué es "la Terminal" y cómo usarla (leer primero si nunca la usaste).
+  B) Instalar el proyecto DESDE CERO en una Mac que nunca lo tuvo.
+  C) Arrancar el servidor cuando el proyecto YA está instalado.
 
-1. Activar el entorno virtual:
-   venv\Scripts\activate
-
-2. Configurar las API keys en el archivo .env (ya creado en la carpeta
-   del proyecto). Se cargan solas al arrancar main.py, no hace falta
-   setearlas a mano en la terminal:
-   - GEMINI_API_KEY  (obligatoria)
-   - GROQ_API_KEY    (opcional — fallback de transcripción cuando se
-                       agota la cuota diaria de TODOS los modelos Gemini.
-                       Conseguila gratis en https://console.groq.com,
-                       2000 req/día, Whisper Large v3)
-
-3. Arrancar el servidor:
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
-4. Abrir en el navegador:
-   http://localhost:8000
-
-   (NO abrir index.html directamente — tiene que ser via el servidor)
-
-Ctrl+C para detener el servidor.
+Si no sabés cuál te toca: ¿ya usaste esta Mac antes para correr el
+proyecto? Andá a la parte C. ¿Es la primera vez en esta máquina? Empezá
+por la parte A y seguí a la B.
 
 ============================================================
-  Todo junto (PowerShell, una sola sesion):
+  A) QUÉ ES "LA TERMINAL" Y CÓMO USARLA
 ============================================================
 
-venv\Scripts\activate; uvicorn main:app --reload --host 0.0.0.0 --port 8000
+La Terminal es una aplicación que ya viene instalada en toda Mac. Es una
+ventana donde en vez de hacer click en botones, escribís una línea de
+texto (un "comando") y apretás Enter para que la computadora la ejecute.
+
+Cómo abrirla:
+  1. Apretá al mismo tiempo las teclas Cmd (⌘) y la Barra espaciadora.
+  2. Aparece un buscador en el medio de la pantalla. Escribí: Terminal
+  3. Apretá Enter.
+  4. Se abre una ventana (blanca o negra, según tu Mac) con texto y un
+     cursor titilando. Ahí es donde van todos los comandos de este
+     archivo.
+
+Cómo usar un comando de esta guía:
+  - Cuando este archivo diga "escribí: algo", NO hace falta tipearlo a
+    mano: podés SELECCIONAR ese texto con el mouse, copiarlo (Cmd+C), ir
+    a la ventana de la Terminal, y pegarlo (Cmd+V) — funciona igual que
+    en cualquier otra aplicación.
+  - Después de pegar (o escribir) un comando, siempre hay que apretar
+    Enter para que se ejecute. Nada pasa hasta que apretás Enter.
+  - Si el comando pide tu contraseña de Mac (la misma con la que
+    desbloqueás la computadora): escribila y apretá Enter. OJO: mientras
+    la escribís, la Terminal NO muestra nada en pantalla — ni puntos, ni
+    asteriscos, ni el cursor moviéndose. Es normal, es así por seguridad.
+    Escribila igual (despacio, para no equivocarte) y apretá Enter.
+  - Cuando un comando tarda (a veces varios minutos), vas a ver texto
+    apareciendo solo, o directamente nada por un rato. Es normal, hay
+    que esperar a que termine.
+
+Con esto ya sabés todo lo que hace falta para seguir el resto de la guía.
+
+============================================================
+  B) INSTALAR DESDE CERO EN UNA MAC NUEVA
+============================================================
+
+--- Paso 1: instalar Homebrew ---
+
+Homebrew es un programa que instala otros programas (pensalo como una
+"App Store" pero manejada desde la Terminal). Lo necesitamos para poder
+instalar Python y ffmpeg en los pasos siguientes.
+
+  1. Abrí la Terminal (ver parte A).
+  2. Copiá esta línea completa (es una sola línea, aunque se vea larga):
+
+     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  3. Pegala en la Terminal y apretá Enter.
+  4. Te va a pedir tu contraseña de Mac. Escribila (no se ve mientras
+     tipeás, ver parte A) y apretá Enter.
+  5. Va a instalar varias cosas, tarda unos minutos. Dejalo terminar
+     hasta que vuelva a aparecer el cursor esperando el próximo comando.
+  6. Al final, es posible que te muestre 2-3 líneas bajo el título
+     "Next steps" (próximos pasos) pidiéndote que corras algún comando
+     más. Si aparece eso, copiá y pegá cada una de esas líneas en la
+     Terminal, una por una, apretando Enter después de cada una.
+
+  Si te dice que Homebrew ya está instalado, perfecto, saltá al Paso 2.
+
+--- Paso 2: conseguir la carpeta del proyecto en esta Mac ---
+
+Elegí UNA de estas dos opciones:
+
+  Opción 1 — Pasarla desde la otra Mac con AirDrop (más simple si las
+  dos Macs están cerca):
+    1. En la Mac vieja, buscá la carpeta del proyecto en el Finder.
+    2. Hacé click derecho sobre la carpeta > Compartir > AirDrop.
+    3. Elegí la Mac nueva de la lista y esperá a que se transfiera.
+    4. En la Mac nueva, aceptá la transferencia. Por defecto suele caer
+       en la carpeta "Descargas".
+    5. Anotá en qué carpeta quedó (por ejemplo: Descargas, o
+       Escritorio) y seguí al Paso 3.
+
+  Opción 2 — Bajarla de GitHub con git (si el proyecto está subido ahí):
+    1. En la Terminal, escribí y apretá Enter (te lleva a tu carpeta de
+       usuario, el punto de partida más simple):
+       cd ~
+    2. Escribí y apretá Enter:
+       git clone https://github.com/EntoncesAleman/ai-audiovisual-suite-pro.git
+    3. Esto crea una carpeta nueva llamada "ai-audiovisual-suite-pro"
+       (la vas a poder ver también en el Finder, dentro de tu carpeta de
+       usuario — la que tiene el ícono de casita).
+
+--- Paso 3: pararse en la carpeta del proyecto, desde la Terminal ---
+
+Todos los comandos de los pasos siguientes hay que escribirlos "estando
+parado" en la carpeta del proyecto dentro de la Terminal (es como
+"entrar" a esa carpeta, pero por comando en vez de doble click). Para
+eso, dos formas:
+
+  Forma fácil (arrastrar y soltar):
+    1. En la Terminal, escribí: cd
+       (con un espacio después de "cd", pero SIN apretar Enter todavía)
+    2. Abrí el Finder, buscá la carpeta del proyecto (la que trajiste en
+       el Paso 2), y ARRASTRALA con el mouse directo sobre la ventana de
+       la Terminal. Vas a ver que se escribe sola la ruta completa de la
+       carpeta.
+    3. Ahora sí, apretá Enter.
+
+  Forma directa (si usaste la Opción 2 - git - del Paso 2):
+    Escribí y apretá Enter:
+    cd ~/ai-audiovisual-suite-pro
+
+Sabés que funcionó porque el textito gris a la izquierda del cursor, en
+la Terminal, cambia y ahora muestra el nombre de la carpeta del
+proyecto en vez de otra cosa.
+
+--- Paso 4: dar permiso para ejecutar el instalador ---
+
+Escribí esto y apretá Enter (esto se hace UNA sola vez, nunca más hace
+falta repetirlo en esta Mac):
+   chmod +x iniciar.command
+
+--- Paso 5: arrancar (esto instala TODO lo que falte, automático) ---
+
+Ahora sí, andá al Finder, abrí la carpeta del proyecto, y hacé DOBLE
+CLICK en el archivo llamado "iniciar.command".
+
+⚠ La primera vez que lo abrís, es muy probable que macOS te muestre un
+aviso de seguridad tipo "iniciar.command no se puede abrir porque
+proviene de un desarrollador no identificado". Esto le pasa a CUALQUIER
+script que no bajaste de la App Store, no significa que algo esté mal.
+Se soluciona así, una sola vez:
+  1. Hacé CLICK DERECHO (o mantené apretado Ctrl y hacé click) sobre
+     "iniciar.command".
+  2. Del menú que aparece, elegí "Abrir".
+  3. Te va a aparecer el mismo aviso de antes, pero esta vez con un
+     botón que dice "Abrir". Apretalo.
+  4. Se abre una ventana de Terminal sola, y ahí arranca todo el proceso.
+
+Después de esta primera vez, el doble click normal ya funciona sin
+avisos, en esta y en cualquier próxima vez.
+
+Qué vas a ver en pantalla mientras corre (no hay que tocar nada, salvo
+donde se indica):
+  - Si falta ffmpeg o python en esta Mac, los instala solo con Homebrew
+    (puede tardar uno o dos minutos, es normal, dejalo terminar).
+  - Crea una carpeta con todo lo necesario para correr el programa
+    (también tarda un poco la primera vez, nada más que esperar).
+  - En un momento te va a pedir que pegues tu API key de Gemini. Ahí:
+      · Si no tenés una todavía, conseguila gratis en
+        https://aistudio.google.com/apikey (necesitás iniciar sesión con
+        una cuenta de Google, y copiar la clave que te genera ahí).
+      · Pegala en la Terminal con Cmd+V y apretá Enter. No se va a ver
+        nada mientras la pegás/escribís (ni puntos ni asteriscos) — es
+        normal, es a propósito para que nadie la vea por arriba tuyo.
+  - Por último arranca el servidor y te va a aparecer un mensaje
+    diciendo: "Servidor corriendo en http://localhost:8000"
+
+--- Paso 6: usar la aplicación en el navegador ---
+
+  1. Dejá esa ventana de Terminal ABIERTA (si la cerrás, se apaga el
+     servidor y la aplicación deja de responder).
+  2. Abrí tu navegador (Safari, Chrome, el que uses).
+  3. En la barra de direcciones de arriba escribí: localhost:8000
+  4. Apretá Enter. Ahí tenés que ver la aplicación funcionando.
+
+Para apagar el servidor cuando termines de usarlo: hacé click sobre la
+ventana de la Terminal para seleccionarla, y apretá Ctrl+C (la tecla
+Control, NO Cmd). Para volver a prenderlo más adelante, ya no hace falta
+pasar por Terminal — ver "AI Audiovisual Suite Pro.app" en la parte C.
+
+============================================================
+  C) ARRANCAR (el proyecto YA está instalado en esta máquina)
+============================================================
+
+--- Mac: opción más simple, "AI Audiovisual Suite Pro.app" ---
+
+Una vez que ya pasaste una vez por la Parte B (o sea, ya existen "venv"
+y ".env" en la carpeta), la forma más cómoda de arrancar es doble click
+en "AI Audiovisual Suite Pro.app" (está en la misma carpeta que
+"iniciar.command"). Arranca el servidor solo, en segundo plano, y te
+abre el navegador directo — sin mostrar ninguna ventana de Terminal.
+
+⚠ Igual que con "iniciar.command", la primera vez que lo abrís en cada
+Mac te va a aparecer el aviso de "desarrollador no identificado" — se
+soluciona igual (click derecho > Abrir > Abrir), una sola vez.
+
+Para apagarlo: buscá el proceso "uvicorn" en el Monitor de Actividad y
+cerralo, o simplemente reiniciá la Mac. (Si preferís controlarlo a mano
+con Ctrl+C, usá la opción de abajo con "iniciar.command" en vez de la app).
+
+--- Mac: opción con "iniciar.command" (ventana de Terminal visible) ---
+
+Andá al Finder, abrí la carpeta del proyecto, doble click en
+"iniciar.command". Esperá el mensaje "Servidor corriendo en
+http://localhost:8000", y después seguí el Paso 6 de arriba (abrir el
+navegador en localhost:8000). Esta opción sí deja la Terminal abierta,
+útil si querés ver los mensajes del servidor en vivo o frenarlo con
+Ctrl+C fácilmente.
+
+Si preferís hacerlo por Terminal en vez de doble click:
+  1. Abrí la Terminal (parte A).
+  2. Pará en la carpeta del proyecto (Paso 3 de la parte B).
+  3. Escribí y apretá Enter:
+     source venv/bin/activate
+  4. Escribí y apretá Enter:
+     uvicorn main:app --reload --host 0.0.0.0 --port 8000
+  5. Cuando aparezca que está corriendo, seguí el Paso 6 de arriba.
+
+--- Windows (si seguís usando también la PC vieja) ---
+
+  1. Abrí el símbolo del sistema (o PowerShell) en la carpeta del
+     proyecto.
+  2. Escribí y apretá Enter:
+     venv\Scripts\activate
+  3. Escribí y apretá Enter:
+     uvicorn main:app --reload --host 0.0.0.0 --port 8000
+  4. Cuando aparezca que está corriendo, abrí el navegador en
+     localhost:8000.
+
+============================================================
+  Sobre la API key de Gemini (leer si usás más de una máquina)
+============================================================
+
+La clave vive en un archivo llamado ".env", en la misma carpeta que
+main.py. Ese archivo es SOLO tuyo, nunca se sube a GitHub (está excluido
+a propósito) — así que cada máquina necesita el suyo.
+
+Con "iniciar.command", en una máquina nueva te la va a pedir UNA sola
+vez (la primera vez que no encuentra el archivo .env) y después nunca
+más te la vuelve a preguntar en esa misma máquina.
+
+Si querés evitarte incluso ese único paso al pasar a una Mac nueva, hay
+una forma simple y segura: en vez de escribir la clave de nuevo, copiá
+directamente el archivo ".env" que ya tenés en la Mac vieja (está
+oculto por defecto en el Finder — Cmd+Shift+Punto muestra los archivos
+ocultos) y pasalo por AirDrop a la carpeta del proyecto en la Mac nueva,
+ANTES de correr "iniciar.command" por primera vez. Al encontrar el .env
+ya armado, el script no te va a pedir nada y arranca directo.
+
+⚠ Importante: esto funciona porque estás moviendo el archivo .env A
+MANO, por afuera de git (AirDrop, pendrive, etc.) — nunca metas la clave
+DENTRO de "iniciar.command" ni de ningún otro archivo que se suba al
+repositorio. Ese archivo si se commitea a git, y una clave ahí queda
+expuesta para siempre en el historial aunque después la borres — es
+exactamente lo que pasó antes con "iniciar.bat" (por eso se borró).
+
+Las otras dos variables opcionales (GROQ_API_KEY, API_ACCESS_KEY) se
+agregan a mano abriendo el archivo .env con cualquier editor de texto
+(TextEdit, por ejemplo) y sumando una línea más, con el mismo formato:
+NOMBRE=valor
+
+  - GROQ_API_KEY    → fallback de transcripción cuando se agota la
+                       cuota diaria de TODOS los modelos Gemini.
+                       Conseguila gratis en https://console.groq.com
+                       (2000 req/día, Whisper Large v3).
+  - API_ACCESS_KEY  → RECOMENDADA en cualquier deploy público (ej.
+                       Render). Sin esto, cualquiera con la URL puede
+                       analizar/exportar videos sin login real (gasta tu
+                       cuota de Gemini/Groq y CPU/memoria del servidor).
+                       Si la configurás, la pantalla de /login la va a
+                       pedir como "contraseña" antes de dejar pasar.
+                       Elegí cualquier texto largo y random.
+
+============================================================
+  Otras notas
+============================================================
+
+- La primera vez que uses una URL de YouTube, yt-dlp puede necesitar
+  descargar un componente (Deno) para resolver el challenge de firma de
+  YouTube — lo hace solo en segundo plano, no requiere que instales nada
+  a mano.
+
+- Si vas a exportar clips de videos PRIVADOS de Google Drive (no
+  públicos), puede que necesites un archivo cookies.txt (exportado de tu
+  navegador con la extensión "Get cookies.txt LOCALLY") puesto en la
+  raíz del proyecto. Para videos públicos de YouTube/Drive esto no hace
+  falta.

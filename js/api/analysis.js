@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { showLoader, updateProgress } from '../modules/loader.js';
 import { saveSession } from '../modules/sessions.js';
 import { showInspectionModal } from '../modules/modal.js';
+import { authHeaders } from '../utils/storage.js';
 
 // ============================================================
 // ANÁLISIS (con streaming de progreso)
@@ -60,7 +61,7 @@ export async function analyzeLocalFile() {
     formData.append("file", file);
     let inspection;
     try {
-        const res = await fetch(`${BACKEND_URL}/inspect-file`, { method: 'POST', body: formData });
+        const res = await fetch(`${BACKEND_URL}/inspect-file`, { method: 'POST', headers: authHeaders(), body: formData });
         if (!res.ok) throw new Error("Inspección falló (HTTP " + res.status + ")");
         inspection = await res.json();
     } catch (e) {
@@ -134,7 +135,11 @@ export async function streamingFetch(url, opts) {
         }, STREAM_STALL_MS);
     };
     try {
-        const res = await fetch(url, { ...opts, signal: state.currentAbortController.signal });
+        const res = await fetch(url, {
+            ...opts,
+            headers: { ...authHeaders(), ...(opts.headers || {}) },
+            signal: state.currentAbortController.signal
+        });
         if (!res.ok || !res.body) throw new Error("Servidor sin respuesta streaming.");
         const reader = res.body.getReader();
         const decoder = new TextDecoder();

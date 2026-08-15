@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 COPY index.html .
+COPY login.html .
 COPY prompts.json .
 COPY teaser_templates.json .
 COPY css ./css

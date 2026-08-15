@@ -1,17 +1,55 @@
-.sidebar { width: 280px; background-color: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; padding: 15px; }
-.sidebar h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-top: 0; }
-.sidebar-tools { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
+.main-content { min-height: 100vh; padding: 40px 24px 80px; box-sizing: border-box; }
+.content-shell { max-width: 1040px; margin: 0 auto; }
 
-.main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding: 30px; }
-.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; position: relative; }
+.app-header { margin-bottom: 24px; }
+.app-header h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+.app-subtitle { color: #94a3b8; margin: 4px 0 0; font-size: 14px; }
+
+.card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px; position: relative; }
+.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 .full-width { grid-column: span 2; }
 
+/* ============================================
+   HISTORIAL: botón + drawer (antes sidebar fija)
+   ============================================ */
+.history-trigger {
+    position: fixed; top: 20px; left: 20px; z-index: 150;
+    display: flex; align-items: center; gap: 8px;
+    background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
+    padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background .15s ease, border-color .15s ease, transform .1s ease;
+}
+.history-trigger:hover { background: #263449; border-color: #475569; }
+.history-trigger:active { transform: scale(.97); }
+/* Cuando el drawer está abierto, éste lo tapa (mismo lugar en pantalla) -
+   lo ocultamos en vez de dejar un botón fantasma no clickeable; el drawer
+   ya tiene su propia X para cerrar. */
+.history-trigger.drawer-open { opacity: 0; pointer-events: none; }
+
+.drawer-backdrop {
+    position: fixed; inset: 0; background: rgba(2,6,23,.6);
+    opacity: 0; pointer-events: none; transition: opacity .25s ease; z-index: 199;
+}
+.drawer-backdrop.active { opacity: 1; pointer-events: auto; }
+
+.history-drawer {
+    position: fixed; top: 0; left: 0; height: 100vh; width: 300px;
+    background: #1e293b; border-right: 1px solid #334155;
+    display: flex; flex-direction: column; padding: 18px;
+    transform: translateX(-100%); transition: transform .3s cubic-bezier(.16,1,.3,1);
+    z-index: 200; box-sizing: border-box;
+}
+.history-drawer.active { transform: translateX(0); }
+.drawer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.drawer-header h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin: 0; }
+.drawer-close { background: none; border: none; color: #94a3b8; font-size: 15px; cursor: pointer; padding: 4px 9px; border-radius: 6px; line-height: 1; }
+.drawer-close:hover { background: #334155; color: #e2e8f0; }
+.sidebar-tools { display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding-top: 12px; }
+
 @media (max-width: 768px) {
-    body { flex-direction: column; height: auto; min-height: 100vh; overflow: auto; }
-    .sidebar { width: auto; max-height: 220px; border-right: none; border-bottom: 1px solid #334155; }
-    .main-content { padding: 15px; overflow-y: visible; }
+    .main-content { padding: 90px 16px 60px; }
     .dashboard-grid { grid-template-columns: 1fr; }
     .full-width { grid-column: span 1; }
+    .history-drawer { width: 85vw; max-width: 320px; }
     .session-title { width: auto; max-width: 55vw; }
 }

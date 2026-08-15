@@ -1,0 +1,14 @@
+# Normaliza los finales de línea a LF en el repo (se guardan así en git y
+# se checkean out como LF también, salvo en Windows donde git core.autocrlf
+# los convierte a CRLF en el working tree si está en true). Sin esto, mover
+# el proyecto entre Windows y Mac genera diffs de archivo completo por puro
+# cambio de EOL, sin cambios de contenido reales (visto en prompts.json y
+# .vscode/settings.json).
+* text=auto eol=lf
+
+# Binarios: git no debe tocarles los bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.pdf binary

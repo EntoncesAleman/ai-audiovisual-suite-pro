@@ -3,19 +3,14 @@ import { BACKEND_URL, MAX_CLIPS_PER_EXPORT, STREAM_STALL_MS } from '../config.js
 import { escapeHtml, setExportProgress, resetExportProgress } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
+import { authHeaders } from '../utils/storage.js';
 
 // ============================================================
 // EXPORTACIÓN DE CLIPS
 // ============================================================
-
-export function toggleClipExporter() {
-    const panel = document.getElementById('clipExporter');
-    panel.classList.toggle('active');
-    if (panel.classList.contains('active') && state.clipsList.length === 0) {
-        // Auto-parsear al abrir si no hay clips cargados
-        parseClipsFromTimeline();
-    }
-}
+// El panel de clips ya no se togglea a mano: es el paso 3 del flujo
+// (ver modules/steps.js), que lo marca .active y llama a
+// parseClipsFromTimeline() solo al entrar a ese paso.
 
 export function parseClipsFromTimeline() {
     if (!state.originalTimeline) { alert("Primero procesá un video."); return; }
@@ -144,7 +139,7 @@ export async function startClipExport() {
     try {
         const res = await fetch(`${BACKEND_URL}/export-clips`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...source, clips }),
             signal: controller.signal
         });

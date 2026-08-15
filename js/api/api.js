@@ -1,5 +1,6 @@
 import { BACKEND_URL } from '../config.js';
 import { state } from '../state.js';
+import { authHeaders } from '../utils/storage.js';
 
 /**
  * Resuelve de dónde sale el video fuente para exportar. Orden de prioridad:
@@ -34,7 +35,7 @@ export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
         }
         const formData = new FormData();
         formData.append("file", file);
-        const res = await fetch(`${BACKEND_URL}/inspect-file`, { method: "POST", body: formData });
+        const res = await fetch(`${BACKEND_URL}/inspect-file`, { method: "POST", headers: authHeaders(), body: formData });
         if (!res.ok) throw new Error("No se pudo subir el archivo (HTTP " + res.status + ")");
         const info = await res.json();
         return { video_path: info.temp_path };

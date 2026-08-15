@@ -95,13 +95,14 @@ export function regenerateTeaserPrompt() {
 
     // Feedback visual: botón verde momentáneo
     const btn = document.getElementById("btnRegenerateTeaser");
-    const originalText = btn.textContent;
+    // Guardamos el HTML (con el ícono), no el textContent (lo perdería).
+    const originalHtml = btn.innerHTML;
     btn.classList.add("flash");
     btn.textContent = "✓ Prompt actualizado";
 
     setTimeout(() => {
         btn.classList.remove("flash");
-        btn.textContent = originalText;
+        btn.innerHTML = originalHtml;
     }, 1200);
 
     // Flash en el cuadro del prompt

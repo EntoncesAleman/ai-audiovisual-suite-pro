@@ -21,6 +21,11 @@ export function searchTimeline() {
     document.getElementById('searchInfo').textContent = `${matches.length} coincidencia${matches.length === 1 ? '' : 's'}`;
 }
 
+// Iconos del botón editar/guardar (no se puede usar textContent para
+// cambiar la etiqueta porque borraría el ícono SVG - ver abajo).
+const ICON_PENCIL = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+const ICON_SAVE = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>';
+
 export function toggleEdit() {
     const box = document.getElementById('resTimeline');
     const btn = document.getElementById('editToggle');
@@ -29,13 +34,13 @@ export function toggleEdit() {
         box.innerText = state.originalTimeline; // limpiar highlights
         box.setAttribute('contenteditable', 'true');
         box.focus();
-        btn.textContent = "💾 Guardar cambios";
+        btn.innerHTML = `${ICON_SAVE} Guardar cambios`;
         btn.classList.add('editing');
     } else {
         const newText = box.innerText;
         state.originalTimeline = newText;
         box.removeAttribute('contenteditable');
-        btn.textContent = "✏ Editar transcripción";
+        btn.innerHTML = `${ICON_PENCIL} Editar transcripción`;
         btn.classList.remove('editing');
         // Persistir cambios en la sesión actual
         if (state.currentSessionId) {

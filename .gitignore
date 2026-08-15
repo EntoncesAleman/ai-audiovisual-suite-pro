@@ -1,5 +1,7 @@
 .env
 cookies.txt
 venv/
+venv_windows_old_sin_usar/
 __pycache__/
 *.pyc
+.DS_Store
