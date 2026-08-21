@@ -59,23 +59,28 @@ else
     echo "[2/4] python3 encontrado ✓"
 fi
 
-# 4) Entorno virtual + dependencias (solo la primera vez)
+# 4) Entorno virtual (solo se crea la primera vez)
 if [ ! -f "venv/bin/activate" ]; then
-    echo "[3/4] No hay entorno virtual. Creándolo e instalando dependencias..."
+    echo "[3/4] No hay entorno virtual. Creándolo..."
     python3 -m venv venv
     source venv/bin/activate
     pip install --upgrade pip -q || true  # falla a veces en discos de red, no es crítico
-    if ! pip install -r requirements.txt; then
-        echo ""
-        echo "⚠ La instalación de dependencias no terminó bien (puede pasar por disco"
-        echo "  lento o corte de conexión). No arrancó nada roto: volvé a correr este"
-        echo "  mismo script y va a retomar solo lo que falte instalar, no desde cero."
-        read -p "Presioná Enter para cerrar..."
-        exit 1
-    fi
 else
     echo "[3/4] Entorno virtual encontrado ✓"
     source venv/bin/activate
+fi
+
+# Reconciliar dependencias SIEMPRE (no solo la primera vez): si requirements.txt
+# sumó algo nuevo (ej. Pillow para los subtítulos incrustados) en una versión
+# más nueva del proyecto, un venv viejo que ya existía se tiene que enterar acá,
+# no solo en un venv recién creado. pip no reinstala lo que ya está.
+if ! pip install -r requirements.txt -q; then
+    echo ""
+    echo "⚠ La instalación de dependencias no terminó bien (puede pasar por disco"
+    echo "  lento o corte de conexión). No arrancó nada roto: volvé a correr este"
+    echo "  mismo script y va a retomar solo lo que falte instalar, no desde cero."
+    read -p "Presioná Enter para cerrar..."
+    exit 1
 fi
 
 # 5) .env con la API key de Gemini (solo la primera vez, si no existe)

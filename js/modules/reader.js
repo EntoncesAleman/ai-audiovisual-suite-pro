@@ -1,48 +1,6 @@
 import { state } from '../state.js';
 import { escapeHtml, highlightSearch } from '../utils/dom.js';
-
-/**
- * Parsea la transcripción cruda en segmentos estructurados.
- * El backend produce bloques del tipo:
- *   TIMESTAMP: 04:12
- *   SPEAKER: Topa
- *   DIALOGUE: texto del diálogo
- *   ---
- * Esta función es tolerante: si algún bloque viene mal formado
- * (por ejemplo sin SPEAKER, o con espaciado raro), igual lo recupera.
- */
-function parseTimelineToSegments(rawText) {
-    if (!rawText) return [];
-    const segments = [];
-    // Separamos por --- pero también aceptamos formato sin separador
-    const blocks = rawText.split(/^---\s*$/m).map(b => b.trim()).filter(Boolean);
-
-    for (const block of blocks) {
-        const tsMatch = block.match(/TIMESTAMP:\s*([^\n]+)/i);
-        const spMatch = block.match(/SPEAKER:\s*([^\n]+)/i);
-        // Para DIALOGUE capturamos todo hasta otra etiqueta o fin
-        const dlMatch = block.match(/DIALOGUE:\s*([\s\S]+?)(?=\n[A-Z]+:|$)/i);
-
-        // Si el bloque no tiene ninguna etiqueta reconocible, lo guardamos como texto crudo
-        if (!tsMatch && !spMatch && !dlMatch) {
-            if (block.length > 0) {
-                segments.push({
-                    timestamp: "",
-                    speaker: "",
-                    text: block
-                });
-            }
-            continue;
-        }
-
-        segments.push({
-            timestamp: tsMatch ? tsMatch[1].trim() : "",
-            speaker: spMatch ? spMatch[1].trim() : "",
-            text: dlMatch ? dlMatch[1].trim() : ""
-        });
-    }
-    return segments;
-}
+import { parseTimelineToSegments } from '../utils/helpers.js';
 
 export function openReader() {
     if (!state.currentData || !state.originalTimeline) {

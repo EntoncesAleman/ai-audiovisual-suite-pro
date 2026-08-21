@@ -2,6 +2,20 @@ import { state } from '../state.js';
 import { getSessions, setSessions } from '../utils/storage.js';
 import { generateIAPrompt } from './prompts.js';
 import { normalizeToSrt, addSeconds } from '../utils/helpers.js';
+import { renderInteractiveTranscript } from './transcriptPanel.js';
+
+/**
+ * La transcripción tiene dos vistas del mismo texto: la interactiva (speech
+ * map + tabs + lista clickeable, la que se ve por default) y la caja cruda
+ * (#resTimeline, contenteditable) que solo se muestra mientras se busca
+ * texto (para ver los <mark> resaltados) o se está editando.
+ */
+function setRawTranscriptVisible(visible) {
+    const rawWrap = document.getElementById('rawTranscriptWrap');
+    const interactiveWrap = document.getElementById('interactiveTranscriptWrap');
+    if (rawWrap) rawWrap.style.display = visible ? 'block' : 'none';
+    if (interactiveWrap) interactiveWrap.style.display = visible ? 'none' : 'block';
+}
 
 export function searchTimeline() {
     const q = document.getElementById('timelineSearch').value.trim();
@@ -10,8 +24,10 @@ export function searchTimeline() {
     if (!q) {
         box.innerText = state.originalTimeline;
         document.getElementById('searchInfo').textContent = "";
+        setRawTranscriptVisible(false);
         return;
     }
+    setRawTranscriptVisible(true);
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(escaped, 'gi');
     const matches = state.originalTimeline.match(regex) || [];
@@ -36,6 +52,7 @@ export function toggleEdit() {
         box.focus();
         btn.innerHTML = `${ICON_SAVE} Guardar cambios`;
         btn.classList.add('editing');
+        setRawTranscriptVisible(true);
     } else {
         const newText = box.innerText;
         state.originalTimeline = newText;
@@ -53,6 +70,8 @@ export function toggleEdit() {
             }
         }
         generateIAPrompt(); // regenerar prompt con texto editado
+        renderInteractiveTranscript(); // reflejar los cambios en el speech map / lista
+        setRawTranscriptVisible(false);
     }
 }
 

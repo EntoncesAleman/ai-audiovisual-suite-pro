@@ -1,6 +1,7 @@
 const SESSIONS_KEY = "video_sessions_v5";
 const API_KEY_STORAGE = "api_access_key";
 const URL_DRAFT_KEY = "draft_stream_url";
+const PROJECTS_KEY = "video_projects_v1";
 
 export function getSessions() {
     return JSON.parse(localStorage.getItem(SESSIONS_KEY)) || [];
@@ -8,6 +9,20 @@ export function getSessions() {
 
 export function setSessions(sessions) {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+}
+
+// ============================================================
+// PROYECTOS: agrupan sesiones del historial (ver modules/projects.js).
+// Todo local por ahora, igual que las sesiones - cada sesión guarda
+// project_id (o null = "Sin proyecto") apuntando a un id de acá.
+// ============================================================
+
+export function getProjects() {
+    return JSON.parse(localStorage.getItem(PROJECTS_KEY)) || [];
+}
+
+export function setProjects(projects) {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
 }
 
 // ============================================================

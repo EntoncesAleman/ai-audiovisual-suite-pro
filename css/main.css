@@ -1,9 +1,106 @@
-body { font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif; background-color: #0f172a; color: #e2e8f0; margin: 0; min-height: 100vh; }
+/* ============================================
+   DESIGN TOKENS
+   ============================================ */
+:root {
+  /* Fondos exactos */
+  --bg-app: #13161C;
+  --bg-card: #1C2028;
+  --bg-card-inner: #161920;
+  --bg-input: #111318;
 
-h1, h3 { margin-top: 0; color: #f8fafc; }
-input[type="text"], input[type="file"], select { width: 100%; padding: 10px; margin: 10px 0; background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: white; box-sizing: border-box; }
-button.primary { background: #2563eb; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; }
-button.primary:hover { background: #1d4ed8; }
+  /* Bordes hiper finos (colores base + shorthands listos para "border:") */
+  --border-color: #2D3340;
+  --border-subtle-color: #242934;
+  --border: 1px solid var(--border-color);
+  --border-subtle: 1px solid var(--border-subtle-color);
 
-select optgroup { color: #94a3b8; font-style: italic; }
+  /* Tipografía */
+  --text-main: #F8FAFC;
+  --text-sub: #94A3B8;
+  --text-muted: #64748B;
+
+  /* Colores de acento */
+  --accent-blue: #3B82F6;
+  --accent-gold: #D97706;
+  --accent-green: #10B981;
+  --accent-cyan: #06B6D4;
+
+  /* Variantes hover + 2 acentos extra para el Speech Map (4 hablantes:
+     cian/verde ya cubiertos arriba, faltan coral y púrpura) - no vienen en
+     la paleta base pero hacen falta para distinguir 4 speakers a la vez. */
+  --accent-gold-hover: #B45309;
+  --accent-blue-hover: #2563EB;
+  --accent-purple: #8B5CF6;
+  --accent-coral: #F43F5E;
+  --accent-red: #EF4444;
+
+  /* Geometría */
+  --radius: 8px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Sombras y timing (complementan el sistema de arriba) */
+  --shadow-card: 0 1px 2px rgba(0,0,0,.28), 0 8px 24px -8px rgba(0,0,0,.5);
+  --ease: cubic-bezier(.16,1,.3,1);
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+body {
+    font-family: var(--font-sans);
+    color: var(--text-main);
+    margin: 0;
+    min-height: 100vh;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+    /* Fondo con leve profundidad radial en vez de un color plano: da aire
+       "premium" sin comprometer legibilidad ni cambiar la paleta general. */
+    background:
+        radial-gradient(1100px 560px at 12% -8%, rgba(217,119,6,.07), transparent 60%),
+        radial-gradient(900px 500px at 108% 8%, rgba(59,130,246,.06), transparent 55%),
+        var(--bg-app);
+    background-attachment: fixed;
+}
+
+h1, h2, h3, h4 { margin-top: 0; color: var(--text-main); letter-spacing: -0.01em; }
+label { font-size: 13px; letter-spacing: -0.01em; }
+
+input[type="text"], input[type="file"], input[type="number"], select, textarea {
+    width: 100%; padding: 10px 12px; margin: 10px 0;
+    background: var(--bg-input); border: var(--border);
+    border-radius: var(--radius); color: var(--text-main); box-sizing: border-box;
+    font-family: inherit; font-size: 14px; letter-spacing: -0.01em;
+    transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease);
+}
+input[type="text"]:hover, select:hover, textarea:hover { border-color: #3a4257; }
+input[type="text"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--accent-gold);
+    box-shadow: 0 0 0 3px rgba(217,119,6,.18);
+    background: #0d0f13;
+}
+
+button { font-family: inherit; }
+
+button.primary {
+    background: linear-gradient(180deg, #e08814, var(--accent-gold));
+    color: white; border: 1px solid #e2942b; padding: 12px; border-radius: var(--radius);
+    cursor: pointer; width: 100%; font-weight: 700; font-size: 14px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 6px 16px -6px rgba(217,119,6,.55);
+    transition: transform .1s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease);
+}
+button.primary:hover { background: linear-gradient(180deg, #ea9420, var(--accent-gold-hover)); box-shadow: 0 1px 0 rgba(255,255,255,.1) inset, 0 10px 22px -6px rgba(217,119,6,.65); }
+button.primary:active { transform: translateY(1px); }
+
+select optgroup { color: var(--text-sub); font-style: italic; }
 select option { color: white; font-style: normal; padding: 4px; }
+
+/* ============================================
+   SCROLLBAR (webkit) — ultra-delgado, consistente con
+   el tema oscuro en vez del scrollbar gris default.
+   ============================================ */
+* { scrollbar-width: thin; scrollbar-color: var(--border-color) transparent; }
+*::-webkit-scrollbar { width: 4px; height: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #454f61; }

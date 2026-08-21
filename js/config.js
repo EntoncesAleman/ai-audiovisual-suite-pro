@@ -10,20 +10,16 @@ export const PROMPTS_FALLBACK = {
         "editorial": "📰 Editorial / Periodístico",
         "analitico": "🔍 Análisis",
         "estudios": "🎓 Estudios / Clases",
-        "creativo": "✨ Creativo"
+        "creativo": "✨ Creativo",
+        "libre": "✍️ Prompt Libre"
     },
     "enfoques": {
         "teaser": { "categoria": "audiovisual", "nombre": "Estructurar Teaser (1m 10s - Máxima Relevancia Completa) 🎬" },
         "resumen": { "categoria": "audiovisual", "nombre": "Resumen Ejecutivo Completo" },
-        "podcast": { "categoria": "audiovisual", "nombre": "Convertir en Podcast 🎙" }
+        "podcast": { "categoria": "audiovisual", "nombre": "Convertir en Podcast 🎙" },
+        "libre": { "categoria": "libre", "nombre": "Prompt libre (vos elegís) ✍️" }
     }
 };
-
-// Debe coincidir con MAX_CLIPS_PER_EXPORT en main.py: cortar/reencodear
-// muchos clips juntos en una sola corrida se queda sin memoria en el free
-// tier de Render (512MB). El backend igual valida esto, este chequeo del
-// lado del cliente solo evita el viaje de red para avisar antes.
-export const MAX_CLIPS_PER_EXPORT = 4;
 
 // Si no llega ningún byte del stream SSE en este tiempo, asumimos que la
 // conexión se colgó (el backend manda un keep-alive cada 20s durante los

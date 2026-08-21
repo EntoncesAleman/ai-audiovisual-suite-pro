@@ -2,8 +2,8 @@ import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { state } from '../state.js';
 import { showLoader, updateProgress } from '../modules/loader.js';
 import { saveSession } from '../modules/sessions.js';
-import { showInspectionModal } from '../modules/modal.js';
 import { authHeaders } from '../utils/storage.js';
+import { setTelemetryMetrics } from '../utils/dom.js';
 
 // ============================================================
 // ANÁLISIS (con streaming de progreso)
@@ -15,10 +15,41 @@ export function getSelectedEngine() {
     return el ? el.value : "auto";
 }
 
+const ENGINE_META = {
+    auto:   { label: "Auto (Gemini + Groq)", diarization: "Real (Gemini)" },
+    gemini: { label: "Only Gemini",          diarization: "Real (Gemini)" },
+    groq:   { label: "Only Groq",            diarization: "Estimada (sin diarización real)" },
+};
+
+/**
+ * Manejador único del botón "START ANALYSIS": decide solo si hay que
+ * procesar el archivo local elegido o el link pegado, según lo que haya
+ * cargado la persona (antes eran dos botones separados).
+ */
+export function startAnalysis() {
+    const fileInput = document.getElementById('localFile');
+    if (fileInput && fileInput.files.length > 0) {
+        analyzeLocalFile();
+    } else if (document.getElementById('streamUrl').value.trim()) {
+        analyzeUrlStream();
+    } else {
+        alert("Pegá un link o subí un archivo local primero.");
+    }
+}
+
+function updateEngineMetrics(inputLabel) {
+    const meta = ENGINE_META[getSelectedEngine()] || ENGINE_META.auto;
+    state.lastEngineLabel = meta.label;
+    state.lastInputLabel = inputLabel;
+    state.lastDiarizationLabel = meta.diarization;
+    setTelemetryMetrics({ engine: meta.label, input: inputLabel, duration: "—", diarization: meta.diarization });
+}
+
 export async function analyzeUrlStream() {
     const urlInput = document.getElementById('streamUrl').value.trim();
     if (!urlInput) return alert("Pega un link primero.");
     state._pendingSourceUrl = urlInput;  // se adjunta al resultado al guardar la sesión
+    updateEngineMetrics(urlInput.length > 40 ? urlInput.slice(0, 40) + "…" : urlInput);
     showLoader(true);
     try {
         await streamingFetch(`${BACKEND_URL}/analyze-url-stream`, {
@@ -48,42 +79,16 @@ export async function analyzeUrlStream() {
     }
 }
 
+/**
+ * Sube el archivo local y lo procesa directo: el backend siempre extrae
+ * solo el audio antes de transcribir (menos tokens/tiempo, nunca sube el
+ * video entero a Gemini/Groq), así que no hace falta preguntarle nada al
+ * usuario antes de arrancar.
+ */
 export async function analyzeLocalFile() {
     const fileInput = document.getElementById('localFile');
     if (fileInput.files.length === 0) return alert("Selecciona un archivo de audio o video local.");
-    const file = fileInput.files[0];
-
-    // PASO 1: Inspeccionar el archivo antes de procesar
-    showLoader(true);
-    updateProgress("uploading", "Inspeccionando archivo antes de procesar...");
-
-    const formData = new FormData();
-    formData.append("file", file);
-    let inspection;
-    try {
-        const res = await fetch(`${BACKEND_URL}/inspect-file`, { method: 'POST', headers: authHeaders(), body: formData });
-        if (!res.ok) throw new Error("Inspección falló (HTTP " + res.status + ")");
-        inspection = await res.json();
-    } catch (e) {
-        showLoader(false);
-        // Si la inspección falla (por ejemplo ffmpeg no instalado),
-        // hacemos fallback al flujo clásico
-        console.warn("Inspección no disponible, procesando directo:", e);
-        return analyzeLocalFileDirect();
-    }
-    showLoader(false);
-
-    // PASO 2: Mostrar el modal con la info y dejar que el usuario decida
-    showInspectionModal(inspection);
-}
-
-/**
- * Flujo clásico (sin inspección): se ejecuta como fallback si la
- * inspección no está disponible (típicamente porque ffprobe no está instalado).
- */
-export async function analyzeLocalFileDirect() {
-    const fileInput = document.getElementById('localFile');
-    if (fileInput.files.length === 0) return;
+    updateEngineMetrics(fileInput.files[0].name);
     showLoader(true);
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);

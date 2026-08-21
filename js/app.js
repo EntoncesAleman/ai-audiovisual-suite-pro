@@ -1,16 +1,16 @@
 import { BACKEND_URL } from './config.js';
-import { authHeaders, clearApiKey, getUrlDraft, setUrlDraft } from './utils/storage.js';
-import { renderSessions, startNewSession, deleteSession, clearServerCache, clearAllSessions, exportAllSessions, importSessions } from './modules/sessions.js';
-import { analyzeUrlStream, analyzeLocalFile, stopCurrentAnalysis } from './api/analysis.js';
-import { loadPromptsLibrary, onPromptTypeChange, copyPrompt } from './modules/prompts.js';
-import { loadTeaserTemplates, applyTeaserTemplate, regenerateTeaserPrompt, resetTeaserToTemplate, clearTeaserFields } from './modules/teaser.js';
+import { getUrlDraft, setUrlDraft } from './utils/storage.js';
+import { startNewSession, loadSessionById } from './modules/sessions.js';
+import { analyzeUrlStream, analyzeLocalFile, stopCurrentAnalysis, startAnalysis } from './api/analysis.js';
+import { loadPromptsLibrary, onPromptTypeChange, generateIAPrompt } from './modules/prompts.js';
 import { searchTimeline, toggleEdit, downloadTimeline } from './modules/timeline.js';
 import { openReader, closeReader, renderReader, changeReaderFontSize } from './modules/reader.js';
-import { closeInspectModal } from './modules/modal.js';
-import { parseClipsFromTimeline, selectAllClips, addClipManual, startClipExport } from './modules/clips.js';
-import { parseClipsForReel, toggleAiImport, selectAllReelClips, importAiTimestamps, addReelClipManual, startReelExport } from './modules/reelEditor.js';
-import { initStepper } from './modules/steps.js';
-import { initHistoryDrawer } from './modules/drawer.js';
+import { parseClipsFromTimeline, selectAllClips, addClipManual, startClipExport, toggleClipAiImport, importClipAiTimestamps, generateClipsWithAI, switchClipEditorTab, exportAllClips } from './modules/clips.js';
+import { parseClipsForReel, toggleAiImport, selectAllReelClips, importAiTimestamps, generateReelClipsWithAI, addReelClipManual, startReelExport, exportAllReelClips } from './modules/reelEditor.js';
+import { initPlayer, loadLocalSourcePreview } from './modules/player.js';
+import { initSpeechMapSync, renderInteractiveTranscript } from './modules/transcriptPanel.js';
+import { initAuthGuard } from './modules/auth.js';
+import { toggleSubtitleStylePanel, updateSubtitlePreview } from './modules/subtitleStyle.js';
 
 /**
  * Render (plan free) apaga el servidor tras 15 min sin requests entrantes;
@@ -23,29 +23,6 @@ function startKeepAlive() {
     setInterval(() => {
         fetch(`${BACKEND_URL}/`, { method: "GET" }).catch(() => {});
     }, 10 * 60 * 1000);
-}
-
-/**
- * Si el servidor tiene API_ACCESS_KEY configurada (ver main.py), esta
- * pestaña necesita una clave válida guardada por login.js. Sin eso, /auth/check
- * devuelve 401 y mandamos a /login en vez de dejar la pantalla principal
- * usable pero rota (todo fetch subsiguiente fallaría con 401 igual).
- * Si el servidor NO tiene la clave configurada (auth desactivada, ver
- * comentario en main.py), /auth/check siempre da 200 y no pasa nada.
- */
-async function ensureAuthenticated() {
-    try {
-        const res = await fetch(`${BACKEND_URL}/auth/check`, { headers: authHeaders() });
-        if (res.status === 401) {
-            clearApiKey();
-            window.location.href = '/login';
-        }
-    } catch (e) {
-        // Si falla por red (servidor dormido en Render free tier, etc.) no
-        // bloqueamos el uso: el resto de la app ya maneja esos fallos por
-        // su cuenta en cada request.
-        console.warn('No se pudo verificar la sesión:', e);
-    }
 }
 
 /**
@@ -106,33 +83,115 @@ function initStreamUrlInput() {
     });
 }
 
+/**
+ * Botón único "Generar Clips con IA" del generador (izquierda): resuelve
+ * el prompt actual con Gemini y carga el resultado en la lista de
+ * cualquiera de las dos pestañas del resultado (derecha) que esté activa
+ * en ese momento - clips simples o video para redes.
+ */
+function generateActiveClipsWithAI() {
+    const activeTab = document.querySelector('.clip-editor-tab-btn.active')?.dataset.tab;
+    if (activeTab === 'social') {
+        generateReelClipsWithAI();
+    } else {
+        generateClipsWithAI();
+    }
+}
+
+/**
+ * Barra de formato (Original / TikTok / YouTube / Instagram / Reels): es el
+ * único selector que decide qué pestaña de datos usa el exportador (clips
+ * simples vs. video para redes) - reemplaza a las viejas pestañas
+ * "Clips (simple) / Video para Redes" de arriba, ahora unificadas acá abajo.
+ */
+function setActiveFormatBtn(format) {
+    document.querySelectorAll('.format-bar-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.format === format);
+    });
+}
+
+function selectStudioFormat(format) {
+    if (format === 'simple') {
+        switchClipEditorTab('simple');
+        setActiveFormatBtn('simple');
+        return;
+    }
+    const sel = document.getElementById('promptType');
+    if (!sel || !sel.querySelector(`option[value="${format}"]`)) return;
+    sel.value = format;
+    onPromptTypeChange();
+    switchClipEditorTab('social');
+    setActiveFormatBtn(format);
+}
+
+/**
+ * El historial vive en /historial (página aparte); elegir una sesión ahí
+ * te trae para acá con ?session=<id> en la URL, y esto la carga. Se limpia
+ * el query string después para no dejar un link raro en la barra de
+ * direcciones ni volver a cargarla sola si se refresca la página.
+ */
+function loadSessionFromQueryString() {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('session');
+    if (!id) return;
+    loadSessionById(Number(id));
+    window.history.replaceState(null, '', window.location.pathname);
+}
+
+/**
+ * Si la fuente para cortar clips es un archivo local (no una URL externa),
+ * lo carga directo en el mini-player para poder escuchar/saltar de acá
+ * ANTES de exportar nada. Comparten el mismo mini-player las dos pestañas
+ * (Clips simple / Video para Redes), así que se engancha en ambos inputs.
+ */
+function initLocalSourcePreview() {
+    ['clipSourceFile', 'reelSourceFile'].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener('change', () => {
+            if (input.files.length > 0) loadLocalSourcePreview(input.files[0]);
+        });
+    });
+}
+
+/** Menú de 3 puntos de cada tarjeta principal: abre/cierra su dropdown, cerrando cualquier otro que haya quedado abierto. */
+function toggleCardMenu(btn) {
+    const dropdown = btn.nextElementSibling;
+    const wasOpen = dropdown.classList.contains('open');
+    document.querySelectorAll('.card-menu-dropdown.open').forEach((el) => el.classList.remove('open'));
+    if (!wasOpen) dropdown.classList.add('open');
+}
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.card-menu')) {
+        document.querySelectorAll('.card-menu-dropdown.open').forEach((el) => el.classList.remove('open'));
+    }
+});
+
+function clearTelemetryLog() {
+    const log = document.getElementById('telemetryLog');
+    if (log) log.innerHTML = '';
+}
+
 document.addEventListener("DOMContentLoaded", () => {
-    ensureAuthenticated();
-    renderSessions();
+    initAuthGuard();
     loadPromptsLibrary();
-    loadTeaserTemplates();
     startKeepAlive();
-    initStepper();
-    initHistoryDrawer();
     initDropzone();
     initStreamUrlInput();
+    initLocalSourcePreview();
+    initPlayer();
+    initSpeechMapSync();
+    renderInteractiveTranscript();
+    loadSessionFromQueryString();
 });
 
 // Todos los onclick/onchange/oninput del HTML están definidos como atributos
 // inline, así que estas funciones necesitan estar disponibles en window.
-window.exportAllSessions = exportAllSessions;
-window.importSessions = importSessions;
-window.clearAllSessions = clearAllSessions;
-window.clearServerCache = clearServerCache;
 window.startNewSession = startNewSession;
 window.analyzeUrlStream = analyzeUrlStream;
 window.analyzeLocalFile = analyzeLocalFile;
 window.onPromptTypeChange = onPromptTypeChange;
-window.applyTeaserTemplate = applyTeaserTemplate;
-window.regenerateTeaserPrompt = regenerateTeaserPrompt;
-window.resetTeaserToTemplate = resetTeaserToTemplate;
-window.clearTeaserFields = clearTeaserFields;
-window.copyPrompt = copyPrompt;
+window.generateIAPrompt = generateIAPrompt;
 window.searchTimeline = searchTimeline;
 window.openReader = openReader;
 window.toggleEdit = toggleEdit;
@@ -141,14 +200,25 @@ window.parseClipsFromTimeline = parseClipsFromTimeline;
 window.selectAllClips = selectAllClips;
 window.addClipManual = addClipManual;
 window.startClipExport = startClipExport;
+window.toggleSubtitleStylePanel = toggleSubtitleStylePanel;
+window.updateSubtitlePreview = updateSubtitlePreview;
+window.toggleClipAiImport = toggleClipAiImport;
+window.importClipAiTimestamps = importClipAiTimestamps;
 window.parseClipsForReel = parseClipsForReel;
 window.toggleAiImport = toggleAiImport;
 window.selectAllReelClips = selectAllReelClips;
 window.importAiTimestamps = importAiTimestamps;
+window.switchClipEditorTab = switchClipEditorTab;
 window.addReelClipManual = addReelClipManual;
+window.generateActiveClipsWithAI = generateActiveClipsWithAI;
+window.selectStudioFormat = selectStudioFormat;
 window.startReelExport = startReelExport;
 window.renderReader = renderReader;
 window.changeReaderFontSize = changeReaderFontSize;
 window.closeReader = closeReader;
-window.closeInspectModal = closeInspectModal;
 window.stopCurrentAnalysis = stopCurrentAnalysis;
+window.startAnalysis = startAnalysis;
+window.exportAllClips = exportAllClips;
+window.exportAllReelClips = exportAllReelClips;
+window.toggleCardMenu = toggleCardMenu;
+window.clearTelemetryLog = clearTelemetryLog;

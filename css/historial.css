@@ -1,0 +1,46 @@
+/* ============================================
+   PÁGINA: HISTORIAL DE SESIONES (/historial)
+   ============================================ */
+.historial-shell { max-width: 860px; padding: 16px; }
+
+.historial-page-heading {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; margin: 8px 0 20px;
+}
+.page-title { font-size: 20px; font-weight: 700; color: var(--text-main); margin: 0; }
+.page-subtitle { color: var(--text-sub); margin: 4px 0 0; font-size: 13.5px; }
+.header-back-link {
+    display: flex; align-items: center; gap: 7px; flex-shrink: 0;
+    background: var(--bg-card-inner); border: var(--border);
+    color: var(--text-sub); text-decoration: none;
+    padding: 9px 16px; border-radius: var(--radius); font-size: 13.5px; font-weight: 600;
+    transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
+}
+.header-back-link:hover { background: #20242c; border-color: var(--border-subtle-color); color: var(--text-main); }
+
+.historial-toolbar {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;
+    padding-bottom: 18px; border-bottom: var(--border-subtle);
+}
+
+.session-list-full { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.session-item-full {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 16px; background: var(--bg-card-inner); border: 1px solid transparent;
+    border-radius: var(--radius); cursor: pointer;
+    transition: background .15s var(--ease), border-color .15s var(--ease);
+}
+.session-item-full:hover { background: #20242c; border-color: var(--border-color); }
+.session-item-full-main { display: flex; flex: 1; min-width: 0; }
+.session-item-full-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.session-item-full-title {
+    font-size: 14.5px; font-weight: 600; color: var(--text-main);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.session-item-full-date { font-size: 12px; color: var(--text-muted); }
+.session-empty { text-align: center; color: var(--text-muted); padding: 40px 0; font-size: 14px; }
+
+.session-project-select {
+    width: auto; flex-shrink: 0; margin: 0; padding: 6px 8px; font-size: 12px;
+    background: var(--bg-input); border: var(--border); border-radius: var(--radius); color: var(--text-sub);
+}

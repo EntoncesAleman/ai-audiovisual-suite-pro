@@ -1,10 +1,10 @@
 import { STAGE_PROGRESS } from '../config.js';
+import { telemetryLog } from '../utils/dom.js';
 
 export function showLoader(show) {
     const el = document.getElementById('loading');
     el.classList.toggle('active', show);
     if (show) {
-        document.getElementById('resultBlock').style.display = 'none';
         updateProgress("uploading", "Iniciando...");
     }
 }
@@ -14,4 +14,5 @@ export function updateProgress(stage, detail) {
     document.getElementById('loadingStage').textContent = info.label;
     document.getElementById('loadingDetail').textContent = detail || "";
     document.getElementById('progressFill').style.width = info.pct + "%";
+    telemetryLog('telemetry', detail || info.label, stage);
 }

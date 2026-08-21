@@ -1,41 +1,36 @@
-import { BACKEND_URL } from '../config.js';
 import { state } from '../state.js';
-import { getSessions, setSessions, authHeaders, clearUrlDraft } from '../utils/storage.js';
-import { renderClipsList } from './clips.js';
+import { getSessions, setSessions, clearUrlDraft } from '../utils/storage.js';
+import { renderClipsList, parseClipsFromTimeline } from './clips.js';
 import { renderReelClipsList, updateVideoPanel } from './reelEditor.js';
 import { generateIAPrompt } from './prompts.js';
 import { toggleEdit } from './timeline.js';
-import { revealStep1Next, openAnalyzedSession, resetSteps } from './steps.js';
-import { closeHistoryDrawer } from './drawer.js';
+import { renderInteractiveTranscript } from './transcriptPanel.js';
+import { setTelemetryMetrics, resetExportPreview } from '../utils/dom.js';
+import { estimateDurationSeconds, secondsToTs } from '../utils/helpers.js';
+
+// El listado/administración del historial (borrar, exportar JSON, importar,
+// borrar caché del servidor) vive en historial.html/historial.js, una
+// página aparte. Acá solo queda lo que esta página necesita: guardar la
+// sesión recién analizada y poder cargar una sesión existente por id
+// (typ. al volver desde el historial con ?session=<id>, ver app.js).
 
 export function saveSession(data) {
     if (state._pendingSourceUrl) { data.source_url = state._pendingSourceUrl; state._pendingSourceUrl = ""; }
+    // Metadata de la tabla System Telemetry, para que sobreviva a recargar
+    // esta sesión más tarde desde el historial (ver loadSessionData abajo).
+    data.engine_label = state.lastEngineLabel;
+    data.input_label = state.lastInputLabel;
+    data.diarization_label = state.lastDiarizationLabel;
     let sessions = getSessions();
     const newSession = { id: Date.now(), timestamp: new Date().toLocaleDateString(), data: data };
     sessions.unshift(newSession);
     try {
         setSessions(sessions);
     } catch (e) {
-        alert("⚠ El historial está casi lleno. Exportá las sesiones y vaciá algunas antes de seguir.");
+        alert("⚠ El historial está casi lleno. Andá al Historial y exportá/vaciá algunas sesiones antes de seguir.");
     }
     state.currentSessionId = newSession.id;
-    renderSessions();
     loadSessionData(data);
-}
-
-export function renderSessions() {
-    const list = document.getElementById("sessionList");
-    list.innerHTML = "";
-    let sessions = getSessions();
-    sessions.forEach(s => {
-        const activeClass = s.id === state.currentSessionId ? "active" : "";
-        list.innerHTML += `
-            <li class="session-item ${activeClass}" onclick="loadSessionById(${s.id})">
-                <span class="session-title">${(s.data.title || 'Video Analizado').replace(/</g, '&lt;')}</span>
-                <button class="btn-del" onclick="deleteSession(event, ${s.id})">×</button>
-            </li>
-        `;
-    });
 }
 
 export function loadSessionById(id) {
@@ -43,42 +38,39 @@ export function loadSessionById(id) {
     let item = sessions.find(s => s.id === id);
     if (item) {
         state.currentSessionId = id;
-        loadSessionData(item.data, true);
-        renderSessions();
+        loadSessionData(item.data);
     }
-    closeHistoryDrawer();
 }
 
-export function loadSessionData(data, fromHistory = false) {
+export function loadSessionData(data) {
     state.currentData = data;
     state.originalTimeline = data.raw_timeline || "No hay líneas de tiempo registradas.";
     document.getElementById('resTimeline').innerText = state.originalTimeline;
-    document.getElementById('resultBlock').style.display = 'block';
     document.getElementById('cacheBadge').innerHTML = data.from_cache ? '<span class="cache-badge">⚡ DESDE CACHE</span>' : '';
     document.getElementById('timelineSearch').value = "";
     document.getElementById('searchInfo').textContent = "";
     if (state.editing) toggleEdit();
     // Restaurar URL fuente en el panel de clips
     document.getElementById('clipSourceUrl').value = data.source_url || "";
-    // Cerrar panel de clips al cambiar sesión
-    document.getElementById('clipExporter').classList.remove('active');
+    // Dejar listo el panel de clips directo (antes esto pasaba solo al
+    // entrar al paso 3; ahora todo está siempre visible en una sola página).
     state.clipsList = [];
-    renderClipsList();
+    parseClipsFromTimeline(true);
     // Actualizar panel de video para redes
     state.reelClipsList = [];
     renderReelClipsList();
     updateVideoPanel();
     generateIAPrompt();
-
-    // Sesión recién analizada: quedate en el paso 1 y mostrá "Siguiente"
-    // para que el usuario decida cuándo avanzar. Sesión del historial (ya
-    // analizada de antes): saltar directo al paso 2, no tiene sentido
-    // hacer pasar de nuevo por el botón.
-    if (fromHistory) {
-        openAnalyzedSession();
-    } else {
-        revealStep1Next();
-    }
+    renderInteractiveTranscript();
+    resetExportPreview('previewVideo');
+    const durationSec = estimateDurationSeconds(state.originalTimeline);
+    setTelemetryMetrics({
+        engine: data.engine_label || "—",
+        input: data.input_label || data.source_url || "—",
+        duration: durationSec > 0 ? `~${secondsToTs(durationSec)}` : "—",
+        diarization: data.diarization_label || "—",
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 export function startNewSession() {
@@ -86,83 +78,17 @@ export function startNewSession() {
     state.currentSessionId = null;
     document.getElementById('streamUrl').value = "";
     document.getElementById('localFile').value = "";
-    document.getElementById('resultBlock').style.display = 'none';
+    document.getElementById('resTimeline').innerText = "Procesá un audio/video para ver acá la transcripción completa.";
+    document.getElementById('cacheBadge').innerHTML = "";
     document.getElementById('promptOutput').innerText = "Carga un análisis para generar el prompt dinámico...";
+    state.originalTimeline = "";
+    state.clipsList = [];
+    renderClipsList();
+    state.reelClipsList = [];
+    renderReelClipsList();
+    updateVideoPanel();
+    renderInteractiveTranscript();
+    resetExportPreview('previewVideo');
+    setTelemetryMetrics({ engine: "—", input: "—", duration: "—", diarization: "—" });
     clearUrlDraft();
-    resetSteps();
-    renderSessions();
 }
-
-export function deleteSession(event, id) {
-    event.stopPropagation();
-    let sessions = getSessions();
-    sessions = sessions.filter(s => s.id !== id);
-    setSessions(sessions);
-    if (state.currentSessionId === id) startNewSession();
-    else renderSessions();
-}
-
-export async function clearServerCache() {
-    const btn = document.getElementById('btnClearCache');
-    // Guardamos el HTML original (con el ícono), no el textContent (lo
-    // perdería): este botón cambia de texto temporalmente mientras borra.
-    const original = btn.innerHTML;
-    btn.textContent = '⏳ Borrando...';
-    btn.disabled = true;
-    try {
-        const res = await fetch(`${BACKEND_URL}/cache-clear`, { method: 'POST', headers: authHeaders() });
-        const data = await res.json();
-        btn.textContent = `✅ ${data.deleted} análisis borrados`;
-        setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 3000);
-    } catch (e) {
-        btn.textContent = '❌ Error al borrar';
-        setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 3000);
-    }
-}
-
-export function clearAllSessions() {
-    if (confirm("¿Seguro querés vaciar todo el historial de análisis?")) {
-        localStorage.removeItem("video_sessions_v5");
-        startNewSession();
-    }
-}
-
-export function exportAllSessions() {
-    const sessions = getSessions();
-    if (sessions.length === 0) { alert("No hay sesiones para exportar."); return; }
-    const blob = new Blob([JSON.stringify(sessions, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `audiovisual_suite_sessions_${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-}
-
-export function importSessions(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        try {
-            const imported = JSON.parse(e.target.result);
-            if (!Array.isArray(imported)) throw new Error("Formato inválido");
-            const existing = getSessions();
-            const merged = [...imported, ...existing];
-            // Deduplicar por id
-            const seen = new Set();
-            const unique = merged.filter(s => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
-            setSessions(unique);
-            renderSessions();
-            alert(`✓ Importadas ${imported.length} sesiones.`);
-        } catch (err) {
-            alert("Error al importar: " + err.message);
-        }
-    };
-    reader.readAsText(file);
-    event.target.value = "";
-}
-
-// Las filas de sesiones se generan dinámicamente vía innerHTML (arriba), así que
-// sus onclick necesitan encontrar estas funciones en window.
-window.loadSessionById = loadSessionById;
-window.deleteSession = deleteSession;

@@ -1,10 +1,11 @@
 import { BACKEND_URL, PROMPTS_FALLBACK } from '../config.js';
 import { state } from '../state.js';
 import { updateVideoPanel } from './reelEditor.js';
+import { fetchWithTimeout } from '../utils/helpers.js';
 
 export async function loadPromptsLibrary() {
     try {
-        const res = await fetch(`${BACKEND_URL}/prompts`);
+        const res = await fetchWithTimeout(`${BACKEND_URL}/prompts`);
         if (res.ok) {
             state.PROMPTS_LIBRARY = await res.json();
         } else {
@@ -20,6 +21,7 @@ export async function loadPromptsLibrary() {
 export function populatePromptSelect() {
     const sel = document.getElementById("promptType");
     sel.innerHTML = "";
+    sel.disabled = false; // arranca disabled con el placeholder "Cargando enfoques…" (ver index.html)
     const cats = state.PROMPTS_LIBRARY.categorias || {};
     const enfoques = state.PROMPTS_LIBRARY.enfoques || {};
 
@@ -53,12 +55,7 @@ export function populatePromptSelect() {
 
 export function onPromptTypeChange() {
     const type = document.getElementById("promptType").value;
-    const customizer = document.getElementById("teaserCustomizer");
-    if (type === "teaser") {
-        customizer.classList.add("active");
-    } else {
-        customizer.classList.remove("active");
-    }
+    document.getElementById("promptLibreCustomizer").classList.toggle("active", type === "libre");
     updateVideoPanel();
     generateIAPrompt();
 }
@@ -66,6 +63,16 @@ export function onPromptTypeChange() {
 // ============================================================
 // GENERACIÓN DE PROMPT (sistema modular)
 // ============================================================
+
+// Instrucción extra siempre visible en la barra de control (no depende del
+// enfoque elegido): se suma al final de cualquier prompt predefinido para
+// afinarlo sin tener que pasar a "Prompt libre". Ese modo ya tiene su propio
+// campo grande, así que acá no se duplica.
+function buildExtraInstructionSuffix() {
+    const extra = (document.getElementById("promptExtraInstruction")?.value || "").trim();
+    if (!extra) return "";
+    return `\n\n---\nINSTRUCCIÓN ADICIONAL ESPECÍFICA para esta tanda (tiene prioridad sobre el resto de la consigna si hay conflicto):\n${extra}`;
+}
 
 export function generateIAPrompt() {
     const output = document.getElementById('promptOutput');
@@ -90,18 +97,24 @@ export function generateIAPrompt() {
     // como estaban, construidos por código (no se tocan).
     // ─────────────────────────────────────────────────────
     if (type === 'teaser') {
-        output.innerText = buildTeaserPromptOriginal(timelineText);
+        output.innerText = buildTeaserPromptOriginal(timelineText) + buildExtraInstructionSuffix();
         return;
     }
     if (type === 'resumen') {
-        output.innerText = buildResumenPromptOriginal(timelineText);
+        output.innerText = buildResumenPromptOriginal(timelineText) + buildExtraInstructionSuffix();
+        return;
+    }
+    if (type === 'libre') {
+        // El modo libre ya tiene su propio campo grande de instrucción: no
+        // se le vuelve a sumar la instrucción extra de la barra superior.
+        output.innerText = buildLibrePrompt(timelineText);
         return;
     }
 
     // Resto: vienen de la biblioteca modular
     const enf = state.PROMPTS_LIBRARY?.enfoques?.[type];
     if (enf && enf.prompt_template) {
-        output.innerText = enf.prompt_template.replace("{{TIMELINE}}", timelineText);
+        output.innerText = enf.prompt_template.replace("{{TIMELINE}}", timelineText) + buildExtraInstructionSuffix();
     } else {
         output.innerText = "Enfoque no encontrado en la biblioteca.";
     }
@@ -176,15 +189,23 @@ function buildResumenPromptOriginal(timelineText) {
     return p;
 }
 
-export function copyPrompt() {
-    const txt = document.getElementById('promptOutput').innerText;
-    if (!state.currentData || txt.includes("Carga un análisis")) {
-        alert("Primero tienes que seleccionar o procesar una sesión de video.");
-        return;
+// Se agrega siempre al final del prompt libre, sin importar lo que haya
+// escrito el usuario: así, si en algún punto de su respuesta la otra IA
+// marca momentos puntuales del video, lo hace en un formato que después
+// se puede pegar en "Importar respuesta de IA" (ver reelEditor.js) y
+// termina de importarse solo, sin que la persona tenga que copiar los
+// timestamps a mano uno por uno.
+const FREE_PROMPT_TIMESTAMP_INSTRUCTIONS = `\n\n---\nIMPORTANTE — FORMATO PARA MARCAR MOMENTOS DEL VIDEO (si tu tarea implica señalar fragmentos puntuales):\nCada vez que te refieras a un momento específico del material, indicalo así, una vez por momento:\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento: "cita textual del momento"\nUsá SIEMPRE timestamps reales tomados de la transcripción de arriba (nunca los inventes). Si tu respuesta no necesita marcar momentos puntuales, ignorá esta sección.\nRespondé en texto plano estricto, sin markdown (nada de **negrita**, bloques de código, ni encabezados #).`;
+
+function buildLibrePrompt(timelineText) {
+    const userPrompt = (document.getElementById("promptLibreText")?.value || "").trim();
+    let p = "";
+    if (userPrompt) {
+        p += `${userPrompt}\n\n`;
+    } else {
+        p += `[LIBRE] Escribí arriba, en el campo de texto, qué querés que la IA haga con este material.\n\n`;
     }
-    navigator.clipboard.writeText(txt).then(() => {
-        alert("¡Prompt copiado! Listo para usar en Gemini, ChatGPT o Claude.");
-    }).catch(err => {
-        alert("Error al copiar: " + err);
-    });
+    p += `[TRANSCRIPCIÓN Y DIÁLOGOS DE TODO EL VIDEO]:\n${timelineText}`;
+    p += FREE_PROMPT_TIMESTAMP_INSTRUCTIONS;
+    return p;
 }

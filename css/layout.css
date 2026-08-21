@@ -1,55 +1,104 @@
-.main-content { min-height: 100vh; padding: 40px 24px 80px; box-sizing: border-box; }
-.content-shell { max-width: 1040px; margin: 0 auto; }
-
-.app-header { margin-bottom: 24px; }
-.app-header h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
-.app-subtitle { color: #94a3b8; margin: 4px 0 0; font-size: 14px; }
-
-.card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px; position: relative; }
-.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
-.full-width { grid-column: span 2; }
+.main-content { min-height: 100vh; padding: 32px 24px 80px; box-sizing: border-box; }
+.content-shell { max-width: 1600px; margin: 0 auto; }
 
 /* ============================================
-   HISTORIAL: botón + drawer (antes sidebar fija)
+   HEADER BAR: barra superior fija de toda la app,
+   fuera de .main-content (a todo el ancho). Marca +
+   3 enlaces simples de navegación a la derecha.
    ============================================ */
-.history-trigger {
-    position: fixed; top: 20px; left: 20px; z-index: 150;
-    display: flex; align-items: center; gap: 8px;
-    background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
-    padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
-    cursor: pointer; transition: background .15s ease, border-color .15s ease, transform .1s ease;
+.app-header {
+    background: var(--bg-app);
+    border-bottom: var(--border);
+    padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
 }
-.history-trigger:hover { background: #263449; border-color: #475569; }
-.history-trigger:active { transform: scale(.97); }
-/* Cuando el drawer está abierto, éste lo tapa (mismo lugar en pantalla) -
-   lo ocultamos en vez de dejar un botón fantasma no clickeable; el drawer
-   ya tiene su propia X para cerrar. */
-.history-trigger.drawer-open { opacity: 0; pointer-events: none; }
+.app-brand { display: flex; align-items: center; gap: 10px; }
+.app-logo-icon { display: flex; flex-shrink: 0; color: var(--accent-gold); }
+.app-brand-name { font-size: 16px; font-weight: 800; letter-spacing: 0.02em; color: var(--text-main); }
 
-.drawer-backdrop {
-    position: fixed; inset: 0; background: rgba(2,6,23,.6);
-    opacity: 0; pointer-events: none; transition: opacity .25s ease; z-index: 199;
+.header-nav { display: flex; align-items: center; gap: 22px; }
+.nav-link {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--text-sub); text-decoration: none;
+    font-size: 13.5px; font-weight: 600;
+    transition: color .15s var(--ease);
 }
-.drawer-backdrop.active { opacity: 1; pointer-events: auto; }
+.nav-link:hover { color: var(--text-main); }
+.nav-link.active { color: var(--text-main); }
+.nav-link-disabled { cursor: default; opacity: .55; }
+.nav-link-disabled:hover { color: var(--text-sub); }
 
-.history-drawer {
-    position: fixed; top: 0; left: 0; height: 100vh; width: 300px;
-    background: #1e293b; border-right: 1px solid #334155;
-    display: flex; flex-direction: column; padding: 18px;
-    transform: translateX(-100%); transition: transform .3s cubic-bezier(.16,1,.3,1);
-    z-index: 200; box-sizing: border-box;
+/* ============================================
+   DASHBOARD: contenedor principal de la app, 3
+   columnas fijas. Col 1 = ingreso y estado del
+   sistema. Col 2 = generador de IA (arriba) +
+   transcripción/speech map (abajo). Col 3 = mini-
+   player (arriba) + clips + formato de exportación.
+   ============================================ */
+.dashboard {
+    display: grid;
+    grid-template-columns: 320px 1fr 360px;
+    gap: 16px;
+    padding: 16px;
+    background: var(--bg-app);
+    align-items: start;
+    max-width: 1800px;
+    margin: 0 auto;
+    box-sizing: border-box;
 }
-.history-drawer.active { transform: translateX(0); }
-.drawer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.drawer-header h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin: 0; }
-.drawer-close { background: none; border: none; color: #94a3b8; font-size: 15px; cursor: pointer; padding: 4px 9px; border-radius: 6px; line-height: 1; }
-.drawer-close:hover { background: #334155; color: #e2e8f0; }
-.sidebar-tools { display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding-top: 12px; }
+.col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.col-left, .col-right { position: sticky; top: 16px; }
+.col-header { color: var(--text-main); font-size: 15px; font-weight: 600; margin: 0; }
 
-@media (max-width: 768px) {
-    .main-content { padding: 90px 16px 60px; }
-    .dashboard-grid { grid-template-columns: 1fr; }
-    .full-width { grid-column: span 1; }
-    .history-drawer { width: 85vw; max-width: 320px; }
-    .session-title { width: auto; max-width: 55vw; }
+.player-hint { font-size: 11.5px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }
+
+.card {
+    background: linear-gradient(180deg, var(--bg-card), var(--bg-card-inner) 140%);
+    border: var(--border-subtle);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    position: relative;
+    box-shadow: var(--shadow-card);
+}
+
+/* Barra de título tipo "panel de dashboard": acento de color a la
+   izquierda + línea que separa el encabezado del contenido.
+   (:first-of-type en vez de :first-child porque el card-menu de 3
+   puntos, un <div>, suele venir antes del título en el DOM) */
+.card > h3:first-of-type, .card > h2:first-of-type,
+.clip-exporter > h4, .video-editor-panel > h4 {
+    padding-bottom: 12px;
+    padding-left: 12px;
+    margin: -2px -0px 16px;
+    border-bottom: var(--border-subtle);
+    border-left: 3px solid var(--accent-blue);
+    font-size: 15px;
+}
+.card > h2:first-of-type { font-size: 17px; }
+.card > label:not(.dropzone) {
+    display: block;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--text-muted); font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    margin: 16px 0 6px;
+}
+.card > label:first-child { margin-top: 0; }
+
+.sidebar-tools { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+
+@media (max-width: 1500px) {
+    .dashboard { grid-template-columns: 280px 1fr 320px; }
+}
+
+@media (max-width: 1150px) {
+    .dashboard { grid-template-columns: 1fr 1fr; }
+    .col-right { grid-column: span 2; position: static; }
+}
+
+@media (max-width: 860px) {
+    .main-content { padding: 24px 16px 60px; }
+    .app-header { padding: 14px 16px; }
+    .dashboard { grid-template-columns: 1fr; padding: 12px; }
+    .col-left, .col-right { position: static; grid-column: auto; }
+    .telemetry-log { height: 200px; }
 }

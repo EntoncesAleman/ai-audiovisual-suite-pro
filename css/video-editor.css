@@ -2,37 +2,48 @@
    PANEL DE EDITOR DE VIDEO PARA REDES
    ============================================ */
 .video-editor-panel {
-    background: linear-gradient(135deg, #1a1535 0%, #0d0f20 100%);
-    border: 2px solid #6366f1;
-    border-radius: 10px; padding: 18px; margin-top: 16px;
-    display: none;
+    background: linear-gradient(135deg, #201a35 0%, var(--bg-card-inner) 100%);
+    border: 2px solid var(--accent-purple);
+    border-radius: var(--radius); padding: 18px;
 }
-.video-editor-panel.active { display: block; }
-.video-editor-panel h4 { margin: 0 0 14px 0; color: #a5b4fc; font-size: 15px; }
+.video-editor-panel h4 { margin: 0 0 14px 0; color: #c4b5fd; font-size: 15px; }
+
+/* Atajos rápidos de formato por relación de aspecto - eligen un enfoque
+   de plataforma representativo (ver selectFormatShortcut en app.js). */
+.format-shortcuts { display: flex; gap: 8px; margin-bottom: 12px; }
+.format-shortcut-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+    background: var(--bg-input); border: 1px solid #3f3470; color: #c4b5fd;
+    padding: 10px 6px; border-radius: 8px; cursor: pointer; font-size: 10px; font-weight: 700;
+    transition: background .15s var(--ease), border-color .15s var(--ease), transform .1s var(--ease);
+}
+.format-shortcut-btn:hover { background: #211c3d; border-color: var(--accent-purple); }
+.format-shortcut-btn:active { transform: translateY(1px); }
 
 .platform-info-bar {
     display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-    background: #0f172a; border-radius: 8px; padding: 10px 14px;
-    margin-bottom: 14px; font-size: 12px; border: 1px solid #312e81;
+    background: var(--bg-input); border-radius: 8px; padding: 10px 14px;
+    margin-bottom: 14px; font-size: 12px; border: 1px solid #3f3470;
 }
 .platform-badge {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    background: linear-gradient(135deg, var(--accent-purple), #a78bfa);
     color: white; border-radius: 5px;
     padding: 4px 12px; font-weight: bold; font-size: 12px;
     white-space: nowrap;
 }
-.platform-detail { color: #94a3b8; white-space: nowrap; }
-.platform-detail strong { color: #e2e8f0; }
+.platform-detail { color: var(--text-sub); white-space: nowrap; }
+.platform-detail strong { color: var(--text-main); }
 
 .btn-reel-export {
-    background: #6366f1; color: white; border: none;
-    padding: 12px; border-radius: 6px; cursor: pointer;
+    background: var(--accent-purple); color: white; border: none;
+    padding: 12px; border-radius: var(--radius); cursor: pointer;
     width: 100%; max-width: 300px; font-weight: bold; font-size: 14px;
+    transition: background .15s var(--ease);
 }
-.btn-reel-export:hover { background: #4f46e5; }
+.btn-reel-export:hover { background: #7c4feb; }
 .btn-reel-download {
-    display: none; background: #6366f1; color: white;
-    border: none; padding: 10px 18px; border-radius: 6px;
+    display: none; background: var(--accent-purple); color: white;
+    border: none; padding: 10px 18px; border-radius: var(--radius);
     cursor: pointer; font-weight: bold; font-size: 13px; margin-top: 10px;
     text-decoration: none;
 }
@@ -40,35 +51,35 @@
 
 /* Importar respuesta de IA */
 .ai-import-toggle-btn {
-    background: #1e1f45 !important; border-color: #6366f1 !important;
-    color: #a5b4fc !important;
+    background: #201a45 !important; border-color: var(--accent-purple) !important;
+    color: #c4b5fd !important;
 }
-.ai-import-toggle-btn.open { background: #312e81 !important; }
+.ai-import-toggle-btn.open { background: #2c2166 !important; }
 .ai-import-body {
     display: none; margin-top: 12px;
-    border: 1px dashed #4338ca; border-radius: 8px;
-    padding: 14px; background: #0d0e1f;
+    border: 1px dashed #4c3fa0; border-radius: 8px;
+    padding: 14px; background: #100d20;
 }
 .ai-import-body.open { display: block; }
 .como-hacer-box {
-    background: #0f172a; border-radius: 6px;
+    background: var(--bg-input); border-radius: 6px;
     padding: 12px 14px; margin-bottom: 10px;
-    font-size: 12px; color: #94a3b8;
-    border-left: 3px solid #6366f1;
+    font-size: 12px; color: var(--text-sub);
+    border-left: 3px solid var(--accent-purple);
 }
-.como-hacer-box strong { color: #a5b4fc; display: block; margin-bottom: 6px; }
+.como-hacer-box strong { color: #c4b5fd; display: block; margin-bottom: 6px; }
 .como-hacer-box ol { margin: 0; padding-left: 18px; }
 .como-hacer-box li { margin-bottom: 4px; line-height: 1.5; }
 .como-hacer-box code {
-    background: #1e293b; padding: 1px 5px; border-radius: 3px;
+    background: var(--bg-card-inner); padding: 1px 5px; border-radius: 3px;
     font-family: monospace; font-size: 11px; color: #c4b5fd;
 }
 #aiResponseInput {
     width: 100%; box-sizing: border-box;
-    background: #0f172a; border: 1px solid #334155; border-radius: 6px;
-    color: #e2e8f0; font-size: 12px; font-family: monospace;
+    background: var(--bg-input); border: var(--border); border-radius: var(--radius);
+    color: var(--text-main); font-size: 12px; font-family: monospace;
     padding: 10px; resize: vertical; line-height: 1.5;
 }
-#aiResponseInput:focus { outline: none; border-color: #6366f1; }
+#aiResponseInput:focus { outline: none; border-color: var(--accent-purple); }
 
-.video-editor-panel .progress-fill { background: linear-gradient(90deg, #6366f1, #a5b4fc); }
+.video-editor-panel .progress-fill { background: linear-gradient(90deg, var(--accent-purple), #c4b5fd); }

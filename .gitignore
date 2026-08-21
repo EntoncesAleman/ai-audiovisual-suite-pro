@@ -5,3 +5,5 @@ venv_windows_old_sin_usar/
 __pycache__/
 *.pyc
 .DS_Store
+users_db.json
+access_requests.json

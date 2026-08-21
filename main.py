@@ -7,14 +7,17 @@ import shutil
 import tempfile
 import time
 import hashlib
+import hmac
+import secrets
 import json
 import asyncio
 import zipfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from google import genai
@@ -30,6 +33,22 @@ load_dotenv()
 # ============================================================
 
 app = FastAPI(title="AI Audiovisual Suite - Backend de Escaneo Continuo")
+
+
+@app.middleware("http")
+async def no_cache_static_assets(request, call_next):
+    """
+    StaticFiles no manda Cache-Control por default, así que el navegador
+    puede quedarse con una versión vieja de un .js/.css en cache heurística
+    (sobre todo con la pestaña abierta durante desarrollo activo, sin F5) y
+    mostrar comportamiento inconsistente que después es muy difícil de
+    diagnosticar a distancia. Forzamos revalidación siempre en /css y /js.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/css/") or request.url.path.startswith("/js/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -66,22 +85,113 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # desactivado (igual que el comportamiento de antes) para no romper
 # despliegues existentes que todavía no la seteen a propósito.
 API_ACCESS_KEY = os.getenv("API_ACCESS_KEY")
-if not API_ACCESS_KEY:
-    print(
-        "⚠ API_ACCESS_KEY no configurada: los endpoints de análisis/exportación "
-        "quedan SIN autenticación (cualquiera con la URL puede usarlos). "
-        "Definila como variable de entorno para activar el login."
-    )
+
+# ------------------------------------------------------------------
+# Usuarios reales (username + password) con roles, en reemplazo del
+# secreto único de arriba. Guardado en JSON planos junto al proyecto
+# (mismo patrón simple que el resto de la app - nada de base de datos).
+# Las contraseñas NUNCA se guardan en texto plano: se hashean con
+# PBKDF2-HMAC-SHA256 + salt aleatoria por usuario.
+# ------------------------------------------------------------------
+USERS_DB_FILE = Path(__file__).parent / "users_db.json"
+ACCESS_REQUESTS_FILE = Path(__file__).parent / "access_requests.json"
+
+# Tokens de sesión emitidos por /auth/login: viven en memoria (se pierden
+# si el servidor reinicia - igual que cualquier "mantener sesión iniciada"
+# en un free tier que duerme, el navegador simplemente vuelve a pedir login).
+_sessions: dict[str, dict] = {}
+
+
+def _load_json(path: Path, default):
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return default
+    return default
+
+
+def _save_json(path: Path, data):
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_users() -> dict:
+    return _load_json(USERS_DB_FILE, {})
+
+
+def _save_users(users: dict):
+    _save_json(USERS_DB_FILE, users)
+
+
+def _load_requests() -> list:
+    return _load_json(ACCESS_REQUESTS_FILE, [])
+
+
+def _save_requests(reqs: list):
+    _save_json(ACCESS_REQUESTS_FILE, reqs)
+
+
+def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000)
+    return digest.hex(), salt
+
+
+def _verify_password(password: str, password_hash: str, salt: str) -> bool:
+    computed, _ = _hash_password(password, salt)
+    return hmac.compare_digest(computed, password_hash)
+
+
+def _bootstrap_superadmin():
+    """Crea el superusuario inicial desde variables de entorno (ADMIN_USERNAME /
+    ADMIN_PASSWORD en .env, nunca hardcodeado acá) si todavía no existe. No
+    pisa la contraseña si el usuario ya fue creado (por si se cambió después
+    con "Resetear contraseña" desde el panel)."""
+    admin_user = os.getenv("ADMIN_USERNAME")
+    admin_pass = os.getenv("ADMIN_PASSWORD")
+    if not admin_user or not admin_pass:
+        print("⚠ ADMIN_USERNAME / ADMIN_PASSWORD no configuradas: no se crea ningún superusuario todavía.")
+        return
+    users = _load_users()
+    if admin_user in users:
+        return
+    pw_hash, salt = _hash_password(admin_pass)
+    users[admin_user] = {
+        "password_hash": pw_hash,
+        "salt": salt,
+        "role": "SUPERADMIN",
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_users(users)
+    print(f"✓ Superusuario inicial creado: {admin_user}")
+
+
+_bootstrap_superadmin()
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)):
-    """Dependency de FastAPI: exige el header X-API-Key en los endpoints
-    protegidos cuando API_ACCESS_KEY está configurada. Si no está
-    configurada, no bloquea nada (ver comentario arriba)."""
-    if not API_ACCESS_KEY:
-        return
-    if not x_api_key or x_api_key != API_ACCESS_KEY:
-        raise HTTPException(status_code=401, detail="API key inválida o faltante. Iniciá sesión de nuevo.")
+    """Dependency de FastAPI para los endpoints protegidos: exige un token de
+    sesión válido (emitido por /auth/login) o, por compatibilidad, la
+    API_ACCESS_KEY estática si está configurada. Si no hay ningún usuario
+    creado todavía y tampoco API_ACCESS_KEY, no bloquea nada (servidor recién
+    instalado, sin login configurado)."""
+    if x_api_key:
+        session = _sessions.get(x_api_key)
+        if session:
+            return session
+        if API_ACCESS_KEY and x_api_key == API_ACCESS_KEY:
+            return {"username": "legacy", "role": "USER"}
+    if not _load_users() and not API_ACCESS_KEY:
+        return None
+    raise HTTPException(status_code=401, detail="Sesión inválida o expirada. Iniciá sesión de nuevo.")
+
+
+def require_superadmin(x_api_key: str | None = Header(default=None)):
+    session = require_api_key(x_api_key)
+    if not session or session.get("role") != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="Necesitás permisos de administrador.")
+    return session
 
 # Groq (opcional): último recurso cuando TODOS los modelos Gemini agotaron su cuota diaria.
 # Sin diarización de speakers reales (Whisper no la hace), pero mantiene la app funcionando
@@ -101,12 +211,6 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 EXPORT_DIR = Path(tempfile.gettempdir()) / "audiovisual_suite_exports"
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-
-# Tope de clips por exportación: cortar + reencodear video en el free tier de
-# Render (512MB) se banca hasta cierta cantidad de clips por corrida antes de
-# quedarse sin memoria. Forzar tandas más chicas baja el pico de memoria por
-# request en vez de arriesgar un OOM a mitad de camino.
-MAX_CLIPS_PER_EXPORT = int(os.getenv("MAX_CLIPS_PER_EXPORT", "4"))
 
 # Cache de videos originales (junto al cache de resultados de analisis): permite
 # exportar clips despues sin volver a descargar de la URL ni re-subir el archivo.
@@ -284,6 +388,7 @@ PROJECT_DIR = Path(__file__).parent
 # como archivos estáticos para que <link>/<script type="module"> puedan cargarlos.
 app.mount("/css", StaticFiles(directory=str(PROJECT_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(PROJECT_DIR / "js")), name="js")
+app.mount("/assets", StaticFiles(directory=str(PROJECT_DIR / "assets")), name="assets")
 
 
 def _build_ydl_opts_with_auth(base_opts: dict) -> list:
@@ -1100,6 +1205,62 @@ def _call_gemini_with_retry(uploaded_file, max_attempts: int = 3):
     )
 
 
+def _call_gemini_text(prompt: str, max_attempts: int = 3) -> str:
+    """
+    Llama a Gemini con un prompt de solo texto (sin archivo adjunto) - se usa
+    para el "prompt libre": en vez de que la persona copie el prompt a
+    ChatGPT/Claude y pegue la respuesta a mano, la app le manda el prompt
+    (transcripción + instrucciones) directo a Gemini y devuelve el resultado.
+    Mismo mecanismo de reintentos/fallback entre modelos que _call_gemini_with_retry.
+    """
+    last_error = None
+    attempts_remaining = max_attempts
+    call_n = 0
+
+    while attempts_remaining > 0:
+        model = _get_active_model()
+        if model is None:
+            raise Exception(
+                f"Todos los modelos de Gemini tienen la cuota diaria agotada "
+                f"({', '.join(GEMINI_MODELS)}). Último error: {last_error}."
+            )
+        call_n += 1
+        try:
+            print(f"   [prompt libre] Intento {call_n} [modelo: {model}]...")
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
+                    temperature=0.4,
+                ),
+            )
+            text = _extract_text_safely(response)
+            if text and len(text.strip()) > 10:
+                return text
+            print(f"   ⚠ Intento {call_n} devolvió respuesta vacía o muy corta.")
+            attempts_remaining -= 1
+        except Exception as e:
+            last_error = e
+            if _is_daily_quota_exhausted(e):
+                print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Cambiando al siguiente modelo...")
+                _exhausted_models.add(model)
+            elif _is_model_unavailable(e):
+                print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo...")
+                _exhausted_models.add(model)
+            elif _is_quota_error(e):
+                wait = _extract_retry_delay(e)
+                print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s...")
+                time.sleep(wait)
+                attempts_remaining -= 1
+            else:
+                print(f"   ⚠ Intento {call_n} error [{model}]: {type(e).__name__}: {e}")
+                time.sleep(2 ** (max_attempts - attempts_remaining + 1))
+                attempts_remaining -= 1
+
+    raise Exception(f"Gemini no devolvió respuesta tras {max_attempts} intentos. Último error: {last_error}.")
+
+
 def _seconds_to_mmss(seconds: float) -> str:
     total = int(seconds)
     return f"{total // 60:02d}:{total % 60:02d}"
@@ -1554,17 +1715,18 @@ async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form(
 
 
 # ============================================================
-# ENDPOINTS DE INSPECCIÓN Y CONVERSIÓN (opcionales, manuales)
+# ENDPOINT DE INSPECCIÓN (usado como "subir y obtener ruta temporal"
+# para resolver la fuente de una exportación de clips/reel)
 # ============================================================
 
 @app.post("/inspect-file", dependencies=[Depends(require_api_key)])
 async def inspect_file(file: UploadFile = File(...)):
     """
     Recibe un archivo, lo analiza con ffprobe y devuelve qué tiene adentro.
-    El frontend usa esto para preguntarle al usuario si quiere convertir
-    antes de procesar (cuando detecta audio renombrado como video).
     Después de inspeccionar, deja el archivo en una ruta temporal y devuelve
-    esa ruta junto con la info, para que el siguiente paso lo use.
+    esa ruta junto con la info. El análisis (siempre audio-only, ver
+    _process_single_video_file) ya no pasa por acá; este endpoint solo lo
+    usa el frontend para subir el archivo fuente al exportar clips/reel.
     """
     temp_dir = tempfile.gettempdir()
     # Generamos un nombre único para que dos archivos con el mismo nombre no choquen
@@ -1577,70 +1739,6 @@ async def inspect_file(file: UploadFile = File(...)):
     info = await asyncio.to_thread(inspect_media_file, temp_path)
     info["temp_path"] = temp_path  # frontend devuelve esta ruta en el siguiente paso
     return info
-
-
-class ProcessInspectedInput(BaseModel):
-    temp_path: str
-    convert_to_audio: bool = False
-    conversion_mode: str = "copy"  # 'copy' (m4a) o 'mp3'
-    engine: str = "auto"  # "auto" (Gemini + Groq de respaldo) | "gemini" | "groq"
-
-
-@app.post("/process-inspected", dependencies=[Depends(require_api_key)])
-async def process_inspected(input_data: ProcessInspectedInput):
-    """
-    Procesa un archivo previamente inspeccionado con /inspect-file.
-    Si convert_to_audio=True, primero lo convierte con ffmpeg, después analiza.
-    Versión streaming para reportar progreso.
-    """
-    temp_path = input_data.temp_path
-    if not os.path.exists(temp_path):
-        raise HTTPException(status_code=404, detail="El archivo temporal no existe o ya fue limpiado.")
-
-    async def generator():
-        path_to_process = temp_path
-        created_files = []  # para limpiar al final
-        cache_key = None  # se define mas abajo; None si algo falla antes de llegar ahi
-
-        try:
-            # Conversión opcional ANTES de procesar
-            if input_data.convert_to_audio:
-                yield f"data: {json.dumps({'stage': 'converting', 'message': f'Convirtiendo a audio limpio (modo={input_data.conversion_mode})...'}, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0)
-                try:
-                    converted = await asyncio.to_thread(convert_to_clean_audio, temp_path, mode=input_data.conversion_mode)
-                    path_to_process = converted
-                    created_files.append(converted)
-                    yield f"data: {json.dumps({'stage': 'converting', 'message': f'✓ Conversión completa. Continuando con análisis...'}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0)
-                except Exception as e:
-                    yield f"data: {json.dumps({'stage': 'error', 'message': f'La conversión falló: {e}'}, ensure_ascii=False)}\n\n"
-                    return
-
-            # Procesamiento normal con cacheo
-            cache_key = file_hash(path_to_process)
-            async for chunk in process_video_streaming(path_to_process, cache_key=cache_key, engine=_normalize_engine(input_data.engine)):
-                yield chunk
-        finally:
-            # Limpieza de archivos intermedios (ej: audio convertido)
-            for f in created_files:
-                if os.path.exists(f):
-                    try:
-                        os.remove(f)
-                    except Exception:
-                        pass
-            # El original (temp_path, no el convertido) queda cacheado para poder
-            # exportar clips despues sin volver a subirlo. Si algo fallo antes de
-            # calcular cache_key, no hay bajo que llave guardarlo: se borra.
-            if cache_key:
-                cache_video_store(cache_key, temp_path)
-            elif os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
-
-    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 # ============================================================
@@ -1690,6 +1788,37 @@ def get_teaser_templates():
         return JSONResponse({"error": "teaser_templates.json no encontrado"}, status_code=404)
     with open(templates_file, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+class GenerateWithAiInput(BaseModel):
+    prompt: str
+
+
+@app.post("/generate-clip-suggestions", dependencies=[Depends(require_api_key)])
+async def generate_with_ai(input_data: GenerateWithAiInput):
+    """
+    Prompt libre "en la app": manda el prompt (transcripción + instrucciones,
+    ya armado del lado del frontend) directo a Gemini y devuelve el texto.
+    Reemplaza el paso manual de copiar el prompt a ChatGPT/Claude/Gemini web
+    y pegar la respuesta de vuelta - el resultado se importa directo al
+    exportador de clips sin salir de la app.
+    """
+    if not input_data.prompt or len(input_data.prompt.strip()) < 10:
+        raise HTTPException(status_code=400, detail="El prompt está vacío.")
+
+    await _heavy_ops_semaphore.acquire()
+    try:
+        mem_error = _memory_headroom_error()
+        if mem_error:
+            raise HTTPException(status_code=503, detail=mem_error)
+        text = await asyncio.to_thread(_call_gemini_text, input_data.prompt)
+        return {"text": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gemini no pudo generar una respuesta: {e}")
+    finally:
+        _heavy_ops_semaphore.release()
 
 
 # ============================================================
@@ -1833,10 +1962,148 @@ def create_carousel_plate(frame_path: str, dialogue: str, speaker: str, output_p
             shutil.copy(frame_path, output_path)
 
 
+# ============================================================
+# SUBTÍTULOS INCRUSTADOS (burn-in con PIL + overlay de ffmpeg)
+# ============================================================
+# El ffmpeg local no tiene el filtro "drawtext" compilado (falta
+# libfreetype/fontconfig en el build de Homebrew). En vez de depender de eso,
+# el texto de cada cue se renderiza como PNG transparente con Pillow (con la
+# tipografía, color y borde elegidos) y se superpone al clip con el filtro
+# "overlay", que sí está disponible siempre.
+FONTS_DIR = PROJECT_DIR / "assets" / "fonts"
+
+SUBTITLE_FONTS = {
+    "anton":    {"label": "Anton (Impacto)",        "file": "Anton-Regular.ttf"},
+    "bebas":    {"label": "Bebas Neue (Condensada)", "file": "BebasNeue-Regular.ttf"},
+    "poppins":  {"label": "Poppins Bold (Moderna)",  "file": "Poppins-Bold.ttf"},
+    "archivo":  {"label": "Archivo Black (Geométrica)", "file": "ArchivoBlack-Regular.ttf"},
+    "luckiest": {"label": "Luckiest Guy (Divertida)", "file": "LuckiestGuy-Regular.ttf"},
+}
+
+
+@app.get("/subtitle-fonts")
+async def list_subtitle_fonts():
+    return {key: {"label": val["label"]} for key, val in SUBTITLE_FONTS.items()}
+
+
+class SubtitleCue(BaseModel):
+    start: float  # segundos, relativo al inicio del clip (no del video original)
+    end: float
+    text: str
+
+
+class SubtitleStyle(BaseModel):
+    font: str = "anton"
+    color: str = "#FFFFFF"
+    border_color: str = "#000000"
+    border_width: int = 3
+
+
+def _ffprobe_dimensions(video_path: str):
+    import subprocess
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "json", video_path],
+        capture_output=True, text=True, timeout=30,
+    )
+    info = json.loads(result.stdout or "{}")
+    streams = info.get("streams") or [{}]
+    return int(streams[0].get("width") or 1280), int(streams[0].get("height") or 720)
+
+
+def _hex_to_rgb(hex_color: str, default=(255, 255, 255)):
+    try:
+        h = hex_color.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except Exception:
+        return default
+
+
+def _render_subtitle_png(text: str, style: "SubtitleStyle", width: int, height: int, out_path: str):
+    """Renderiza el texto de una cue como PNG transparente del tamaño del video."""
+    from PIL import Image, ImageDraw, ImageFont
+    import textwrap
+
+    font_info = SUBTITLE_FONTS.get(style.font, SUBTITLE_FONTS["anton"])
+    font_path = FONTS_DIR / font_info["file"]
+    font_size = max(18, int(height * 0.07))
+    font = ImageFont.truetype(str(font_path), font_size)
+
+    chars_per_line = max(8, int(width / (font_size * 0.58)))
+    lines = textwrap.wrap(text.strip(), width=chars_per_line)[:3] or [""]
+    wrapped = "\n".join(lines)
+
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    fill = _hex_to_rgb(style.color, (255, 255, 255))
+    stroke_fill = _hex_to_rgb(style.border_color, (0, 0, 0))
+    x = width / 2
+    y = height * 0.82
+    draw.multiline_text(
+        (x, y), wrapped, font=font, fill=fill,
+        stroke_width=max(0, style.border_width), stroke_fill=stroke_fill,
+        anchor="mm", align="center", spacing=8,
+    )
+    img.save(out_path, "PNG")
+
+
+def burn_subtitles(clip_path: str, output_path: str, cues: list, style: "SubtitleStyle"):
+    """Quema las cues de subtítulo en el clip ya cortado. Si algo falla, copia
+    el clip sin subtítulos en vez de romper toda la exportación."""
+    import subprocess
+    usable_cues = [c for c in cues if c.text and c.text.strip() and c.end > c.start]
+    if not usable_cues:
+        shutil.copy(clip_path, output_path)
+        return
+
+    tmp_dir = tempfile.mkdtemp(prefix="subs_")
+    try:
+        width, height = _ffprobe_dimensions(clip_path)
+        png_paths = []
+        for i, cue in enumerate(usable_cues):
+            png_path = os.path.join(tmp_dir, f"cue_{i:03d}.png")
+            _render_subtitle_png(cue.text, style, width, height, png_path)
+            png_paths.append(png_path)
+
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", clip_path]
+        for p in png_paths:
+            cmd += ["-i", p]
+
+        filter_parts = []
+        last_label = "0:v"
+        for i, cue in enumerate(usable_cues):
+            out_label = f"v{i}"
+            filter_parts.append(
+                f"[{last_label}][{i + 1}:v]overlay=enable='between(t,{cue.start},{cue.end})'[{out_label}]"
+            )
+            last_label = out_label
+        filter_complex = ";".join(filter_parts)
+
+        cmd += [
+            "-filter_complex", filter_complex,
+            "-map", f"[{last_label}]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-c:a", "copy",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            raise Exception(f"ffmpeg overlay: {result.stderr[:300]}")
+    except Exception as e:
+        print(f"⚠ Burn-in de subtítulos falló ({e}), exportando el clip sin subtítulos.")
+        shutil.copy(clip_path, output_path)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 class ClipSpec(BaseModel):
     start: str
     end: str
     label: str = ""
+    subtitles: list[SubtitleCue] = []
 
 
 class ExportClipsInput(BaseModel):
@@ -1844,6 +2111,7 @@ class ExportClipsInput(BaseModel):
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
     clips: list[ClipSpec]
+    subtitle_style: SubtitleStyle | None = None
 
 
 @app.post("/export-clips", dependencies=[Depends(require_api_key)])
@@ -1865,9 +2133,6 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
             return
         if not input_data.clips:
             yield event("error", "No hay clips definidos para exportar.")
-            return
-        if len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
-            yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT} para no quedarse sin memoria en el servidor.")
             return
 
         # Cola por el semáforo de operaciones pesadas (ver comentario junto a
@@ -1942,8 +2207,19 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 if cut_error:
                     yield event("cutting", f"⚠ Clip {i} falló: {str(cut_error)[:80]}. Continuando...", {"pct": pct})
                     await asyncio.sleep(0)
-                else:
-                    clip_files.append(clip_path)
+                    continue
+
+                if clip.subtitles and input_data.subtitle_style:
+                    yield event("cutting", f"Quemando subtítulos en clip {i}/{total_clips}...", {"pct": pct, "current": i, "total": total_clips})
+                    await asyncio.sleep(0)
+                    subbed_path = str(clip_dir / f"{i:02d}_subbed.mp4")
+                    async for kind, payload in run_blocking_with_heartbeat(burn_subtitles, clip_path, subbed_path, clip.subtitles, input_data.subtitle_style):
+                        if kind == "heartbeat":
+                            yield ": keep-alive\n\n"
+                    if os.path.exists(subbed_path) and os.path.getsize(subbed_path) > 0:
+                        clip_path = subbed_path
+
+                clip_files.append(clip_path)
 
             if not clip_files:
                 yield event("error", "Ningún clip se pudo cortar.")
@@ -2049,6 +2325,7 @@ class ReelClipSpec(BaseModel):
     start: str
     end: str
     label: str = ""
+    subtitles: list[SubtitleCue] = []
 
 
 class ReelExportInput(BaseModel):
@@ -2057,6 +2334,8 @@ class ReelExportInput(BaseModel):
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
     clips: list[ReelClipSpec]
     platform: str
+    original_size: bool = False  # si True, no se escala/recorta al formato de la plataforma
+    subtitle_style: SubtitleStyle | None = None
 
 
 class CarouselExportInput(BaseModel):
@@ -2065,6 +2344,8 @@ class CarouselExportInput(BaseModel):
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
     clips: list[ReelClipSpec]
     platform: str
+    subtitle_style: SubtitleStyle | None = None
+    # Sin "tamaño original": el carrusel siempre es 1:1 (clips o placas), no aplica.
 
 
 @app.post("/export-reel", dependencies=[Depends(require_api_key)])
@@ -2084,8 +2365,6 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
             yield event("error", "No hay clips definidos."); return
-        if len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
-            yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT}."); return
         cfg = PLATFORM_CONFIGS.get(input_data.platform)
         if not cfg:
             yield event("error", f"Plataforma desconocida: {input_data.platform}"); return
@@ -2134,6 +2413,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                 delete_video_after = True
 
             clip_files = []
+            clip_specs = []  # en paralelo a clip_files, para poder asociar subtítulos por clip
             total_clips = len(input_data.clips)
             for i, clip in enumerate(input_data.clips, 1):
                 safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in clip.label)[:20]
@@ -2143,6 +2423,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                     yield event("cutting", f"Clip {i}/{total_clips} ya estaba cortado, lo salteo.", {"pct": pct, "current": i, "total": total_clips})
                     await asyncio.sleep(0)
                     clip_files.append(clip_path)
+                    clip_specs.append(clip)
                     continue
                 yield event("cutting", f"Cortando clip {i}/{total_clips}: {clip.start} → {clip.end}", {"pct": pct, "current": i, "total": total_clips})
                 await asyncio.sleep(0)
@@ -2157,46 +2438,68 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                     await asyncio.sleep(0)
                 else:
                     clip_files.append(clip_path)
+                    clip_specs.append(clip)
 
             if not clip_files:
                 yield event("error", "Ningún clip se pudo cortar."); return
 
-            # Escalar cada clip por separado al formato de la plataforma
-            output_files = []
-            total_scale = len(clip_files)
-            for i, clip_path in enumerate(clip_files, 1):
-                pct = 50 + round(45 * i / total_scale)
-                scaled_path = str(clip_dir / f"scaled_{i:02d}.mp4")
-                if os.path.exists(scaled_path) and os.path.getsize(scaled_path) > 0:
-                    yield event("converting", f"Clip {i}/{total_scale} ya estaba convertido, lo salteo.", {"pct": pct, "current": i, "total": total_scale})
-                    await asyncio.sleep(0)
-                    output_files.append(scaled_path)
-                    continue
-                yield event("converting", f"Aplicando formato {target_w}×{target_h} a clip {i}/{total_scale}...", {"pct": pct, "current": i, "total": total_scale})
+            if input_data.original_size:
+                # El usuario pidió mantener el tamaño/aspecto original: los
+                # clips ya cortados (sin recodificar) son directamente el resultado.
+                output_files = clip_files
+                yield event("converting", "Manteniendo tamaño original (sin escalar/recortar)...", {"pct": 92})
                 await asyncio.sleep(0)
-                scale_error = None
-                async for kind, payload in run_blocking_with_heartbeat(scale_to_platform, clip_path, scaled_path, target_w, target_h, max_dur):
-                    if kind == "heartbeat":
-                        yield ": keep-alive\n\n"
-                    elif kind == "error":
-                        scale_error = payload
-                if scale_error:
-                    yield event("converting", f"⚠ Clip {i} falló al convertir: {str(scale_error)[:60]}", {"pct": pct})
+            else:
+                # Escalar cada clip por separado al formato de la plataforma
+                output_files = []
+                total_scale = len(clip_files)
+                for i, clip_path in enumerate(clip_files, 1):
+                    pct = 50 + round(45 * i / total_scale)
+                    scaled_path = str(clip_dir / f"scaled_{i:02d}.mp4")
+                    if os.path.exists(scaled_path) and os.path.getsize(scaled_path) > 0:
+                        yield event("converting", f"Clip {i}/{total_scale} ya estaba convertido, lo salteo.", {"pct": pct, "current": i, "total": total_scale})
+                        await asyncio.sleep(0)
+                        output_files.append(scaled_path)
+                        continue
+                    yield event("converting", f"Aplicando formato {target_w}×{target_h} a clip {i}/{total_scale}...", {"pct": pct, "current": i, "total": total_scale})
                     await asyncio.sleep(0)
-                else:
-                    output_files.append(scaled_path)
+                    scale_error = None
+                    async for kind, payload in run_blocking_with_heartbeat(scale_to_platform, clip_path, scaled_path, target_w, target_h, max_dur):
+                        if kind == "heartbeat":
+                            yield ": keep-alive\n\n"
+                        elif kind == "error":
+                            scale_error = payload
+                    if scale_error:
+                        yield event("converting", f"⚠ Clip {i} falló al convertir: {str(scale_error)[:60]}", {"pct": pct})
+                        await asyncio.sleep(0)
+                    else:
+                        output_files.append(scaled_path)
 
             if not output_files:
                 yield event("error", "Ningún clip se pudo convertir."); return
 
+            if input_data.subtitle_style and any(c.subtitles for c in clip_specs):
+                yield event("converting", "Quemando subtítulos...", {"pct": 93})
+                await asyncio.sleep(0)
+                for i, (out_path, clip) in enumerate(zip(output_files, clip_specs), 1):
+                    if not clip.subtitles:
+                        continue
+                    subbed_path = str(clip_dir / f"subbed_{i:02d}.mp4")
+                    async for kind, payload in run_blocking_with_heartbeat(burn_subtitles, out_path, subbed_path, clip.subtitles, input_data.subtitle_style):
+                        if kind == "heartbeat":
+                            yield ": keep-alive\n\n"
+                    if os.path.exists(subbed_path) and os.path.getsize(subbed_path) > 0:
+                        output_files[i - 1] = subbed_path
+
+            size_label = "tamaño original" if input_data.original_size else f"{target_w}×{target_h}"
             if len(output_files) == 1:
                 output_name = f"reel_{input_data.platform}_{export_id}.mp4"
                 shutil.copy(output_files[0], str(EXPORT_DIR / output_name))
-                yield event("done", f"✓ Video listo en {target_w}×{target_h}.", {
+                yield event("done", f"✓ Video listo en {size_label}.", {
                     "download_url": f"/exports/{output_name}",
                     "filename": output_name,
                     "platform": input_data.platform,
-                    "resolution": f"{target_w}x{target_h}",
+                    "resolution": "original" if input_data.original_size else f"{target_w}x{target_h}",
                     "clip_count": 1,
                     "pct": 100,
                 })
@@ -2208,11 +2511,11 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                 with zipfile.ZipFile(zip_path, "w") as zf:
                     for f in output_files:
                         zf.write(f, os.path.basename(f))
-                yield event("done", f"✓ {len(output_files)} clips listos en {target_w}×{target_h}.", {
+                yield event("done", f"✓ {len(output_files)} clips listos en {size_label}.", {
                     "download_url": f"/exports/{zip_name}",
                     "filename": zip_name,
                     "platform": input_data.platform,
-                    "resolution": f"{target_w}x{target_h}",
+                    "resolution": "original" if input_data.original_size else f"{target_w}x{target_h}",
                     "clip_count": len(output_files),
                     "pct": 100,
                 })
@@ -2249,10 +2552,6 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             yield event("error", "No hay slides definidos."); return
         if input_data.platform not in CAROUSEL_PLATFORMS:
             yield event("error", f"Plataforma no es carrusel: {input_data.platform}"); return
-        # Las placas de texto son solo imágenes (PIL, liviano); el tope de
-        # clips solo aplica al carrusel de video (corta + reencodea con ffmpeg).
-        if input_data.platform == "ig_carrusel_clips" and len(input_data.clips) > MAX_CLIPS_PER_EXPORT:
-            yield event("error", f"Máximo {MAX_CLIPS_PER_EXPORT} clips por exportación (pediste {len(input_data.clips)}). Exportá en tandas de a {MAX_CLIPS_PER_EXPORT}."); return
 
         # Cola por el semáforo de operaciones pesadas antes de tocar disco/red/ffmpeg.
         async for _ in _wait_for_heavy_slot():
@@ -2326,8 +2625,17 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                     if slide_error:
                         yield event("cutting", f"⚠ Slide {i} falló: {str(slide_error)[:60]}", {"pct": pct})
                         await asyncio.sleep(0)
-                    else:
-                        output_files.append(out_clip)
+                        continue
+
+                    if clip.subtitles and input_data.subtitle_style:
+                        subbed_clip = str(carousel_dir / f"subbed_{i:02d}.mp4")
+                        async for kind, payload in run_blocking_with_heartbeat(burn_subtitles, out_clip, subbed_clip, clip.subtitles, input_data.subtitle_style):
+                            if kind == "heartbeat":
+                                yield ": keep-alive\n\n"
+                        if os.path.exists(subbed_clip) and os.path.getsize(subbed_clip) > 0:
+                            out_clip = subbed_clip
+
+                    output_files.append(out_clip)
 
             elif input_data.platform == "ig_carrusel_placas":
                 for i, clip in enumerate(input_data.clips, 1):
@@ -2397,23 +2705,177 @@ def read_root():
 
 @app.get("/login")
 def read_login():
-    """Pantalla de login."""
-    login_html = PROJECT_DIR / "login.html"
-    if login_html.exists():
-        return FileResponse(str(login_html), media_type="text/html")
-    return {"status": "login.html no encontrado en el directorio del proyecto."}
+    """
+    Deprecado: el login ahora es un modal en "/" (ver js/modules/auth.js),
+    con usuarios reales en vez del secreto único que usaba esta pantalla
+    (login.html/login.js siguen en el repo pero ya no los sirve nadie).
+    Redirige para que un link o bookmark viejo no termine en una pantalla
+    de login que ya no puede validar ninguna contraseña real.
+    """
+    return RedirectResponse(url="/")
+
+
+@app.get("/historial")
+def read_historial():
+    """Página aparte con el historial de sesiones (antes vivía en index.html)."""
+    historial_html = PROJECT_DIR / "historial.html"
+    if historial_html.exists():
+        return FileResponse(str(historial_html), media_type="text/html")
+    return {"status": "historial.html no encontrado en el directorio del proyecto."}
 
 
 @app.get("/auth/check", dependencies=[Depends(require_api_key)])
-def auth_check():
+def auth_check(x_api_key: str | None = Header(default=None)):
     """
-    El login (login.html/login.js) le pega a este endpoint con el header
-    X-API-Key para saber si la clave ingresada es válida antes de guardarla
-    y dejar pasar al usuario. Si API_ACCESS_KEY no está configurada en el
-    servidor, require_api_key no bloquea nada y esto siempre devuelve ok
-    (coherente con que, en ese caso, ningún otro endpoint pide autenticación).
+    El Auth Guard del frontend le pega a este endpoint con el header
+    X-API-Key (el token guardado en el navegador) para saber si la sesión
+    sigue siendo válida antes de mostrar el dashboard. Devuelve además
+    username/role para poder restaurar el estado (badge de SUPERUSER, etc.)
+    sin tener que loguearse de nuevo en cada F5.
     """
+    session = _sessions.get(x_api_key) if x_api_key else None
+    if session:
+        return {"ok": True, "username": session["username"], "role": session["role"]}
     return {"ok": True, "auth_enabled": bool(API_ACCESS_KEY)}
+
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/login")
+def auth_login(body: LoginBody):
+    users = _load_users()
+    user = users.get(body.username)
+    if not user or not user.get("active", True) or not _verify_password(body.password, user["password_hash"], user["salt"]):
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos.")
+    token = secrets.token_hex(24)
+    _sessions[token] = {"username": body.username, "role": user.get("role", "USER")}
+    return {"token": token, "username": body.username, "role": user.get("role", "USER")}
+
+
+@app.post("/auth/logout", dependencies=[Depends(require_api_key)])
+def auth_logout(x_api_key: str | None = Header(default=None)):
+    _sessions.pop(x_api_key, None)
+    return {"ok": True}
+
+
+class AccessRequestBody(BaseModel):
+    name: str
+    project: str = ""
+    reason: str = ""
+
+
+@app.post("/access-requests")
+def create_access_request(body: AccessRequestBody):
+    """Público (sin auth): cualquiera sin cuenta puede pedir acceso desde el modal de login."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="El nombre es obligatorio.")
+    reqs = _load_requests()
+    reqs.insert(0, {
+        "id": uuid.uuid4().hex,
+        "name": name,
+        "project": body.project.strip(),
+        "reason": body.reason.strip(),
+        "status": "PENDING",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    _save_requests(reqs)
+    return {"ok": True}
+
+
+@app.get("/admin/access-requests", dependencies=[Depends(require_superadmin)])
+def list_access_requests():
+    return {"requests": [r for r in _load_requests() if r["status"] == "PENDING"]}
+
+
+class ApproveRequestBody(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/admin/access-requests/{request_id}/approve", dependencies=[Depends(require_superadmin)])
+def approve_access_request(request_id: str, body: ApproveRequestBody):
+    reqs = _load_requests()
+    req = next((r for r in reqs if r["id"] == request_id), None)
+    if not req:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada.")
+    username = body.username.strip()
+    if not username or not body.password:
+        raise HTTPException(status_code=400, detail="Usuario y contraseña son obligatorios.")
+    users = _load_users()
+    if username in users:
+        raise HTTPException(status_code=400, detail="Ese nombre de usuario ya existe.")
+    pw_hash, salt = _hash_password(body.password)
+    users[username] = {
+        "password_hash": pw_hash,
+        "salt": salt,
+        "role": "USER",
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_users(users)
+    req["status"] = "APPROVED"
+    _save_requests(reqs)
+    return {"ok": True}
+
+
+@app.post("/admin/access-requests/{request_id}/reject", dependencies=[Depends(require_superadmin)])
+def reject_access_request(request_id: str):
+    reqs = _load_requests()
+    req = next((r for r in reqs if r["id"] == request_id), None)
+    if not req:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada.")
+    req["status"] = "REJECTED"
+    _save_requests(reqs)
+    return {"ok": True}
+
+
+@app.get("/admin/users", dependencies=[Depends(require_superadmin)])
+def list_users():
+    users = _load_users()
+    return {"users": [
+        {"username": uname, "role": u.get("role"), "active": u.get("active", True), "created_at": u.get("created_at")}
+        for uname, u in users.items()
+    ]}
+
+
+def _revoke_sessions_for(username: str):
+    for tok in [t for t, s in _sessions.items() if s["username"] == username]:
+        del _sessions[tok]
+
+
+@app.post("/admin/users/{username}/reset-password", dependencies=[Depends(require_superadmin)])
+def reset_user_password(username: str):
+    users = _load_users()
+    if username not in users:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    new_password = secrets.token_urlsafe(9)
+    pw_hash, salt = _hash_password(new_password)
+    users[username]["password_hash"] = pw_hash
+    users[username]["salt"] = salt
+    _save_users(users)
+    _revoke_sessions_for(username)
+    return {"ok": True, "password": new_password}
+
+
+@app.post("/admin/users/{username}/deactivate", dependencies=[Depends(require_superadmin)])
+def deactivate_user(username: str):
+    users = _load_users()
+    if username not in users:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    users[username]["active"] = False
+    _save_users(users)
+    _revoke_sessions_for(username)
+    return {"ok": True}
+
+
+@app.post("/admin/users/{username}/revoke-session", dependencies=[Depends(require_superadmin)])
+def revoke_user_session(username: str):
+    _revoke_sessions_for(username)
+    return {"ok": True}
 
 
 @app.get("/debug/ytdlp-info", dependencies=[Depends(require_api_key)])

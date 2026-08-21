@@ -1,9 +1,11 @@
 import { state } from '../state.js';
-import { BACKEND_URL, PLATFORM_DATA, MAX_CLIPS_PER_EXPORT, STREAM_STALL_MS } from '../config.js';
-import { escapeHtml, setExportProgress, resetExportProgress } from '../utils/dom.js';
-import { tsToSeconds, secondsToTs } from '../utils/helpers.js';
+import { BACKEND_URL, PLATFORM_DATA, STREAM_STALL_MS } from '../config.js';
+import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
+import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
+import { seekAndPlay } from './player.js';
+import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
 
 function isVideoEnfoque(key) {
     if (!state.PROMPTS_LIBRARY) return false;
@@ -17,36 +19,41 @@ const ICON_IMAGE = '<svg class="icon" width="15" height="15" viewBox="0 0 24 24"
 const ICON_INBOX = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/></svg>';
 const ICON_CLOSE = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
+/**
+ * El panel "Editor de Video para Redes" está siempre en pantalla (es una
+ * de las dos pestañas del Editor de Clips, ver switchClipEditorTab en
+ * clips.js). Esta función solo actualiza la info de plataforma/formato
+ * según el enfoque elegido en el generador de prompt - si el enfoque no
+ * es de categoría "video", muestra placeholders en vez de ocultar el panel.
+ */
 export function updateVideoPanel() {
     const type = document.getElementById("promptType").value;
     const isVideo = isVideoEnfoque(type);
-    const resultVisible = document.getElementById("resultBlock").style.display !== "none";
-    const panel = document.getElementById("videoEditorPanel");
-    if (!panel) return;
+    const pdata = isVideo ? PLATFORM_DATA[type] : null;
 
-    const shouldShow = isVideo && resultVisible && !!state.currentData;
-    panel.classList.toggle("active", shouldShow);
-
-    if (shouldShow) {
+    if (pdata) {
         state.currentPlatformKey = type;
-        const pdata = PLATFORM_DATA[type];
-        if (pdata) {
-            document.getElementById("platformBadge").textContent = pdata.label;
-            document.getElementById("platformRatio").textContent = pdata.ratio;
-            document.getElementById("platformRes").textContent = pdata.res;
-            document.getElementById("platformDur").textContent = pdata.dur;
+        document.getElementById("platformBadge").textContent = pdata.label;
+        document.getElementById("platformRatio").textContent = pdata.ratio;
+        document.getElementById("platformRes").textContent = pdata.res;
+        document.getElementById("platformDur").textContent = pdata.dur;
 
-            const btn = document.getElementById("btnExportReel");
-            if (pdata.isPlatesCarousel) {
-                btn.innerHTML = `${ICON_IMAGE} Generar placas de texto (ZIP)`;
-            } else if (pdata.isClipsCarousel) {
-                btn.innerHTML = `${ICON_FILM} Generar clips 1:1 (ZIP)`;
-            } else {
-                btn.innerHTML = `${ICON_FILM} Generar ${escapeHtml(pdata.label)}`;
-            }
+        const btn = document.getElementById("btnExportReel");
+        if (pdata.isPlatesCarousel) {
+            btn.innerHTML = `${ICON_IMAGE} Generar placas de texto (ZIP)`;
+        } else if (pdata.isClipsCarousel) {
+            btn.innerHTML = `${ICON_FILM} Generar clips 1:1 (ZIP)`;
+        } else {
+            btn.innerHTML = `${ICON_FILM} Generar ${escapeHtml(pdata.label)}`;
         }
         const srcUrl = document.getElementById("clipSourceUrl").value || (state.currentData && state.currentData.source_url) || "";
         if (srcUrl) document.getElementById("reelSourceUrl").value = srcUrl;
+    } else {
+        state.currentPlatformKey = null;
+        document.getElementById("platformBadge").textContent = "—";
+        document.getElementById("platformRatio").textContent = "—";
+        document.getElementById("platformRes").textContent = "—";
+        document.getElementById("platformDur").textContent = "—";
     }
 }
 
@@ -76,24 +83,35 @@ export function parseClipsForReel() {
 }
 
 export function renderReelClipsList() {
-    const tbody = document.getElementById("reelClipsTableBody");
+    const grid = document.getElementById("reelCardGrid");
     const badge = document.getElementById("reelCountBadge");
-    if (!tbody) return;
+    if (!grid) return;
     const selected = state.reelClipsList.filter(c => c.selected).length;
     if (badge) badge.textContent = `${selected}/${state.reelClipsList.length} clips`;
 
     if (state.reelClipsList.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="clip-empty">Extraé timestamps del análisis o agregá clips manualmente.</td></tr>';
+        grid.innerHTML = '<div class="clip-empty">Elegí un formato abajo y usá "⚡ Generar Clips con IA" (arriba).</div>';
         return;
     }
-    tbody.innerHTML = state.reelClipsList.map((clip, i) => `
-        <tr>
-            <td><input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleReelClip(${i}, this.checked)"></td>
-            <td><input type="text" value="${escapeHtml(clip.start)}" onchange="updateReelClip(${i}, 'start', this.value)" style="width:68px;"></td>
-            <td><input type="text" value="${escapeHtml(clip.end)}" onchange="updateReelClip(${i}, 'end', this.value)" style="width:68px;"></td>
-            <td class="clip-label-cell"><span class="clip-label-text" title="${escapeHtml(clip.label)}">${escapeHtml(clip.label)}</span></td>
-            <td><button class="btn-clip-remove" onclick="removeReelClip(${i})" title="Quitar">×</button></td>
-        </tr>
+    grid.innerHTML = state.reelClipsList.map((clip, i) => `
+        <div class="clip-card">
+            <div class="clip-card-thumb">
+                <button class="clip-card-play" onclick="playReelClip(${i})" title="Reproducir desde acá"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
+            </div>
+            <div class="clip-card-body">
+                <div class="clip-card-top">
+                    <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleReelClip(${i}, this.checked)" title="Incluir en la exportación">
+                    <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateReelClip(${i}, 'label', this.value)" placeholder="Descripción / Speaker">
+                    <button class="clip-card-star ${clip.favorite ? 'active' : ''}" onclick="toggleReelClipFavorite(${i})" title="Marcar como favorito">★</button>
+                    <button class="btn-clip-remove" onclick="removeReelClip(${i})" title="Quitar">×</button>
+                </div>
+                <div class="clip-card-times">
+                    <input type="text" value="${escapeHtml(clip.start)}" onchange="updateReelClip(${i}, 'start', this.value)" title="Inicio (In)">
+                    <span>→</span>
+                    <input type="text" value="${escapeHtml(clip.end)}" onchange="updateReelClip(${i}, 'end', this.value)" title="Fin (Out)">
+                </div>
+            </div>
+        </div>
     `).join("");
 }
 
@@ -107,13 +125,16 @@ export function toggleReelClip(i, checked) {
 export function updateReelClip(i, field, value) { state.reelClipsList[i][field] = value.trim(); }
 export function removeReelClip(i) { state.reelClipsList.splice(i, 1); renderReelClipsList(); }
 export function selectAllReelClips(val) { state.reelClipsList.forEach(c => c.selected = val); renderReelClipsList(); }
+export function toggleReelClipFavorite(i) { state.reelClipsList[i].favorite = !state.reelClipsList[i].favorite; renderReelClipsList(); }
+export function playReelClip(i) { seekAndPlay(state.reelClipsList[i].start); }
+export async function exportAllReelClips() { selectAllReelClips(true); await startReelExport(); }
 
 export function toggleAiImport() {
     const body = document.getElementById("aiImportBody");
     const btn = document.getElementById("btnAiImport");
     const isOpen = body.classList.toggle("open");
     btn.classList.toggle("open", isOpen);
-    btn.innerHTML = isOpen ? `${ICON_CLOSE} Cerrar importador` : `${ICON_INBOX} Importar respuesta de IA`;
+    btn.innerHTML = isOpen ? `${ICON_CLOSE} Cerrar` : `${ICON_INBOX} Ver / pegar respuesta de Gemini manualmente`;
 }
 
 export function importAiTimestamps() {
@@ -123,39 +144,7 @@ export function importAiTimestamps() {
 
     const pdata = state.currentPlatformKey ? PLATFORM_DATA[state.currentPlatformKey] : null;
     const defDur = pdata ? (parseInt(pdata.dur) || 30) : 30;
-
-    const imported = [];
-
-    const inicioPattern = /(?:⏱\s*)?Inicio:\s*(\d{1,2}:\d{2}(?::\d{2})?)/gi;
-    const finPattern    = /(?:⏱\s*)?Fin:\s*(\d{1,2}:\d{2}(?::\d{2})?)/gi;
-
-    const inicios = [...text.matchAll(inicioPattern)].map(m => m[1]);
-    const fines   = [...text.matchAll(finPattern)].map(m => m[1]);
-
-    const labelPattern = /(?:🎯|⭕|▶|🖼|🎵|🐦)\s*(?:Opción|Clip|Slide|Story|Short)\s*#?\d+[^\n]*/gi;
-    const labels = [...text.matchAll(labelPattern)].map(m =>
-        m[0].replace(/^[🎯⭕▶🖼🎵🐦]\s*/u, '').replace(/\s*—.*$/, '').trim()
-    );
-
-    if (inicios.length > 0) {
-        for (let i = 0; i < inicios.length; i++) {
-            const start = inicios[i];
-            const end   = fines[i] || secondsToTs(tsToSeconds(start) + defDur);
-            const label = labels[i] || `Clip importado ${i + 1}`;
-            imported.push({ start, end, label, selected: true });
-        }
-    } else {
-        const inlinePattern = /Inicio:\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*[—–-]+\s*Fin:\s*(\d{1,2}:\d{2}(?::\d{2})?)/gi;
-        const inlineMatches = [...text.matchAll(inlinePattern)];
-        for (let i = 0; i < inlineMatches.length; i++) {
-            imported.push({
-                start: inlineMatches[i][1],
-                end:   inlineMatches[i][2],
-                label: labels[i] || `Clip importado ${i + 1}`,
-                selected: true
-            });
-        }
-    }
+    const imported = parseAiTimestampsText(text, defDur);
 
     if (imported.length === 0) {
         feedback.textContent = "❌ No se encontraron timestamps. La IA debe usar el formato ⏱ Inicio: MM:SS / ⏱ Fin: MM:SS";
@@ -166,6 +155,54 @@ export function importAiTimestamps() {
     renderReelClipsList();
     feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} importado${imported.length > 1 ? 's' : ''} correctamente.`;
     document.getElementById("aiResponseInput").value = "";
+}
+
+/**
+ * Le pide directamente a Gemini que resuelva el prompt actual del generador
+ * (predefinido o libre) e importa los clips resultantes acá, sin que la
+ * persona tenga que copiarlo a mano a ChatGPT/Claude y pegar la respuesta.
+ * Sigue estando disponible el camino manual ("Importar respuesta de IA").
+ */
+export async function generateReelClipsWithAI() {
+    const promptText = document.getElementById('promptOutput')?.innerText || "";
+    const feedback = document.getElementById('aiImportFeedback');
+    if (!state.currentData || promptText.includes("Carga un análisis")) {
+        alert("Primero procesá un video (arriba) para poder generar clips.");
+        return;
+    }
+    const btn = document.getElementById('btnGenerateActiveClips');
+    if (btn) { btn.disabled = true; btn.dataset.origHtml = btn.innerHTML; btn.textContent = "⏳ Generando con Gemini..."; }
+    if (feedback) feedback.textContent = "⏳ Generando con Gemini (puede tardar unos segundos)...";
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: promptText })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+        const pdata = state.currentPlatformKey ? PLATFORM_DATA[state.currentPlatformKey] : null;
+        const defDur = pdata ? (parseInt(pdata.dur) || 30) : 30;
+        const imported = parseAiTimestampsText(data.text, defDur);
+
+        if (imported.length === 0) {
+            if (feedback) feedback.textContent = "⚠ Gemini respondió pero no encontré timestamps en el formato esperado. Revisá la respuesta completa abajo (se pegó en el importador manual).";
+            document.getElementById('aiResponseInput').value = data.text;
+            const body = document.getElementById('aiImportBody');
+            if (body && !body.classList.contains('open')) toggleAiImport();
+            return;
+        }
+
+        state.reelClipsList = imported;
+        renderReelClipsList();
+        if (feedback) feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} generado${imported.length > 1 ? 's' : ''} e importado${imported.length > 1 ? 's' : ''} directo con Gemini, sin pasar por otra IA.`;
+    } catch (e) {
+        if (feedback) feedback.textContent = "❌ Error generando con Gemini: " + e.message;
+    } finally {
+        if (btn) { btn.disabled = false; if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml; }
+    }
 }
 
 export function addReelClipManual() {
@@ -189,13 +226,6 @@ export async function startReelExport() {
     if (selected.length === 0) { alert("Seleccioná al menos un clip."); return; }
 
     const pdata = PLATFORM_DATA[state.currentPlatformKey];
-    // Las placas de texto son solo imágenes (liviano); todo lo demás corta +
-    // reencodea con ffmpeg, y muchos clips juntos se quedan sin memoria en
-    // el free tier de Render (512MB) - ver MAX_CLIPS_PER_EXPORT.
-    if (!pdata?.isPlatesCarousel && selected.length > MAX_CLIPS_PER_EXPORT) {
-        alert(`Máximo ${MAX_CLIPS_PER_EXPORT} clips por exportación (seleccionaste ${selected.length}). Exportá en tandas de a ${MAX_CLIPS_PER_EXPORT} para no sobrecargar el servidor.`);
-        return;
-    }
 
     const statusEl = document.getElementById("reelExportStatus");
     const downloadBtn = document.getElementById("reelDownloadBtn");
@@ -212,14 +242,25 @@ export async function startReelExport() {
 
     const isCarousel = pdata?.isCarousel;
     const endpoint = isCarousel ? `${BACKEND_URL}/export-carousel` : `${BACKEND_URL}/export-reel`;
+    const originalSizeEl = document.getElementById("reelOriginalSize");
+    const originalSize = !isCarousel && !!originalSizeEl?.checked;
 
     statusEl.className = "clip-export-status active";
     statusEl.textContent = "⏳ Iniciando exportación...";
     downloadBtn.className = "btn-reel-download";
     resetExportProgress('reelExport');
     setExportProgress('reelExport', 2);
+    resetExportPreview('previewVideo');
+    telemetryLog('telemetry', 'Iniciando exportación de reel/carrusel...', 'uploading');
 
-    const clips = selected.map(c => ({ start: c.start, end: c.end, label: c.label }));
+    const wantsSubtitles = subtitlesEnabled();
+    const clips = selected.map(c => ({
+        start: c.start, end: c.end, label: c.label,
+        subtitles: wantsSubtitles
+            ? buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline)
+            : [],
+    }));
+    const subtitleStyle = wantsSubtitles ? getSubtitleStyle() : null;
 
     // Watchdog: si no llega ningún byte en STREAM_STALL_MS, algo se colgó
     // (conexión cortada sin que el navegador se entere) - abortamos y avisamos
@@ -236,7 +277,7 @@ export async function startReelExport() {
         const res = await fetch(endpoint, {
             method: "POST",
             headers: { ...authHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify({ ...source, clips, platform: state.currentPlatformKey }),
+            body: JSON.stringify({ ...source, clips, platform: state.currentPlatformKey, original_size: originalSize, subtitle_style: subtitleStyle }),
             signal: controller.signal
         });
         if (!res.ok || !res.body) throw new Error("Sin respuesta del servidor.");
@@ -259,6 +300,7 @@ export async function startReelExport() {
                     if (typeof payload.pct === "number") {
                         setExportProgress('reelExport', payload.pct);
                     }
+                    telemetryLog('telemetry', payload.message, payload.stage);
                     if (payload.stage === "error") {
                         statusEl.className = "clip-export-status active error";
                         statusEl.textContent = "❌ " + payload.message;
@@ -270,6 +312,7 @@ export async function startReelExport() {
                         downloadBtn.href = BACKEND_URL + payload.download_url;
                         downloadBtn.download = payload.filename;
                         downloadBtn.className = "btn-reel-download active";
+                        showExportPreview('previewVideo', payload, downloadBtn.href);
                     } else {
                         statusEl.textContent = "⏳ " + payload.message;
                     }
@@ -280,8 +323,10 @@ export async function startReelExport() {
         statusEl.className = "clip-export-status active error";
         if (stalled) {
             statusEl.textContent = "❌ Se perdió la conexión con el servidor (sin respuesta por " + Math.round(STREAM_STALL_MS / 1000) + "s). Puede que el servidor haya seguido procesando igual: probá 'Generar' de nuevo, retoma desde donde quedó.";
+            telemetryLog('telemetry', statusEl.textContent, 'error');
         } else {
             statusEl.textContent = "❌ Error: " + e.message;
+            telemetryLog('telemetry', statusEl.textContent, 'error');
         }
     } finally {
         clearTimeout(watchdog);
@@ -293,3 +338,5 @@ export async function startReelExport() {
 window.toggleReelClip = toggleReelClip;
 window.updateReelClip = updateReelClip;
 window.removeReelClip = removeReelClip;
+window.toggleReelClipFavorite = toggleReelClipFavorite;
+window.playReelClip = playReelClip;
