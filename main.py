@@ -26,6 +26,7 @@ from google.genai import types as genai_types
 import yt_dlp
 import requests
 from dotenv import load_dotenv
+import premiere_export
 
 load_dotenv()
 
@@ -2533,6 +2534,150 @@ async def download_export(filename: str):
         raise HTTPException(status_code=404, detail="Archivo no encontrado o expirado.")
     media_type = "video/mp4" if filename.endswith(".mp4") else "application/zip"
     return FileResponse(str(filepath), media_type=media_type, filename=filename)
+
+
+# ============================================================
+# EXPORTACIÓN A PREMIERE (FCP7 XML / xmeml)
+# ============================================================
+# Ver premiere_export.py para el detalle del formato y sus límites
+# conocidos (sin confirmar todavía en un Premiere real). A diferencia de
+# CapCut, esto NO necesita el puente local - es solo un archivo que el
+# usuario importa en su propio Premiere, funciona igual en Render.
+
+class ExportPremiereInput(BaseModel):
+    url: str = ""
+    video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
+    cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
+    clips: list[ClipSpec]
+    sequence_name: str = "AVSuite Export"
+
+
+@app.post("/export-premiere-xml", dependencies=[Depends(require_api_key)])
+async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
+    def event(stage: str, message: str, data: dict = None):
+        payload = {"stage": stage, "message": message}
+        if data:
+            payload.update(data)
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    async def generator():
+        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
+        cached_video = cache_video_path(effective_cache_key)
+        if not cached_video and not input_data.url and not input_data.video_path:
+            yield event("error", "Se requiere una URL o un archivo local subido para exportar a Premiere.")
+            return
+        if not input_data.clips:
+            yield event("error", "No hay clips definidos para exportar.")
+            return
+
+        async for _ in _wait_for_heavy_slot():
+            yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
+
+        export_id = deterministic_export_id(
+            "premiere-" + (effective_cache_key or input_data.video_path or "local"),
+            *[f"{c.start}-{c.end}-{c.label}" for c in input_data.clips],
+        )
+        video_path = None
+        delete_video_after = False  # el cacheado NO se borra, igual que en /export-clips
+
+        try:
+            mem_error = _memory_headroom_error()
+            if mem_error:
+                yield event("error", mem_error)
+                return
+
+            if cached_video:
+                video_path = cached_video
+            elif input_data.video_path:
+                if not os.path.exists(input_data.video_path):
+                    yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo.")
+                    return
+                video_path = input_data.video_path
+                delete_video_after = True
+            else:
+                yield event("downloading", "Descargando video fuente para armar la secuencia de Premiere...", {"pct": 10})
+                await asyncio.sleep(0)
+                download_error = None
+                async for kind, payload in run_blocking_with_progress(download_youtube_video, input_data.url):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "progress":
+                        yield event("downloading", payload)
+                    elif kind == "result":
+                        video_path = payload
+                    else:
+                        download_error = payload
+                if download_error:
+                    yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error))
+                    return
+                # No se cachea: mismo motivo que en /export-clips, no
+                # sumar disco/pagecache contra el límite de memoria del
+                # free tier de Render.
+                delete_video_after = True
+
+            yield event("info", "Armando la secuencia de Premiere (XML)...", {"pct": 60})
+            await asyncio.sleep(0)
+
+            pe_clips = [
+                premiere_export.PremiereClip(
+                    source_start_s=ts_to_seconds_f(c.start),
+                    source_end_s=ts_to_seconds_f(c.end),
+                    label=c.label,
+                    subtitles=[
+                        premiere_export.PremiereSubtitleCue(cue.start, cue.end, cue.text)
+                        for cue in c.subtitles
+                    ],
+                )
+                for c in input_data.clips
+            ]
+
+            safe_seq_name = "".join(
+                c if c.isalnum() or c in "-_ " else "_" for c in input_data.sequence_name
+            )[:40].strip() or "AVSuite_Export"
+            bundled_video_name = f"{safe_seq_name}{os.path.splitext(video_path)[1] or '.mp4'}"
+
+            try:
+                video_info = await asyncio.to_thread(premiere_export.probe_video_info, video_path)
+                xml_str = await asyncio.to_thread(
+                    premiere_export.build_premiere_xml,
+                    video_path, pe_clips, input_data.sequence_name, video_info, bundled_video_name,
+                )
+            except Exception as e:
+                yield event("error", f"No se pudo armar el XML de Premiere: {e}")
+                return
+            companion_str = premiere_export.build_premiere_companion_text(pe_clips, input_data.sequence_name)
+
+            yield event("merging", "Empaquetando XML + companion + video fuente en ZIP...", {"pct": 90})
+            await asyncio.sleep(0)
+
+            zip_name = f"premiere_{export_id}.zip"
+            zip_path = str(EXPORT_DIR / zip_name)
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr(f"{safe_seq_name}.xml", xml_str)
+                zf.writestr(f"{safe_seq_name}_companion.txt", companion_str)
+                # Mismo nombre que quedó embebido en el XML (bundled_video_name)
+                # - así Premiere lo puede relinkear solo si el usuario lo
+                # descomprime todo en la misma carpeta.
+                zf.write(video_path, bundled_video_name)
+
+            yield event("done", "✓ Proyecto de Premiere listo (XML + companion + video fuente).", {
+                "download_url": f"/exports/{zip_name}",
+                "filename": zip_name,
+                "clip_count": len(input_data.clips),
+                "pct": 100,
+            })
+
+        except Exception as e:
+            yield event("error", f"Error inesperado: {e}")
+        finally:
+            if delete_video_after and video_path and os.path.exists(video_path):
+                try:
+                    os.remove(video_path)
+                except Exception:
+                    pass
+            _heavy_ops_semaphore.release()
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 # ============================================================

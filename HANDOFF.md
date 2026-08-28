@@ -339,6 +339,40 @@ Nueva función `_call_groq_text()` (`main.py`, al lado de `_transcribe_with_groq
 2. Como Render ya cubre la parte pública sin CapCut, este túnel solo hace falta cuando se retome específicamente la integración de CapCut (o Premiere/AE después) - no es urgente hoy.
 Cuando se retome: decidir dominio, correr `cloudflared tunnel login`, crear el tunnel con nombre, rutear DNS, y armar un `LaunchAgent` más para `cloudflared` (mismo patrón que el de arriba) para que el túnel también arranque solo.
 
+**Decisión sobre dominio:** Tomás preguntó por nic.ar (`.com.ar`). Sirve - Cloudflare acepta delegación de nameservers de nic.ar sin problema, es un flujo común. Costo actual chequeado directo en la página de nic.ar (no confiar en cifras viejas): `.com.ar`/`.net.ar` AR$8.500/año, `.ar` (sin com) AR$25.500/año. Requiere CUIT/CUIL + Clave Fiscal nivel 2+. **Sigue sin definirse el nombre del dominio ni si se compra** - retomar cuando se vuelva a la parte de CapCut/túnel.
+
+### 19. v2 planeada: exports a Premiere y CapCut con "prompt companion", arquitectura definida
+
+Discusión de diseño (sin tocar código hasta el final de este punto): Tomás quiere una v2 con export a Premiere primero, CapCut después, cada uno con un "prompt companion" (texto plano de apoyo). Se definió:
+
+- **Los presets de export son acotados, no un campo libre**: 3 destinos fijos (CapCut / Premiere XML / MP4 plano ya existente), cada uno con su propia estructura fija. Lo customizable dentro de cada uno: qué clips entran, subtítulos on/off + estilo (color/borde). Lo que NO se toca a mano: la estructura del archivo, resolución/fps (se heredan del video fuente).
+- **Hallazgo de arquitectura importante:** a diferencia de CapCut, **el export a Premiere NO necesita el puente local/Mac** - es solo un archivo que el backend genera (como ya se hace hoy con el ZIP de clips o el .srt), el usuario lo importa en su propio Premiere. Puede shippear ya mismo en Render, sin esperar al túnel/dominio. CapCut sigue atado al puente local.
+- **Matriz de capacidades (borrador, para mostrarle al usuario en la UI antes de exportar):**
+
+  | | CapCut | Premiere (XML) | MP4 plano |
+  |---|---|---|---|
+  | Clips / cortes | ✅ | ✅ | ✅ |
+  | Subtítulos: texto + timing | ✅ nativo, editable | ⚠ intentado vía `<generatoritem>`, sin confirmar | ✅ quemado, no editable |
+  | Subtítulos: color/borde | ✅ | ❌ | ✅ quemado |
+  | Subtítulos: tipografía elegida | ❌ (default de CapCut) | ❌ | ✅ real |
+  | Transiciones | ❓ sin confirmar | ❓ sin confirmar (no aplica hoy, la app no genera transiciones) | N/A |
+  | Necesita puente local (Mac) | Sí | No | No |
+  | Funciona hoy en Render | No | Sí | Sí |
+
+- **"Prompt companion":** para cada destino que tenga alguna celda "⚠"/incierta, se genera además un texto plano (timestamps + qué dice cada subtítulo, por clip) para que el usuario complete a mano lo que el archivo estructurado no haya traído bien. Implementado ya para Premiere (ver abajo).
+
+**Orden acordado:** Premiere primero (más simple, sin riesgo de romper nada de terceros, formato oficialmente documentado, funciona en Render ya), CapCut después (retomar el hilo técnico: automatizar el fix raíz→anidado que se probó a mano en el punto 10).
+
+#### Premiere: `premiere_export.py` construido y validado (nuevo archivo, standalone, aún no wireado a `main.py`)
+
+Mismo patrón que `capcut_export.py`: módulo independiente, no importa nada de `main.py`, pensado para poder probarse solo antes de conectarlo a un endpoint.
+
+- **Corrección importante durante la investigación:** la primera búsqueda trajo por error la documentación de **FCPXML** (el formato MODERNO de Final Cut Pro X, basado en `<spine>`, sin `<track>`, timing en segundos racionales) en vez de **xmeml** (el formato VIEJO de FCP7, `<sequence><media><video|audio><track><clipitem>`, timing en frames enteros vía `in`/`out`/`start`/`end`) - son dos formatos de Apple con nombres parecidos e incompatibles entre sí. Se detectó el error antes de escribir código y se corrigió buscando la fuente correcta. Confirmado por investigación adicional: Premiere Pro lee específicamente xmeml ("basado en FCP Classic v6, con tags de Adobe"), no FCPXML.
+- **Funciones principales:** `probe_video_info()` (ffprobe: width/height/fps/duración), `build_premiere_xml()` (arma la secuencia completa: clips uno atrás del otro en el timeline, pista de audio espejada, pista de texto separada con `<generatoritem>` por cada cue de subtítulo reposicionada a su lugar real en el timeline final), `build_premiere_companion_text()` (el prompt companion).
+- **Probado con datos reales** (no solo "compila"): generé un XML de prueba con 2 clips + 3 cues de subtítulos contra `IMG_6354.MOV`, parseado de vuelta con `xml.etree.ElementTree` para confirmar que es válido, y verificado a mano que los clips quedan sin huecos ni superposiciones en el timeline (clip 1: frames 0-225, clip 2: 225-435) y que los subtítulos caen en la posición correcta reubicada (ej: una cue en el segundo 1.0-3.5 del clip 2 aparece en frames 255-330 del timeline final = 225 + 30 a 225 + 105, correcto a 30fps).
+- **Sin confirmar todavía (no se pudo probar en esta sesión, no hay Premiere instalado en ninguna máquina accesible):** si el `.xml` abre bien en un Premiere real, y sobre todo si el `<generatoritem>` de subtítulos se importa como texto editable de verdad o si Premiere lo ignora/rompe. El código ya asume que puede fallar - por eso existe el companion en texto plano como red de contención, mismo espíritu que tuvimos con `gemini-3.5-transcribe`.
+- **Próximo paso:** wirear un endpoint (ej. `/export-premiere-xml`) en `main.py` que tome los mismos `ClipSpec`/`SubtitleCue` que ya usa `/export-clips` y arme el XML + companion, más un botón en el frontend (probablemente en el flujo de reel/carrusel, que es donde varios clips se arman en una sola secuencia - para un clip suelto individual el valor de un XML de Premiere es menor). Cuando alguien tenga Premiere a mano, confirmar apertura real antes de ofrecer esto a un cliente.
+
 ## Open decisions / pendientes explícitos
 
 - **Pushear `d19df71` a GitHub** (nunca se pudo desde esta Mac, faltan credenciales en el entorno) y commitear los 2 archivos sueltos que quedaron sin commitear (`HANDOFF.md`, `capcut_export.py`) — ver "📍 ESTADO ACTUAL" arriba.
