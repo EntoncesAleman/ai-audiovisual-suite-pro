@@ -1,6 +1,6 @@
 # Handoff — AI Audiovisual Suite Pro (continuar en otra Mac)
 
-**Generated:** 2026-08-21 · **Última actualización:** 2026-08-25
+**Generated:** 2026-08-21 · **Última actualización:** 2026-08-28
 **Repo:** `EntoncesAleman/ai-audiovisual-suite-pro` (GitHub) — deploy en Render, servicio `audiovisual-suite-pro`
 **Next focus:** ver "📍 ESTADO ACTUAL" abajo para comparar contra la otra Mac antes de seguir — así no se pisan cambios hechos en las dos máquinas por separado.
 
@@ -316,6 +316,28 @@ Nueva función `_call_groq_text()` (`main.py`, al lado de `_transcribe_with_groq
 - `js/modules/clips.js`, `js/modules/reelEditor.js` — mostrar qué motor (Gemini/Groq) generó los clips (punto 17).
 - `requirements.txt` — yt-dlp `2026.7.4` → `2026.8.19`, `google-genai` `2.10.0` → `2.20.0`.
 - `capcut_export.py` — sin cambios nuevos esta sesión (el trabajo de CapCut fue con `capcut-cli`, herramienta externa, no con este archivo).
+
+### 18. Commit + push del trabajo de esta sesión, aclaración Vercel/Render, server local con arranque automático
+
+**Git:** todo lo de los puntos 11-17 (más `HANDOFF.md` y el fix de `draft_materials` en `capcut_export.py` que venían sueltos de la sesión del 24) se commiteó en un solo commit (`cc46bfa`, mensaje largo con el detalle de cada punto) y se **pusheó a `origin/main`**. `IMG_6354.MOV` se agregó a `.gitignore` (nunca se sube, es un video de debug). El remoto estaba en `df38359` (2 commits atrás del `d19df71` local) - no había divergencia, fue un push directo sin conflictos. A diferencia de la sesión del 24, **esta vez sí había credenciales de GitHub configuradas en el entorno** - `git push` funcionó sin pedir nada.
+
+**Aclaración importante - no hay Vercel, el deploy real es Render y está online:** Tomás preguntó por "la página de Vercel del proyecto". Se chequeó directo contra su cuenta de Vercel (API real, no solo grep del repo): el único proyecto ahí es `ropinder`, sin relación con este repo - **nunca existió un deploy en Vercel de esto**. Lo que sí existe y está confirmado **online ahora mismo** es Render: `curl` a `https://audiovisual-suite-pro.onrender.com/` devolvió HTTP 200. O sea, la parte "sin CapCut" del producto (transcripción, cortes, subtítulos) ya está pública y funcionando - no hace falta armar nada para eso.
+
+**Server local con arranque automático (`launchd`):** para cuando se retome CapCut (que sí necesita correr en esta Mac, no en Render), se dejó armado un `LaunchAgent` de macOS:
+- Archivo: `~/Library/LaunchAgents/com.avsuite.server.plist` (fuera del repo, es config de esta Mac específica, no se versiona).
+- Corre `venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000` (sin `--reload`, a diferencia de `iniciar.command`, que es para desarrollo) con el `WorkingDirectory` apuntado a la carpeta del proyecto y `PATH` explícito (incluye `/usr/local/bin` para que `ffmpeg`/`ffprobe` se encuentren igual que en una Terminal normal).
+- `RunAtLoad` + `KeepAlive` en `true`: arranca solo al iniciar sesión en esta Mac, y si el proceso se cae se reinicia solo. **Probado de verdad**, no solo declarado: se mató el proceso a mano (`kill`) y `launchd` lo relevantó con un PID nuevo en menos de 5 segundos, sirviendo `HTTP 200` de nuevo.
+- Logs en `~/Library/Logs/avsuite-server.log` (stdout) y `avsuite-server.err.log` (stderr/uvicorn).
+- Comandos útiles para Tomás:
+  - Ver si está corriendo: `launchctl list | grep avsuite`
+  - Parar: `launchctl unload ~/Library/LaunchAgents/com.avsuite.server.plist`
+  - Arrancar de nuevo: `launchctl load ~/Library/LaunchAgents/com.avsuite.server.plist`
+  - Ver logs en vivo: `tail -f ~/Library/Logs/avsuite-server.err.log`
+
+**Lo que falta para que esta Mac sea accesible desde afuera (pendiente, no se hizo esta sesión):** un túnel público (Cloudflare Tunnel, `cloudflared` ya instalado vía `brew install cloudflared` - versión 2026.8.2). Se frenó acá porque:
+1. Un túnel con dominio propio (URL estable, la que se le daría a un cliente) necesita que Tomás tenga/compre un dominio y lo agregue a Cloudflare (login interactivo en el navegador, no lo puede hacer un agente).
+2. Como Render ya cubre la parte pública sin CapCut, este túnel solo hace falta cuando se retome específicamente la integración de CapCut (o Premiere/AE después) - no es urgente hoy.
+Cuando se retome: decidir dominio, correr `cloudflared tunnel login`, crear el tunnel con nombre, rutear DNS, y armar un `LaunchAgent` más para `cloudflared` (mismo patrón que el de arriba) para que el túnel también arranque solo.
 
 ## Open decisions / pendientes explícitos
 
