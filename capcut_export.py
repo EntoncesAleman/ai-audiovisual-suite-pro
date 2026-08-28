@@ -275,6 +275,36 @@ def build_capcut_draft(project_name: str, clip_path: str, width: int, height: in
         "draft_name": project_name,
         "draft_root_path": str(CAPCUT_PROJECTS_DIR),
         "draft_removable": True,
+        # Sin esto, CapCut muestra el proyecto en 0.0B en la pantalla de
+        # Drafts y falla al abrirlo - este índice es lo que usa para el
+        # tamaño y para resolver el material antes de cargar el draft entero.
+        "draft_materials": [
+            {
+                "type": 0,
+                "value": [
+                    {
+                        "ai_group_type": "",
+                        "create_time": 0,
+                        "duration": duration_us,
+                        "enter_from": 0,
+                        "extra_info": os.path.basename(clip_path),
+                        "file_Path": clip_path,
+                        "height": height,
+                        "id": video_material["local_material_id"],
+                        "import_time": 0,
+                        "import_time_ms": 0,
+                        "item_source": 1,
+                        "material_color_tag": "",
+                        "md5": "",
+                        "metetype": "video",
+                        "roughcut_time_range": {"duration": -1, "start": -1},
+                        "sub_time_range": {"duration": -1, "start": -1},
+                        "type": 0,
+                        "width": width,
+                    }
+                ],
+            }
+        ],
         "tm_draft_create": now_us,
         "tm_draft_modified": now_us,
         "tm_duration": duration_us,

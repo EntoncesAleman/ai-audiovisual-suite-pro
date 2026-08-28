@@ -11,6 +11,7 @@ import hmac
 import secrets
 import json
 import asyncio
+import queue
 import zipfile
 import uuid
 from datetime import datetime, timezone
@@ -198,6 +199,7 @@ def require_superadmin(x_api_key: str | None = Header(default=None)):
 # en vez de fallar por completo. Si no está seteada, este fallback simplemente se salta.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3")
+GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
 
 # URL del servicio bgutil-ytdlp-pot-provider (deploy separado en Render con la imagen
 # brainicism/bgutil-ytdlp-pot-provider). Genera los PO Tokens que YouTube exige para
@@ -402,6 +404,24 @@ def _build_ydl_opts_with_auth(base_opts: dict) -> list:
     """
     strategies = [("descarga anónima", dict(base_opts))]
 
+    # Fallback: sin forzar player_client. Streams que acaban de terminar
+    # ("post_live" - YouTube todavía no los reprocesó como VOD normal)
+    # fallan con "This live event has ended" cuando forzamos una lista fija
+    # de clients (android/tv/ios o web/tv/android); dejar que yt-dlp use
+    # sus propios defaults sí los resuelve - confirmado reproduciendo el
+    # error contra un video real. Va segundo (antes que cookies, que según
+    # yt-dlp#15274/#16507 empeoran este caso puntual) para no perder la
+    # ventaja anti-bot del override en videos normales.
+    base_youtube_args = base_opts.get('extractor_args', {}).get('youtube', {})
+    if base_youtube_args.get('player_client'):
+        opts_default_clients = dict(base_opts)
+        extractor_args_default = dict(base_opts['extractor_args'])
+        youtube_args_default = dict(base_youtube_args)
+        youtube_args_default.pop('player_client', None)
+        extractor_args_default['youtube'] = youtube_args_default
+        opts_default_clients['extractor_args'] = extractor_args_default
+        strategies.append(("player_client por defecto (stream recién terminado)", opts_default_clients))
+
     # Fallback: archivo cookies.txt exportado del navegador (Drive privado, etc.)
     cookies_file = _find_cookies_file()
     if cookies_file:
@@ -435,6 +455,52 @@ async def run_blocking_with_heartbeat(func, *args, interval: float = 20.0, **kwa
         if done:
             break
         yield ("heartbeat", None)
+    try:
+        result = task.result()
+        yield ("result", result)
+    except Exception as e:
+        yield ("error", e)
+
+
+async def run_blocking_with_progress(func, *args, poll_interval: float = 1.0, heartbeat_interval: float = 20.0, **kwargs):
+    """
+    Como run_blocking_with_heartbeat, pero además le pasa a `func` un kwarg
+    `progress_callback` (thread-safe: `func` corre en un thread aparte) con
+    el que puede ir reportando progreso real mientras trabaja - pensado
+    para los progress_hooks de yt-dlp, que antes solo se veían en la
+    consola del server y nunca llegaban al frontend.
+
+    yt-dlp llama al hook varias veces por segundo durante una descarga por
+    fragmentos; mandar cada callback individual por SSE sería spam, así
+    que acá se juntan y se yieldea como mucho un ("progress", mensaje) por
+    `poll_interval` segundos (el más reciente de la tanda). Si no hay ni
+    progreso ni resultado por `heartbeat_interval`, cae al mismo
+    keep-alive que la versión sin progreso.
+    """
+    progress_queue: "queue.Queue[str]" = queue.Queue()
+
+    def progress_callback(message: str):
+        progress_queue.put(message)
+
+    task = asyncio.create_task(asyncio.to_thread(func, *args, progress_callback=progress_callback, **kwargs))
+    loop = asyncio.get_event_loop()
+    last_activity = loop.time()
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=poll_interval)
+        latest = None
+        while True:
+            try:
+                latest = progress_queue.get_nowait()
+            except queue.Empty:
+                break
+        if latest is not None:
+            last_activity = loop.time()
+            yield ("progress", latest)
+        elif done:
+            break
+        elif loop.time() - last_activity >= heartbeat_interval:
+            last_activity = loop.time()
+            yield ("heartbeat", None)
     try:
         result = task.result()
         yield ("result", result)
@@ -505,7 +571,39 @@ def _memory_headroom_error() -> str | None:
     return None
 
 
-def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "") -> str:
+def _format_yt_progress(d: dict) -> str | None:
+    """
+    Arma un mensaje legible a partir del dict que yt-dlp le pasa a
+    progress_hooks. No usamos los `_percent_str`/`_speed_str`/etc. que trae
+    el dict (vienen con códigos ANSI de color pensados para terminal, no
+    para mostrar en la UI) - se calculan a mano desde los campos numéricos.
+    """
+    status = d.get('status')
+    if status == 'downloading':
+        downloaded = d.get('downloaded_bytes') or 0
+        total = d.get('total_bytes') or d.get('total_bytes_estimate')
+        parts = []
+        if total:
+            parts.append(f"{downloaded / total * 100:.1f}% de {total / 1024 / 1024:.1f}MB")
+        elif downloaded:
+            parts.append(f"{downloaded / 1024 / 1024:.1f}MB")
+        speed = d.get('speed')
+        if speed:
+            parts.append(f"a {speed / 1024:.0f}KB/s")
+        eta = d.get('eta')
+        if eta is not None:
+            mins, secs = divmod(int(eta), 60)
+            parts.append(f"ETA {mins:02d}:{secs:02d}")
+        frag_idx, frag_count = d.get('fragment_index'), d.get('fragment_count')
+        if frag_idx and frag_count:
+            parts.append(f"(frag {frag_idx}/{frag_count})")
+        return "Descargando " + " ".join(parts) if parts else None
+    if status == 'finished':
+        return "Descarga completa, procesando archivo..."
+    return None
+
+
+def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", progress_callback=None) -> str:
     extractor_args = {}
     if POT_PROVIDER_BASE_URL:
         # Le dice al plugin bgutil-ytdlp-pot-provider (instalado via requirements.txt)
@@ -529,6 +627,12 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "") 
         'remote_components': ['ejs:github'],
         'extractor_args': extractor_args,
     }
+    if progress_callback is not None:
+        def _hook(d):
+            msg = _format_yt_progress(d)
+            if msg:
+                progress_callback(msg)
+        base_opts['progress_hooks'] = [_hook]
 
     strategies = _build_ydl_opts_with_auth(base_opts)
     last_error = None
@@ -544,8 +648,20 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "") 
         except Exception as e:
             err_str = str(e)
             last_error = e
-            if "403" in err_str or "401" in err_str or "Forbidden" in err_str or "cookie" in err_str.lower():
-                print(f"   ⚠ Falló por permisos: {err_str[:120]}")
+            is_auth_issue = (
+                "403" in err_str or "401" in err_str or "Forbidden" in err_str or "cookie" in err_str.lower()
+            )
+            # "This live event has ended" / "No video formats found" en un
+            # stream que acaba de terminar son específicos de qué
+            # player_client se usó (ver estrategia "player_client por
+            # defecto" arriba) - vale la pena seguir probando en vez de
+            # cortar en el primer intento.
+            is_live_ended = (
+                "live event has ended" in err_str.lower() or "no video formats found" in err_str.lower()
+            )
+            if is_auth_issue or is_live_ended:
+                reason = "permisos" if is_auth_issue else "stream recién terminado"
+                print(f"   ⚠ Falló ({reason}): {err_str[:120]}")
                 continue
             print(f"   ✗ Error no relacionado con autenticación: {err_str[:200]}")
             raise HTTPException(status_code=400, detail=f"Error al descargar: {err_str}")
@@ -563,16 +679,17 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "") 
     )
 
 
-def download_youtube_video(url: str) -> str:
+def download_youtube_video(url: str, progress_callback=None) -> str:
     """Descarga el video completo. Usar solo para exportar (cortar/convertir clips) - para
     transcribir no hace falta, ver download_youtube_audio."""
     return _download_youtube(
         url,
         'best[height<=480][ext=mp4]/best[height<=480]/bestvideo[height<=480]+bestaudio/best[height<=720]/best',
+        progress_callback=progress_callback,
     )
 
 
-def download_youtube_audio(url: str) -> str:
+def download_youtube_audio(url: str, progress_callback=None) -> str:
     """
     Descarga SOLO el audio, para transcribir. La desgrabación nunca usó el
     video en sí (_process_single_video_file igual extrae el audio antes de
@@ -587,6 +704,7 @@ def download_youtube_audio(url: str) -> str:
         url,
         'bestaudio[ext=m4a]/bestaudio/best',
         outtmpl_suffix='_audio',
+        progress_callback=progress_callback,
     )
 
 
@@ -606,17 +724,28 @@ MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "65536"))   # tope de sal
 # Lista de modelos Gemini en orden de preferencia (fallback automático al agotar cuota diaria).
 # Cada modelo tiene su propia cuota diaria separada en el free tier, así que sumar más
 # modelos a la lista aumenta la capacidad total gratuita antes de que la app deje de funcionar.
-# gemini-3.1-flash-lite tiene ~500 req/día (vs ~20 req/día del resto), por eso se agregó
-# como red de contención de alta capacidad antes de llegar a los modelos más nuevos/limitados.
+# gemini-3.1-flash-lite tiene ~500 req/día (vs ~20 req/día del resto), por eso se dejó
+# último como red de contención de alta capacidad en vez de primero.
 GEMINI_MODELS = [
     m.strip() for m in os.getenv(
         "GEMINI_MODELS",
-        # gemini-2.5-flash-lite fue dado de baja por Google (404 NOT_FOUND
-        # permanente, "no longer available to new users") - sacado de la
-        # lista default para no desperdiciar reintentos contra un modelo
-        # que nunca va a responder.
-        "gemini-2.0-flash,gemini-2.0-flash-lite,gemini-2.5-flash,"
-        "gemini-3.1-flash-lite,gemini-3.5-flash"
+        # gemini-2.0-flash, gemini-2.0-flash-lite y gemini-2.5-flash-lite
+        # fueron dados de baja por Google (404 NOT_FOUND permanente,
+        # "no longer available") - sacados de la lista default para no
+        # desperdiciar reintentos contra modelos que nunca van a responder.
+        # gemini-2.5-flash sigue vivo pero Google ya anunció su baja para
+        # el 16/10/2026 - si vuelve a dar 404 después de esa fecha, sacarlo
+        # de acá también.
+        # gemini-3.7-flash (el más nuevo) NO va primero a propósito: probado
+        # a mano el 2026-08-25 contra audio real, devuelve 0 candidatos +
+        # 503 "high demand" de forma consistente - muy probablemente por ser
+        # recién salido y todavía en rollout inestable del lado de Google.
+        # Como no es un 404 "modelo muerto" ni una cuota agotada, el código
+        # no lo descarta solo: si queda primero, gasta los 3 intentos + el
+        # fallback contra un modelo roto antes de rendirse. Se lo deja
+        # último, probar de nuevo a ponerlo más arriba en unas semanas.
+        "gemini-2.5-flash,gemini-3.6-flash,gemini-3.5-flash,"
+        "gemini-3.1-flash-lite,gemini-3.7-flash"
     ).split(",") if m.strip()
 ]
 
@@ -1107,62 +1236,108 @@ def _extract_retry_delay(e: Exception, default: int = 65) -> int:
     return default
 
 
-def _call_gemini_with_retry(uploaded_file, max_attempts: int = 3):
+# Modelo dedicado de ASR con diarización real (AudioTranscriptionConfig),
+# a diferencia de GEMINI_MODELS que son LLMs de propósito general "actuando"
+# de transcriptor siguiendo las instrucciones de PROMPT_ESCANEO. En teoría
+# da mejor diarización que pedírsela a un LLM en el prompt.
+# Probado a mano el 2026-08-26 (recién anunciado ese mismo día): en la
+# mayoría de los intentos devuelve 503 "high demand"; cuando sí responde,
+# el texto viene incompleto/cortado antes de cubrir el audio entero. No es
+# confiable todavía - por eso _transcribe_with_gemini_dedicated() no
+# reintenta nada acá adentro, cualquier falla cae rápido al resto de
+# GEMINI_MODELS en vez de insistir.
+GEMINI_TRANSCRIBE_MODEL = os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
+
+
+def _transcribe_with_gemini_dedicated(uploaded_file) -> str:
     """
-    Llama a Gemini con reintentos y fallback automático entre modelos.
-    - Cuota diaria agotada (PerDay) → cambia de modelo inmediatamente, no cuenta como intento.
-    - Rate limit por minuto → espera y reintenta con el mismo modelo.
-    - Otros errores → backoff exponencial.
+    Transcribe con el modelo dedicado GEMINI_TRANSCRIBE_MODEL en vez de
+    pedirle a un LLM de propósito general que actúe de transcriptor. No
+    sigue el formato TIMESTAMP/SPEAKER/DIALOGUE de PROMPT_ESCANEO (es ASR
+    puro, no un modelo de instrucciones) - se envuelve el texto crudo en
+    ese formato como una sola entrada, igual que hace
+    _transcribe_with_groq_whisper cuando Whisper no devuelve segments.
+    Sin reintentos propios: una sola llamada, cualquier falla se propaga
+    para que el caller pase directo a GEMINI_MODELS.
+    """
+    response = client.models.generate_content(
+        model=GEMINI_TRANSCRIBE_MODEL,
+        contents=[uploaded_file],
+        config=genai_types.GenerateContentConfig(
+            max_output_tokens=32768,
+            audio_transcription_config=genai_types.AudioTranscriptionConfig(
+                diarization=True,
+                mode=genai_types.AudioTranscriptionConfigMode.VERBATIM,
+                word_timestamp=True,
+            ),
+        ),
+    )
+    text = _extract_text_safely(response)
+    if not text or len(text.strip()) < 50:
+        raise Exception(f"{GEMINI_TRANSCRIBE_MODEL} devolvió texto vacío o demasiado corto.")
+    return f"TIMESTAMP: 00:00\nSPEAKER: Speaker 1\nDIALOGUE: {text.strip()}\n---"
+
+
+def _call_gemini_with_retry(uploaded_file, max_cycles: int = 2):
+    """
+    Llama a Gemini recorriendo GEMINI_MODELS en orden. Ante CUALQUIER
+    falla del modelo actual (excepción de cualquier tipo - no solo
+    cuota/404 como antes - o una respuesta sin contenido útil) pasa
+    directo al siguiente modelo de la lista en vez de reintentar el
+    mismo. Antes un error transitorio (ej: 503 "high demand" de un
+    modelo recién salido) quedaba reintentando con backoff exponencial
+    contra ESE modelo hasta agotar los intentos, sin llegar a probar
+    nunca los otros 4 sanos de la lista.
+    - Cuota diaria agotada / 404 (dado de baja) → se descarta el modelo
+      para el resto de la sesión, como antes (nunca tiene sentido
+      reintentarlo).
+    - Rate limit por minuto (429) → espera el retry_delay sugerido
+      (con techo) y pasa igual al siguiente modelo - no se queda
+      esperando ahí si hay otro modelo con cuota propia disponible.
+    - Cualquier otro error, o respuesta vacía/de mala calidad → pasa
+      directo al siguiente modelo, sin esperar.
+    Da hasta `max_cycles` vueltas completas a la lista (un modelo con un
+    problema transitorio puede andar bien en la segunda vuelta) antes de
+    caer al prompt de fallback simplificado.
     """
     last_error = None
-    attempts_remaining = max_attempts
-    call_n = 0
 
-    while attempts_remaining > 0:
-        model = _get_active_model()
-        if model is None:
+    for cycle in range(1, max_cycles + 1):
+        models_this_cycle = [m for m in GEMINI_MODELS if m not in _exhausted_models]
+        if not models_this_cycle:
             raise Exception(
                 f"Todos los modelos de Gemini tienen la cuota diaria agotada "
                 f"({', '.join(GEMINI_MODELS)}). Último error: {last_error}."
             )
-        call_n += 1
-        try:
-            print(f"   Intento {call_n} [modelo: {model}] (max_output_tokens={MAX_OUTPUT_TOKENS})...")
-            response = client.models.generate_content(
-                model=model,
-                contents=[uploaded_file, PROMPT_ESCANEO],
-                config=genai_types.GenerateContentConfig(
-                    max_output_tokens=MAX_OUTPUT_TOKENS,
-                    temperature=0.2,
-                ),
-            )
-            text = _extract_text_safely(response)
-            if text and len(text.strip()) > 50:
-                if _is_meaningful_transcript(text):
+        for model in models_this_cycle:
+            try:
+                print(f"   Ciclo {cycle}/{max_cycles} [modelo: {model}] (max_output_tokens={MAX_OUTPUT_TOKENS})...")
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[uploaded_file, PROMPT_ESCANEO],
+                    config=genai_types.GenerateContentConfig(
+                        max_output_tokens=MAX_OUTPUT_TOKENS,
+                        temperature=0.2,
+                    ),
+                )
+                text = _extract_text_safely(response)
+                if text and len(text.strip()) > 50 and _is_meaningful_transcript(text):
                     return text
-                print(f"   ⚠ Intento {call_n}: respuesta sin contenido de calidad. Reintentando...")
-            else:
-                print(f"   ⚠ Intento {call_n} devolvió respuesta vacía o incompleta.")
-            attempts_remaining -= 1
-        except Exception as e:
-            last_error = e
-            if _is_daily_quota_exhausted(e):
-                print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Cambiando al siguiente modelo...")
-                _exhausted_models.add(model)
-                # No decrementar attempts_remaining: cuota diaria no es un fallo del intento
-            elif _is_model_unavailable(e):
-                print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo para el resto de esta sesión...")
-                _exhausted_models.add(model)
-                # No decrementar attempts_remaining: no es un fallo del intento, es un modelo muerto
-            elif _is_quota_error(e):
-                wait = _extract_retry_delay(e)
-                print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s...")
-                time.sleep(wait)
-                attempts_remaining -= 1
-            else:
-                print(f"   ⚠ Intento {call_n} error [{model}]: {type(e).__name__}: {e}")
-                time.sleep(2 ** (max_attempts - attempts_remaining + 1))
-                attempts_remaining -= 1
+                print(f"   ⚠ [{model}] devolvió respuesta vacía o sin contenido de calidad. Probando siguiente modelo...")
+            except Exception as e:
+                last_error = e
+                if _is_daily_quota_exhausted(e):
+                    print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Descartándolo para el resto de esta sesión...")
+                    _exhausted_models.add(model)
+                elif _is_model_unavailable(e):
+                    print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo para el resto de esta sesión...")
+                    _exhausted_models.add(model)
+                elif _is_quota_error(e):
+                    wait = min(_extract_retry_delay(e), 20)
+                    print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s antes de probar el siguiente...")
+                    time.sleep(wait)
+                else:
+                    print(f"   ⚠ [{model}] error: {type(e).__name__}: {e}. Probando siguiente modelo...")
 
     # Último recurso: prompt corto con el modelo activo
     model = _get_active_model()
@@ -1187,78 +1362,66 @@ def _call_gemini_with_retry(uploaded_file, max_attempts: int = 3):
             print("   ⚠ Fallback devolvió respuesta pero sin calidad suficiente.")
     except Exception as e:
         last_error = e
-        if _is_daily_quota_exhausted(e):
-            print(f"   ⚠ Cuota DIARIA agotada para [{model}] en fallback. Cambiando de modelo...")
+        if _is_daily_quota_exhausted(e) or _is_model_unavailable(e):
             _exhausted_models.add(model)
-        elif _is_model_unavailable(e):
-            print(f"   ⚠ [{model}] fue dado de baja por Google (404) en fallback. Descartándolo...")
-            _exhausted_models.add(model)
-        elif _is_quota_error(e):
-            wait = _extract_retry_delay(e)
-            print(f"   ⚠ Fallback también falló por cuota. Esperando {wait}s...")
-            time.sleep(wait)
         print(f"   ⚠ Fallback también falló: {e}")
 
     raise Exception(
-        f"Gemini no devolvió contenido utilizable tras {max_attempts} intentos. "
-        f"Último error: {last_error}."
+        f"Gemini no devolvió contenido utilizable tras {max_cycles} ciclo(s) por "
+        f"{len(GEMINI_MODELS)} modelo(s). Último error: {last_error}."
     )
 
 
-def _call_gemini_text(prompt: str, max_attempts: int = 3) -> str:
+def _call_gemini_text(prompt: str, max_cycles: int = 2) -> str:
     """
     Llama a Gemini con un prompt de solo texto (sin archivo adjunto) - se usa
     para el "prompt libre": en vez de que la persona copie el prompt a
     ChatGPT/Claude y pegue la respuesta a mano, la app le manda el prompt
     (transcripción + instrucciones) directo a Gemini y devuelve el resultado.
-    Mismo mecanismo de reintentos/fallback entre modelos que _call_gemini_with_retry.
+    Mismo mecanismo de rotación por ciclo completo que _call_gemini_with_retry
+    (ver ese docstring) - si Gemini agota TODA la lista, el caller
+    (/generate-clip-suggestions) tiene su propio fallback a Groq.
     """
     last_error = None
-    attempts_remaining = max_attempts
-    call_n = 0
 
-    while attempts_remaining > 0:
-        model = _get_active_model()
-        if model is None:
+    for cycle in range(1, max_cycles + 1):
+        models_this_cycle = [m for m in GEMINI_MODELS if m not in _exhausted_models]
+        if not models_this_cycle:
             raise Exception(
                 f"Todos los modelos de Gemini tienen la cuota diaria agotada "
                 f"({', '.join(GEMINI_MODELS)}). Último error: {last_error}."
             )
-        call_n += 1
-        try:
-            print(f"   [prompt libre] Intento {call_n} [modelo: {model}]...")
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    max_output_tokens=MAX_OUTPUT_TOKENS,
-                    temperature=0.4,
-                ),
-            )
-            text = _extract_text_safely(response)
-            if text and len(text.strip()) > 10:
-                return text
-            print(f"   ⚠ Intento {call_n} devolvió respuesta vacía o muy corta.")
-            attempts_remaining -= 1
-        except Exception as e:
-            last_error = e
-            if _is_daily_quota_exhausted(e):
-                print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Cambiando al siguiente modelo...")
-                _exhausted_models.add(model)
-            elif _is_model_unavailable(e):
-                print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo...")
-                _exhausted_models.add(model)
-            elif _is_quota_error(e):
-                wait = _extract_retry_delay(e)
-                print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s...")
-                time.sleep(wait)
-                attempts_remaining -= 1
-            else:
-                print(f"   ⚠ Intento {call_n} error [{model}]: {type(e).__name__}: {e}")
-                time.sleep(2 ** (max_attempts - attempts_remaining + 1))
-                attempts_remaining -= 1
+        for model in models_this_cycle:
+            try:
+                print(f"   [prompt libre] Ciclo {cycle}/{max_cycles} [modelo: {model}]...")
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        max_output_tokens=MAX_OUTPUT_TOKENS,
+                        temperature=0.4,
+                    ),
+                )
+                text = _extract_text_safely(response)
+                if text and len(text.strip()) > 10:
+                    return text
+                print(f"   ⚠ [{model}] devolvió respuesta vacía o muy corta. Probando siguiente modelo...")
+            except Exception as e:
+                last_error = e
+                if _is_daily_quota_exhausted(e):
+                    print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Descartándolo para el resto de esta sesión...")
+                    _exhausted_models.add(model)
+                elif _is_model_unavailable(e):
+                    print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo para el resto de esta sesión...")
+                    _exhausted_models.add(model)
+                elif _is_quota_error(e):
+                    wait = min(_extract_retry_delay(e), 20)
+                    print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s antes de probar el siguiente...")
+                    time.sleep(wait)
+                else:
+                    print(f"   ⚠ [{model}] error: {type(e).__name__}: {e}. Probando siguiente modelo...")
 
-    raise Exception(f"Gemini no devolvió respuesta tras {max_attempts} intentos. Último error: {last_error}.")
+    raise Exception(f"Gemini no devolvió respuesta tras {max_cycles} ciclo(s). Último error: {last_error}.")
 
 
 def _seconds_to_mmss(seconds: float) -> str:
@@ -1305,6 +1468,36 @@ def _transcribe_with_groq_whisper(audio_path: str) -> str:
     if not lines:
         raise Exception("Groq Whisper devolvió segmentos sin texto utilizable.")
     return "\n".join(lines)
+
+
+def _call_groq_text(prompt: str) -> str:
+    """
+    Último recurso para el "prompt libre" (/generate-clip-suggestions)
+    cuando Gemini agotó TODA su lista de modelos (todos los ciclos de
+    _call_gemini_text). Mismo espíritu que _transcribe_with_groq_whisper
+    (Groq como red de contención, no como motor principal) pero para
+    generación de texto: usa la API de chat completions de Groq
+    (compatible con OpenAI) con Llama 3.3 70B en vez de un modelo Gemini.
+    """
+    if not GROQ_API_KEY:
+        raise Exception("GROQ_API_KEY no está configurada en el servidor.")
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        json={
+            "model": GROQ_TEXT_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.4,
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    data = response.json()
+    choices = data.get("choices") or []
+    text = (choices[0].get("message", {}).get("content") or "").strip() if choices else ""
+    if not text:
+        raise Exception("Groq (Llama 3.3 70B) no devolvió texto.")
+    return text
 
 
 def _normalize_engine(value: str) -> str:
@@ -1354,7 +1547,12 @@ def _process_single_video_file(video_path: str, engine: str = "auto") -> str:
                 raise Exception(f"La indexación de {os.path.basename(path_to_upload)} falló en Google.")
 
             try:
-                text = _call_gemini_with_retry(uploaded_file)
+                try:
+                    text = _transcribe_with_gemini_dedicated(uploaded_file)
+                    print(f"   ✓ Transcripción obtenida vía {GEMINI_TRANSCRIBE_MODEL} (diarización real dedicada).")
+                except Exception as dedicated_error:
+                    print(f"   ⚠ {GEMINI_TRANSCRIBE_MODEL} no disponible/no usable ({dedicated_error}). Pasando a GEMINI_MODELS...")
+                    text = _call_gemini_with_retry(uploaded_file)
             except Exception as gemini_error:
                 if engine == "auto" and GROQ_API_KEY:
                     print(f"   ⚠ Gemini falló ({gemini_error}). Probando fallback con Groq Whisper...")
@@ -1667,9 +1865,11 @@ async def analyze_url_stream(input_data: UrlInput):
         yield f"data: {json.dumps({'stage': 'downloading', 'message': 'Descargando audio desde la URL...'}, ensure_ascii=False)}\n\n"
         video_path = None
         download_error = None
-        async for kind, payload in run_blocking_with_heartbeat(download_youtube_audio, input_data.url):
+        async for kind, payload in run_blocking_with_progress(download_youtube_audio, input_data.url):
             if kind == "heartbeat":
                 yield ": keep-alive\n\n"
+            elif kind == "progress":
+                yield f"data: {json.dumps({'stage': 'downloading', 'message': payload}, ensure_ascii=False)}\n\n"
             elif kind == "result":
                 video_path = payload
             else:
@@ -1802,6 +2002,11 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
     Reemplaza el paso manual de copiar el prompt a ChatGPT/Claude/Gemini web
     y pegar la respuesta de vuelta - el resultado se importa directo al
     exportador de clips sin salir de la app.
+
+    Si Gemini agota TODA su lista de modelos (ver _call_gemini_text), cae a
+    Groq (Llama 3.3 70B) como último recurso antes de fallar del todo - la
+    respuesta indica en "engine" cuál de los dos resolvió el pedido, para
+    que el frontend lo pueda mostrar.
     """
     if not input_data.prompt or len(input_data.prompt.strip()) < 10:
         raise HTTPException(status_code=400, detail="El prompt está vacío.")
@@ -1811,8 +2016,19 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
         mem_error = _memory_headroom_error()
         if mem_error:
             raise HTTPException(status_code=503, detail=mem_error)
-        text = await asyncio.to_thread(_call_gemini_text, input_data.prompt)
-        return {"text": text}
+        try:
+            text = await asyncio.to_thread(_call_gemini_text, input_data.prompt)
+            return {"text": text, "engine": "gemini"}
+        except Exception as gemini_error:
+            if GROQ_API_KEY:
+                print(f"   ⚠ Gemini agotó todos sus modelos ({gemini_error}). Probando con Groq (Llama 3.3 70B)...")
+                try:
+                    text = await asyncio.to_thread(_call_groq_text, input_data.prompt)
+                    return {"text": text, "engine": "groq"}
+                except Exception as groq_error:
+                    print(f"   ⚠ Groq también falló: {groq_error}")
+                    raise gemini_error
+            raise
     except HTTPException:
         raise
     except Exception as e:
@@ -2167,9 +2383,11 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...", {"pct": 5})
                 await asyncio.sleep(0)
                 download_error = None
-                async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+                async for kind, payload in run_blocking_with_progress(download_youtube_video, input_data.url):
                     if kind == "heartbeat":
                         yield ": keep-alive\n\n"
+                    elif kind == "progress":
+                        yield event("downloading", payload)
                     elif kind == "result":
                         video_path = payload
                     else:
@@ -2401,9 +2619,11 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                 yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
                 download_error = None
-                async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+                async for kind, payload in run_blocking_with_progress(download_youtube_video, input_data.url):
                     if kind == "heartbeat":
                         yield ": keep-alive\n\n"
+                    elif kind == "progress":
+                        yield event("downloading", payload)
                     elif kind == "result":
                         video_path = payload
                     else:
@@ -2584,9 +2804,11 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
                 yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
                 download_error = None
-                async for kind, payload in run_blocking_with_heartbeat(download_youtube_video, input_data.url):
+                async for kind, payload in run_blocking_with_progress(download_youtube_video, input_data.url):
                     if kind == "heartbeat":
                         yield ": keep-alive\n\n"
+                    elif kind == "progress":
+                        yield event("downloading", payload)
                     elif kind == "result":
                         video_path = payload
                     else:

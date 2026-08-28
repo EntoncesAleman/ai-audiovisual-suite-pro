@@ -27,6 +27,16 @@ const ENGINE_META = {
  * cargado la persona (antes eran dos botones separados).
  */
 export function startAnalysis() {
+    // Sin este guard, clickear varias veces (por ejemplo por impaciencia
+    // mientras yt-dlp tarda en fallar/responder) dispara un análisis
+    // independiente por click: cada uno termina en su propio alert() de
+    // error, y como alert() bloquea el hilo, se ven "encolados" uno
+    // detrás del otro - parece que la app sigue reintentando sola después
+    // del primer error, cuando en realidad son requests separados.
+    if (state.currentAbortController) {
+        alert("Ya hay un análisis en curso. Esperá a que termine o usá 'Detener' antes de arrancar otro.");
+        return;
+    }
     const fileInput = document.getElementById('localFile');
     if (fileInput && fileInput.files.length > 0) {
         analyzeLocalFile();

@@ -197,7 +197,8 @@ export async function generateReelClipsWithAI() {
 
         state.reelClipsList = imported;
         renderReelClipsList();
-        if (feedback) feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} generado${imported.length > 1 ? 's' : ''} e importado${imported.length > 1 ? 's' : ''} directo con Gemini, sin pasar por otra IA.`;
+        const engineLabel = data.engine === "groq" ? "Groq (respaldo, Gemini no estaba disponible)" : "Gemini";
+        if (feedback) feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} generado${imported.length > 1 ? 's' : ''} e importado${imported.length > 1 ? 's' : ''} directo con ${engineLabel}, sin pasar por otra IA.`;
     } catch (e) {
         if (feedback) feedback.textContent = "❌ Error generando con Gemini: " + e.message;
     } finally {
