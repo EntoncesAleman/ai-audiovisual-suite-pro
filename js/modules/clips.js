@@ -68,6 +68,7 @@ export function renderClipsList() {
                     <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleClipSelection(${i}, this.checked)" title="Incluir en la exportación">
                     <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateClip(${i}, 'label', this.value)" placeholder="Descripción del clip">
                     <button class="clip-card-star ${clip.favorite ? 'active' : ''}" onclick="toggleClipFavorite(${i})" title="Marcar como favorito">★</button>
+                    <button class="btn-clip-remove" onclick="sendClipToCapCut(${i})" title="Enviar a CapCut (beta, requiere server local con CapCut instalado)" style="font-size:11px;width:auto;padding:0 6px;">🎞</button>
                     <button class="btn-clip-remove" onclick="removeClip(${i})" title="Quitar">×</button>
                 </div>
                 <div class="clip-card-times">
@@ -75,6 +76,7 @@ export function renderClipsList() {
                     <span>→</span>
                     <input type="text" value="${escapeHtml(clip.end)}" onchange="updateClip(${i}, 'end', this.value)" title="Fin (Out)">
                 </div>
+                <span id="capcutStatus_${i}" style="font-size:10px;color:#94a3b8;display:block;margin-top:2px;"></span>
             </div>
         </div>
     `).join('');
@@ -325,6 +327,92 @@ export function switchClipEditorTab(tab) {
     document.getElementById('clipEditorTabSocial').classList.toggle('active', tab === 'social');
 }
 
+/**
+ * v2 (beta): envía UN clip a CapCut como draft nativo editable (video +
+ * subtítulos con color/borde), vía capcut-cli - ver capcut_export.py y
+ * HANDOFF.md punto 19/20. A diferencia de Premiere, esto SOLO funciona
+ * cuando el server está corriendo en una Mac con CapCut instalado (no
+ * en Render) - por eso arranca chequeando /capcut-status antes de nada,
+ * para avisar claro en vez de fallar confuso a mitad de camino.
+ */
+export async function sendClipToCapCut(i) {
+    const clip = state.clipsList[i];
+    if (!clip) return;
+    const statusEl = document.getElementById(`capcutStatus_${i}`);
+
+    let status;
+    try {
+        const res = await fetch(`${BACKEND_URL}/capcut-status`);
+        status = await res.json();
+    } catch (e) {
+        alert("No pude confirmar si CapCut está disponible en este servidor.");
+        return;
+    }
+    if (!status.capcut_installed || !status.capcut_cli_found) {
+        alert("CapCut no está disponible en este servidor. Esta función solo funciona corriendo el server local en tu Mac con CapCut instalado (no en Render) - ver HANDOFF.md.");
+        return;
+    }
+    if (!confirm(`Se va a generar un proyecto en CapCut con el clip "${clip.label || 'sin título'}".\n\nCerrá CapCut si lo tenés abierto antes de continuar (necesario para no pisar sus propios archivos). ¿Seguimos?`)) {
+        return;
+    }
+
+    let source;
+    try {
+        source = await resolveExportSource('clipSourceUrl', 'clipSourceFile', null);
+    } catch (e) {
+        alert("Error subiendo el archivo: " + e.message);
+        return;
+    }
+    if (!source) return;
+
+    if (statusEl) statusEl.textContent = "⏳ Enviando a CapCut...";
+    telemetryLog('telemetry', `Enviando clip "${clip.label}" a CapCut...`, 'uploading');
+
+    const wantsSubtitles = subtitlesEnabled();
+    const subtitles = wantsSubtitles
+        ? buildSubtitleCuesForClip(tsToSeconds(clip.start), tsToSeconds(clip.end), state.originalTimeline)
+        : [];
+    const subtitleStyle = wantsSubtitles ? getSubtitleStyle() : null;
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/export-capcut`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...source,
+                clip: { start: clip.start, end: clip.end, label: clip.label, subtitles },
+                subtitle_style: subtitleStyle,
+                project_name: clip.label,
+            }),
+        });
+        if (!res.ok || !res.body) throw new Error("Sin respuesta del servidor.");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith("data:")) continue;
+                try {
+                    const payload = JSON.parse(line.slice(5).trim());
+                    telemetryLog('telemetry', payload.message, payload.stage);
+                    if (statusEl) {
+                        statusEl.textContent = (payload.stage === "error" ? "❌ " : payload.stage === "done" ? "✅ " : "⏳ ") + payload.message;
+                        statusEl.style.color = payload.stage === "error" ? "#f87171" : payload.stage === "done" ? "#4ade80" : "#94a3b8";
+                    }
+                } catch (e) {}
+            }
+        }
+    } catch (e) {
+        if (statusEl) { statusEl.textContent = "❌ Error: " + e.message; statusEl.style.color = "#f87171"; }
+        telemetryLog('telemetry', "❌ Error enviando a CapCut: " + e.message, 'error');
+    }
+}
+
 // Las filas de la tabla de clips se generan dinámicamente vía innerHTML (arriba),
 // así que sus onclick/onchange necesitan encontrar estas funciones en window.
 window.toggleClipSelection = toggleClipSelection;
@@ -332,3 +420,4 @@ window.updateClip = updateClip;
 window.removeClip = removeClip;
 window.toggleClipFavorite = toggleClipFavorite;
 window.playClip = playClip;
+window.sendClipToCapCut = sendClipToCapCut;

@@ -27,6 +27,7 @@ import yt_dlp
 import requests
 from dotenv import load_dotenv
 import premiere_export
+import capcut_export
 
 load_dotenv()
 
@@ -2675,6 +2676,148 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                     os.remove(video_path)
                 except Exception:
                     pass
+            _heavy_ops_semaphore.release()
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
+
+
+# ============================================================
+# EXPORTACIÓN A CAPCUT (draft nativo vía capcut-cli)
+# ============================================================
+# Ver capcut_export.py para el detalle y las pruebas hechas. A diferencia
+# de Premiere, esto SÓLO funciona cuando el server corre en una Mac con
+# CapCut instalado (necesita el puente local / túnel, no Render) - por
+# eso existe /capcut-status, para que el frontend pueda avisar antes de
+# intentar en vez de fallar confuso.
+
+@app.get("/capcut-status")
+def capcut_status():
+    return {
+        "capcut_installed": capcut_export.capcut_available(),
+        "capcut_cli_found": capcut_export._find_capcut_cli() is not None,
+    }
+
+
+class ExportCapCutInput(BaseModel):
+    url: str = ""
+    video_path: str = ""
+    cache_key: str = ""
+    clip: ClipSpec
+    subtitle_style: SubtitleStyle | None = None
+    project_name: str = ""
+
+
+@app.post("/export-capcut", dependencies=[Depends(require_api_key)])
+async def export_capcut_endpoint(input_data: ExportCapCutInput):
+    def event(stage: str, message: str, data: dict = None):
+        payload = {"stage": stage, "message": message}
+        if data:
+            payload.update(data)
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    async def generator():
+        if not capcut_export.capcut_available():
+            yield event("error", "CapCut no está instalado en este servidor (falta ~/Movies/CapCut/...). Esta función solo funciona corriendo el server en una Mac con CapCut instalado, no en Render.")
+            return
+        if not capcut_export._find_capcut_cli():
+            yield event("error", "No encontré capcut-cli en este servidor. Instalalo con: npm install -g capcut-cli")
+            return
+
+        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
+        cached_video = cache_video_path(effective_cache_key)
+        if not cached_video and not input_data.url and not input_data.video_path:
+            yield event("error", "Se requiere una URL o un archivo local subido.")
+            return
+
+        async for _ in _wait_for_heavy_slot():
+            yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
+
+        clip = input_data.clip
+        export_id = deterministic_export_id(
+            "capcut-" + (effective_cache_key or input_data.video_path or "local"),
+            f"{clip.start}-{clip.end}-{clip.label}",
+        )
+        clip_dir = EXPORT_DIR / export_id
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        video_path = None
+        delete_video_after = False
+
+        try:
+            mem_error = _memory_headroom_error()
+            if mem_error:
+                yield event("error", mem_error)
+                return
+
+            if cached_video:
+                video_path = cached_video
+            elif input_data.video_path:
+                if not os.path.exists(input_data.video_path):
+                    yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo.")
+                    return
+                video_path = input_data.video_path
+                delete_video_after = True
+            else:
+                yield event("downloading", "Descargando video fuente para el clip...", {"pct": 10})
+                await asyncio.sleep(0)
+                download_error = None
+                async for kind, payload in run_blocking_with_progress(download_youtube_video, input_data.url):
+                    if kind == "heartbeat":
+                        yield ": keep-alive\n\n"
+                    elif kind == "progress":
+                        yield event("downloading", payload)
+                    elif kind == "result":
+                        video_path = payload
+                    else:
+                        download_error = payload
+                if download_error:
+                    yield event("error", download_error.detail if isinstance(download_error, HTTPException) else str(download_error))
+                    return
+                delete_video_after = True
+
+            yield event("cutting", f"Cortando clip: {clip.start} → {clip.end}...", {"pct": 40})
+            await asyncio.sleep(0)
+            clip_path = str(clip_dir / "clip_for_capcut.mp4")
+            cut_error = None
+            async for kind, payload in run_blocking_with_heartbeat(cut_single_clip, video_path, clip.start, clip.end, clip_path):
+                if kind == "heartbeat":
+                    yield ": keep-alive\n\n"
+                elif kind == "error":
+                    cut_error = payload
+            if cut_error or not os.path.exists(clip_path):
+                yield event("error", f"No se pudo cortar el clip: {cut_error}")
+                return
+
+            yield event("info", "Armando el draft de CapCut (video + subtítulos)...", {"pct": 70})
+            await asyncio.sleep(0)
+
+            cues = [{"start": c.start, "end": c.end, "text": c.text} for c in clip.subtitles]
+            style = {}
+            if input_data.subtitle_style:
+                style = {
+                    "color": input_data.subtitle_style.color,
+                    "border_color": input_data.subtitle_style.border_color,
+                    "border_width": input_data.subtitle_style.border_width,
+                }
+            project_name = input_data.project_name or clip.label or "AVSuite Export"
+
+            ok, msg, info = await asyncio.to_thread(
+                capcut_export.build_and_register_capcut_draft, project_name, clip_path, cues, style,
+            )
+            if not ok:
+                yield event("error", msg)
+                return
+
+            yield event("done", f"✓ {msg} Reabrí CapCut para verlo en tu lista de proyectos.", {"pct": 100, **(info or {})})
+
+        except Exception as e:
+            yield event("error", f"Error inesperado: {e}")
+        finally:
+            if delete_video_after and video_path and os.path.exists(video_path):
+                try:
+                    os.remove(video_path)
+                except Exception:
+                    pass
+            shutil.rmtree(str(clip_dir), ignore_errors=True)
             _heavy_ops_semaphore.release()
 
     return StreamingResponse(generator(), media_type="text/event-stream")
