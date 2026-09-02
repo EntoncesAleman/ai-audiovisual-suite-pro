@@ -310,7 +310,11 @@
                                 <div class="export-action-row">
                                     <button class="btn-export-selection" onclick="startClipExport()">🎬 Exportar Selección (.mp4)</button>
                                     <button class="btn-export-all" onclick="exportAllClips()">📥 Descargar ZIP (Todos)</button>
+                                    <button class="btn-export-all" id="btnClipExportPremiere" onclick="startClipPremiereExport()" title="Genera un proyecto de Premiere (.xml) con los clips seleccionados armados en un timeline editable + el video fuente, en vez de un .mp4 ya quemado. Beta: todavía sin confirmar en un Premiere real.">🎞 Exportar a Premiere (beta)</button>
                                     <a id="clipDownloadBtn" class="btn-clip-download" href="#" download><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> Descargar</a>
+                                </div>
+                                <div style="font-size:11px;color:#64748b;margin-top:-4px;margin-bottom:8px;">
+                                    🎞 Premiere trae los cortes + subtítulos como texto editable (sin confirmar) + un archivo de apoyo en texto plano. No trae tipografía elegida ni transiciones.
                                 </div>
 
                                 <div class="clip-export-status" id="clipExportStatus"></div>
