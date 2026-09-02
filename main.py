@@ -943,7 +943,7 @@ def split_video_in_chunks(video_path: str, chunk_seconds: int) -> list:
     return chunks
 
 
-def _collapse_repeated_runs(text: str, max_repeats: int = 3, max_phrase_words: int = 4) -> str:
+def _collapse_repeated_runs(text: str, max_repeats: int = 3, max_phrase_words: int = 20) -> str:
     """
     Colapsa una misma palabra O frase corta (hasta `max_phrase_words` palabras)
     repetida muchas veces seguidas a un máximo de `max_repeats` repeticiones.
@@ -954,19 +954,25 @@ def _collapse_repeated_runs(text: str, max_repeats: int = 3, max_phrase_words: i
     que no lo hagan, pero la instrucción sola no siempre alcanza.
     Deja intactas las repeticiones cortas normales (2-3 veces, típicas del
     habla real para dar énfasis, como un "que venga, que venga!" real).
+
+    Usa \\S+ (cualquier caracter no-espacio) en vez de \\w+ para armar cada
+    "palabra" del patrón - con \\w+ una frase con signos de interrogación
+    españoles en el medio ("Ella eh ese libro habla mucho de esto, ¿no?")
+    nunca hacía match, porque ¿/? no son caracteres \\w, sin importar cuán
+    alto estuviera max_phrase_words. Encontrado en vivo: un video real
+    donde esa frase de 9 palabras se repitió cientos de veces sin que este
+    filtro la tocara.
     """
     import re
 
     pattern = re.compile(
-        r'\b((?:\w+[\s,]+){0,%d}\w+)\b((?:[\s,.:;!?-]+\1\b){3,})' % (max_phrase_words - 1),
+        r'((?:\S+\s+){0,%d}\S+)((?:\s+\1){3,})' % (max_phrase_words - 1),
         re.IGNORECASE
     )
 
     def _replace(match):
         phrase = match.group(1)
-        sep_match = re.match(r'[\s,.:;!?-]+', match.group(2))
-        sep = sep_match.group(0) if sep_match else ' '
-        return (phrase + sep) * (max_repeats - 1) + phrase
+        return (phrase + ' ') * (max_repeats - 1) + phrase
 
     # Aplicar hasta que no cambie más: una racha larga puede necesitar más
     # de una pasada para terminar de colapsar del todo.
