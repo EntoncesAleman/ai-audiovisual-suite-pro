@@ -16,6 +16,35 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
 }
 
 /**
+ * Colapsa una frase repetida muchas veces seguidas (hasta `maxPhraseWords`
+ * palabras) a un máximo de `maxRepeats` repeticiones - mismo remedio que
+ * `_collapse_repeated_runs` en main.py, para la alucinación típica de
+ * transcripción durante tramos de música/silencio ("no, no, no..." x300).
+ * Corre acá, en el frontend, además de en el backend: así una sesión YA
+ * guardada con este problema (de antes de que existiera este fix, o de
+ * cualquier corrida donde el backend no lo haya atrapado) se ve bien de
+ * entrada, sin tener que volver a analizar el video entero.
+ * Usa \S+ (no \w+) para el token de cada palabra: con \w+ una frase con
+ * signos de interrogación españoles en el medio ("...esto, ¿no?") nunca
+ * hace match, porque ¿/? no son caracteres de palabra - encontrado en
+ * vivo con un video real donde una frase de 9 palabras así se repitió
+ * cientos de veces sin que el filtro viejo la tocara.
+ */
+export function collapseRepeatedRuns(text, maxRepeats = 3, maxPhraseWords = 20) {
+    if (!text) return text;
+    const pattern = new RegExp(`((?:\\S+\\s+){0,${maxPhraseWords - 1}}\\S+)((?:\\s+\\1){3,})`, 'gi');
+    let prev = null;
+    let result = text;
+    let guard = 0;
+    while (prev !== result && guard < 10) {
+        prev = result;
+        result = result.replace(pattern, (_match, phrase) => (phrase + ' ').repeat(maxRepeats - 1) + phrase);
+        guard++;
+    }
+    return result;
+}
+
+/**
  * Parsea la transcripción cruda en segmentos estructurados.
  * El backend produce bloques del tipo:
  *   TIMESTAMP: 04:12
@@ -38,7 +67,7 @@ export function parseTimelineToSegments(rawText) {
 
         if (!tsMatch && !spMatch && !dlMatch) {
             if (block.length > 0) {
-                segments.push({ timestamp: "", speaker: "", text: block });
+                segments.push({ timestamp: "", speaker: "", text: collapseRepeatedRuns(block) });
             }
             continue;
         }
@@ -46,7 +75,7 @@ export function parseTimelineToSegments(rawText) {
         segments.push({
             timestamp: tsMatch ? tsMatch[1].trim() : "",
             speaker: spMatch ? spMatch[1].trim() : "",
-            text: dlMatch ? dlMatch[1].trim() : ""
+            text: dlMatch ? collapseRepeatedRuns(dlMatch[1].trim()) : ""
         });
     }
     return segments;

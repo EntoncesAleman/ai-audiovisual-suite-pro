@@ -6,7 +6,7 @@ import { generateIAPrompt } from './prompts.js';
 import { toggleEdit } from './timeline.js';
 import { renderInteractiveTranscript } from './transcriptPanel.js';
 import { setTelemetryMetrics, resetExportPreview } from '../utils/dom.js';
-import { estimateDurationSeconds, secondsToTs } from '../utils/helpers.js';
+import { estimateDurationSeconds, secondsToTs, collapseRepeatedRuns } from '../utils/helpers.js';
 
 // El listado/administración del historial (borrar, exportar JSON, importar,
 // borrar caché del servidor) vive en historial.html/historial.js, una
@@ -44,7 +44,12 @@ export function loadSessionById(id) {
 
 export function loadSessionData(data) {
     state.currentData = data;
-    state.originalTimeline = data.raw_timeline || "No hay líneas de tiempo registradas.";
+    // collapseRepeatedRuns acá (no solo en parseTimelineToSegments) para que
+    // la caja cruda editable (#resTimeline, ver timeline.js) y todo lo que
+    // lee state.originalTimeline directo (SRT, prompt de IA) también queden
+    // limpios - incluye sesiones YA guardadas de antes de este fix, se
+    // arreglan solas la próxima vez que se cargan, sin reanalizar el video.
+    state.originalTimeline = collapseRepeatedRuns(data.raw_timeline || "No hay líneas de tiempo registradas.");
     document.getElementById('resTimeline').innerText = state.originalTimeline;
     document.getElementById('cacheBadge').innerHTML = data.from_cache ? '<span class="cache-badge">⚡ DESDE CACHE</span>' : '';
     document.getElementById('timelineSearch').value = "";
