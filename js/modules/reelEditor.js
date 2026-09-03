@@ -173,6 +173,10 @@ export async function generateReelClipsWithAI() {
     const btn = document.getElementById('btnGenerateActiveClips');
     if (btn) { btn.disabled = true; btn.dataset.origHtml = btn.innerHTML; btn.textContent = "⏳ Generando con Gemini..."; }
     if (feedback) feedback.textContent = "⏳ Generando con Gemini (puede tardar unos segundos)...";
+    // No es un stream real (una sola llamada, sin progreso intermedio del
+    // server) - igual queda un registro en Telemetry de que esto arrancó y
+    // cómo terminó, en vez de que solo se vea en el textito de feedback.
+    telemetryLog('telemetry', 'Generando clips con IA...', 'uploading');
 
     try {
         const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {
@@ -189,6 +193,7 @@ export async function generateReelClipsWithAI() {
 
         if (imported.length === 0) {
             if (feedback) feedback.textContent = "⚠ Gemini respondió pero no encontré timestamps en el formato esperado. Revisá la respuesta completa abajo (se pegó en el importador manual).";
+            telemetryLog('telemetry', '⚠ Gemini respondió pero sin timestamps reconocibles.', 'error');
             document.getElementById('aiResponseInput').value = data.text;
             const body = document.getElementById('aiImportBody');
             if (body && !body.classList.contains('open')) toggleAiImport();
@@ -199,8 +204,10 @@ export async function generateReelClipsWithAI() {
         renderReelClipsList();
         const engineLabel = data.engine === "groq" ? "Groq (respaldo, Gemini no estaba disponible)" : "Gemini";
         if (feedback) feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} generado${imported.length > 1 ? 's' : ''} e importado${imported.length > 1 ? 's' : ''} directo con ${engineLabel}, sin pasar por otra IA.`;
+        telemetryLog('telemetry', `✓ ${imported.length} clip(s) generado(s) con ${engineLabel}.`, 'done');
     } catch (e) {
         if (feedback) feedback.textContent = "❌ Error generando con Gemini: " + e.message;
+        telemetryLog('telemetry', '❌ Error generando clips con IA: ' + e.message, 'error');
     } finally {
         if (btn) { btn.disabled = false; if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml; }
     }

@@ -2586,6 +2586,12 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
         )
         video_path = None
         delete_video_after = False  # el cacheado NO se borra, igual que en /export-clips
+        # Si el video vino de un archivo subido localmente (no de una URL), el
+        # usuario YA lo tiene en su computadora - empaquetarlo de nuevo en el
+        # ZIP es una copia redundante (y en videos grandes, pesada/lenta para
+        # nada). Solo se bundlea el video cuando viene de una URL, que es el
+        # único caso en el que el usuario no tiene el archivo a mano.
+        is_local_upload = False
 
         try:
             mem_error = _memory_headroom_error()
@@ -2601,6 +2607,7 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                     return
                 video_path = input_data.video_path
                 delete_video_after = True
+                is_local_upload = True
             else:
                 yield event("downloading", "Descargando video fuente para armar la secuencia de Premiere...", {"pct": 10})
                 await asyncio.sleep(0)
@@ -2641,7 +2648,15 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
             safe_seq_name = "".join(
                 c if c.isalnum() or c in "-_ " else "_" for c in input_data.sequence_name
             )[:40].strip() or "AVSuite_Export"
-            bundled_video_name = f"{safe_seq_name}{os.path.splitext(video_path)[1] or '.mp4'}"
+            if is_local_upload:
+                # El nombre que va en el XML es el ORIGINAL con el que la
+                # persona subió el archivo (pelamos el prefijo "inspect_XXXXXXXX_"
+                # que le pone /inspect-file), no el de la secuencia - así el
+                # relink en Premiere apunta al nombre real de su propio archivo.
+                import re
+                bundled_video_name = re.sub(r'^inspect_[0-9a-f]{8}_', '', os.path.basename(video_path))
+            else:
+                bundled_video_name = f"{safe_seq_name}{os.path.splitext(video_path)[1] or '.mp4'}"
 
             try:
                 video_info = await asyncio.to_thread(premiere_export.probe_video_info, video_path)
@@ -2652,7 +2667,12 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
             except Exception as e:
                 yield event("error", f"No se pudo armar el XML de Premiere: {e}")
                 return
-            companion_str = premiere_export.build_premiere_companion_text(pe_clips, input_data.sequence_name)
+            video_note = (
+                f"El video NO se incluyó en este ZIP (venía de un archivo subido localmente, ya lo tenés) - "
+                f"al importar el .xml en Premiere, relinkealo contra tu archivo original \"{bundled_video_name}\"."
+                if is_local_upload else None
+            )
+            companion_str = premiere_export.build_premiere_companion_text(pe_clips, input_data.sequence_name, video_note)
 
             yield event("merging", "Empaquetando XML + companion + video fuente en ZIP...", {"pct": 90})
             await asyncio.sleep(0)
@@ -2662,12 +2682,20 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
             with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.writestr(f"{safe_seq_name}.xml", xml_str)
                 zf.writestr(f"{safe_seq_name}_companion.txt", companion_str)
-                # Mismo nombre que quedó embebido en el XML (bundled_video_name)
-                # - así Premiere lo puede relinkear solo si el usuario lo
-                # descomprime todo en la misma carpeta.
-                zf.write(video_path, bundled_video_name)
+                if not is_local_upload:
+                    # Mismo nombre que quedó embebido en el XML (bundled_video_name)
+                    # - así Premiere lo puede relinkear solo si el usuario lo
+                    # descomprime todo en la misma carpeta. Si vino de un
+                    # archivo local, no se bundlea (ver comentario arriba) - el
+                    # usuario ya lo tiene, relinkea a mano contra su original.
+                    zf.write(video_path, bundled_video_name)
 
-            yield event("done", "✓ Proyecto de Premiere listo (XML + companion + video fuente).", {
+            done_message = "✓ Proyecto de Premiere listo (XML + companion)."
+            if is_local_upload:
+                done_message += f" No se incluyó el video en el ZIP (ya lo tenés) - al importar el XML en Premiere, relinkealo contra tu archivo original \"{bundled_video_name}\"."
+            else:
+                done_message += " Incluye el video fuente."
+            yield event("done", done_message, {
                 "download_url": f"/exports/{zip_name}",
                 "filename": zip_name,
                 "clip_count": len(input_data.clips),

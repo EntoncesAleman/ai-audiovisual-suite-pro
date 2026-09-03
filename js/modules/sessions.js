@@ -1,6 +1,6 @@
 import { state } from '../state.js';
 import { getSessions, setSessions, clearUrlDraft } from '../utils/storage.js';
-import { renderClipsList, parseClipsFromTimeline } from './clips.js';
+import { renderClipsList } from './clips.js';
 import { renderReelClipsList, updateVideoPanel } from './reelEditor.js';
 import { generateIAPrompt } from './prompts.js';
 import { toggleEdit } from './timeline.js';
@@ -57,10 +57,14 @@ export function loadSessionData(data) {
     if (state.editing) toggleEdit();
     // Restaurar URL fuente en el panel de clips
     document.getElementById('clipSourceUrl').value = data.source_url || "";
-    // Dejar listo el panel de clips directo (antes esto pasaba solo al
-    // entrar al paso 3; ahora todo está siempre visible en una sola página).
+    // El panel de clips arranca vacío: parseClipsFromTimeline() arma UN CLIP
+    // POR CADA BLOQUE de diálogo de la transcripción (no una selección
+    // curada) - en un video largo con muchos cambios de turno esto podía
+    // volcar cientos de clips sin que la persona pidiera nada. Pedido
+    // explícito: que no se dispare solo, solo a mano con "Extraer
+    // timestamps" o generando con IA.
     state.clipsList = [];
-    parseClipsFromTimeline(true);
+    renderClipsList();
     // Actualizar panel de video para redes
     state.reelClipsList = [];
     renderReelClipsList();

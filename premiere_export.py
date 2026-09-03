@@ -314,7 +314,7 @@ def _pretty_xml(root: ET.Element) -> str:
     return "\n".join(line for line in pretty.split("\n") if line.strip())
 
 
-def build_premiere_companion_text(clips: list[PremiereClip], sequence_name: str = "AVSuite Export") -> str:
+def build_premiere_companion_text(clips: list[PremiereClip], sequence_name: str = "AVSuite Export", video_note: str | None = None) -> str:
     """
     "Prompt companion": texto plano con los cortes y subtitulos de la
     secuencia, para que la persona (o un copiloto de IA dentro de
@@ -322,13 +322,20 @@ def build_premiere_companion_text(clips: list[PremiereClip], sequence_name: str 
     haya traido bien - ver docstring del modulo. Timestamps en MM:SS
     relativos al timeline FINAL (ya con los clips uno atras del otro),
     no al video fuente.
+
+    `video_note`: linea opcional sobre donde esta el video (ej: si no se
+    bundleo en el ZIP porque venia de un archivo subido localmente y el
+    usuario ya lo tiene) - vive acá en vez de solo en el mensaje de "done"
+    de la UI porque este texto viaja CON el ZIP y no desaparece.
     """
     lines = [
         f"Companion de texto para \"{sequence_name}\"",
         "Generado por AI Audiovisual Suite Pro - completar a mano en Premiere",
         "si los subtítulos no entraron bien desde el archivo .xml importado.",
-        "",
     ]
+    if video_note:
+        lines.append(video_note)
+    lines.append("")
     cursor_s = 0.0
     for i, clip in enumerate(clips, 1):
         clip_len = clip.source_end_s - clip.source_start_s

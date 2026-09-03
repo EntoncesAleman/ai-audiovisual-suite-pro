@@ -1,6 +1,7 @@
 import { BACKEND_URL } from '../config.js';
 import { state } from '../state.js';
 import { authHeaders } from '../utils/storage.js';
+import { telemetryLog } from '../utils/dom.js';
 
 /**
  * Resuelve de dónde sale el video fuente para exportar. Orden de prioridad:
@@ -33,11 +34,16 @@ export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
             statusEl.className = "clip-export-status active";
             statusEl.textContent = "⏳ Subiendo archivo local...";
         }
+        telemetryLog('telemetry', `Subiendo archivo local (${file.name})...`, 'uploading');
         const formData = new FormData();
         formData.append("file", file);
         const res = await fetch(`${BACKEND_URL}/inspect-file`, { method: "POST", headers: authHeaders(), body: formData });
-        if (!res.ok) throw new Error("No se pudo subir el archivo (HTTP " + res.status + ")");
+        if (!res.ok) {
+            telemetryLog('telemetry', '❌ Error subiendo el archivo local.', 'error');
+            throw new Error("No se pudo subir el archivo (HTTP " + res.status + ")");
+        }
         const info = await res.json();
+        telemetryLog('telemetry', '✓ Archivo local subido.', 'done');
         return { video_path: info.temp_path };
     }
     return { url };
