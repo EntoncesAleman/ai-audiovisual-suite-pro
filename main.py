@@ -2557,6 +2557,10 @@ class ExportPremiereInput(BaseModel):
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
     clips: list[ClipSpec]
     sequence_name: str = "AVSuite Export"
+    # Los subtítulos van o no van según si el frontend mandó cues en cada
+    # clip (no hace falta un flag acá) - separate_tracks sí necesita
+    # llegar hasta el generador de XML.
+    separate_tracks: bool = False
 
 
 @app.post("/export-premiere-xml", dependencies=[Depends(require_api_key)])
@@ -2663,6 +2667,7 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                 xml_str = await asyncio.to_thread(
                     premiere_export.build_premiere_xml,
                     video_path, pe_clips, input_data.sequence_name, video_info, bundled_video_name,
+                    separate_tracks=input_data.separate_tracks,
                 )
             except Exception as e:
                 yield event("error", f"No se pudo armar el XML de Premiere: {e}")

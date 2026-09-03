@@ -6,11 +6,12 @@ import { loadPromptsLibrary, onPromptTypeChange, generateIAPrompt } from './modu
 import { searchTimeline, toggleEdit, downloadTimeline } from './modules/timeline.js';
 import { openReader, closeReader, renderReader, changeReaderFontSize } from './modules/reader.js';
 import { parseClipsFromTimeline, selectAllClips, addClipManual, startClipExport, toggleClipAiImport, importClipAiTimestamps, generateClipsWithAI, switchClipEditorTab, exportAllClips } from './modules/clips.js';
-import { parseClipsForReel, toggleAiImport, selectAllReelClips, importAiTimestamps, generateReelClipsWithAI, addReelClipManual, startReelExport, exportAllReelClips, startPremiereExport } from './modules/reelEditor.js';
+import { parseClipsForReel, toggleAiImport, selectAllReelClips, importAiTimestamps, generateReelClipsWithAI, addReelClipManual, startReelExport, exportAllReelClips } from './modules/reelEditor.js';
 import { initPlayer, loadLocalSourcePreview } from './modules/player.js';
 import { initSpeechMapSync, renderInteractiveTranscript } from './modules/transcriptPanel.js';
 import { initAuthGuard } from './modules/auth.js';
 import { toggleSubtitleStylePanel, updateSubtitlePreview } from './modules/subtitleStyle.js';
+import { openPremiereOptions, closePremiereOptions, confirmPremiereExport } from './modules/premiereExport.js';
 
 /**
  * Render (plan free) apaga el servidor tras 15 min sin requests entrantes;
@@ -213,7 +214,9 @@ window.addReelClipManual = addReelClipManual;
 window.generateActiveClipsWithAI = generateActiveClipsWithAI;
 window.selectStudioFormat = selectStudioFormat;
 window.startReelExport = startReelExport;
-window.startPremiereExport = startPremiereExport;
+window.openPremiereOptions = openPremiereOptions;
+window.closePremiereOptions = closePremiereOptions;
+window.confirmPremiereExport = confirmPremiereExport;
 window.renderReader = renderReader;
 window.changeReaderFontSize = changeReaderFontSize;
 window.closeReader = closeReader;

@@ -310,7 +310,7 @@
                                 <div class="export-action-row">
                                     <button class="btn-export-selection" onclick="startClipExport()">🎬 Exportar Selección (.mp4)</button>
                                     <button class="btn-export-all" onclick="exportAllClips()">📥 Descargar ZIP (Todos)</button>
-                                    <button class="btn-export-all" id="btnClipExportPremiere" onclick="startClipPremiereExport()" title="Genera un proyecto de Premiere (.xml) con los clips seleccionados armados en un timeline editable + el video fuente, en vez de un .mp4 ya quemado. Beta: todavía sin confirmar en un Premiere real.">🎞 Exportar a Premiere (beta)</button>
+                                    <button class="btn-export-all" id="btnClipExportPremiere" onclick="openPremiereOptions('clips')" title="Genera un proyecto de Premiere (.xml) con los clips seleccionados armados en un timeline editable + el video fuente, en vez de un .mp4 ya quemado. Beta: todavía sin confirmar en un Premiere real.">🎞 Exportar a Premiere (beta)</button>
                                     <a id="clipDownloadBtn" class="btn-clip-download" href="#" download><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> Descargar</a>
                                 </div>
                                 <div style="font-size:11px;color:#64748b;margin-top:-4px;margin-bottom:8px;">
@@ -379,7 +379,7 @@
                                 <div class="export-action-row">
                                     <button class="btn-export-selection" id="btnExportReel" onclick="startReelExport()">🎬 Exportar Selección (.mp4)</button>
                                     <button class="btn-export-all" onclick="exportAllReelClips()">📥 Descargar ZIP (Todos)</button>
-                                    <button class="btn-export-all" id="btnExportPremiere" onclick="startPremiereExport()" title="Genera un proyecto de Premiere (.xml) con los clips armados en un timeline editable + el video fuente, en vez de un .mp4 ya quemado. Beta: todavía sin confirmar en un Premiere real.">🎞 Exportar a Premiere (beta)</button>
+                                    <button class="btn-export-all" id="btnExportPremiere" onclick="openPremiereOptions('reel')" title="Genera un proyecto de Premiere (.xml) con los clips armados en un timeline editable + el video fuente, en vez de un .mp4 ya quemado. Beta: todavía sin confirmar en un Premiere real.">🎞 Exportar a Premiere (beta)</button>
                                     <a id="reelDownloadBtn" class="btn-reel-download" href="#" download><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> Descargar</a>
                                 </div>
                                 <div style="font-size:11px;color:#64748b;margin-top:-4px;margin-bottom:8px;">
@@ -454,6 +454,37 @@
                 </div>
 
     </main>
+
+    <!-- ============================================
+         MODAL: OPCIONES DE EXPORT A PREMIERE
+         Compartido entre el tab de Clip Editor y el de reel/carrusel -
+         ver js/modules/premiereExport.js.
+         ============================================ -->
+    <div class="premiere-options-overlay" id="premiereOptionsOverlay">
+        <div class="premiere-options-modal">
+            <h3 class="premiere-options-title">🎞 Exportar a Premiere</h3>
+            <div class="premiere-options-subtitle" id="premiereOptionsClipCount"></div>
+
+            <label>Nombre de la secuencia</label>
+            <input type="text" id="premiereSeqName" placeholder="AVSuite Export">
+
+            <label class="premiere-options-checkbox-row">
+                <input type="checkbox" id="premiereIncludeSubtitles" checked>
+                Incluir subtítulos (como texto editable, sin confirmar en un Premiere real)
+            </label>
+
+            <label>Organización de los clips</label>
+            <select id="premiereTrackMode">
+                <option value="same">Mismo canal (uno atrás del otro)</option>
+                <option value="separate">Canales separados (un track por clip)</option>
+            </select>
+
+            <div class="premiere-options-footer">
+                <button class="btn-export-all" onclick="closePremiereOptions()">Cancelar</button>
+                <button class="btn-export-selection" onclick="confirmPremiereExport()">Exportar</button>
+            </div>
+        </div>
+    </div>
 
     <!-- ============================================
          OVERLAY: VISTA LECTURA PANTALLA COMPLETA

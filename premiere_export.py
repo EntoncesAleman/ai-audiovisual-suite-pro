@@ -134,6 +134,7 @@ def build_premiere_xml(
     sequence_name: str = "AVSuite Export",
     video_info: dict | None = None,
     source_filename: str | None = None,
+    separate_tracks: bool = False,
 ) -> str:
     """
     Arma un xmeml con una secuencia: los `clips` quedan puestos uno atras
@@ -143,10 +144,19 @@ def build_premiere_xml(
     y uno de audio, ambos apuntando al MISMO <file> (definido una sola
     vez, referenciado por id despues - así lo hace xmeml cuando varios
     clips vienen del mismo material). Los subtitulos de cada clip se
-    agregan como <generatoritem> de texto en una segunda pista de video,
-    con su posicion recalculada a la posicion real dentro del timeline
-    final (las cues vienen relativas al inicio de CADA clip, no del
-    timeline armado).
+    agregan como <generatoritem> de texto en una pista de video aparte
+    (siempre compartida entre todos los clips, independiente de
+    `separate_tracks`), con su posicion recalculada a la posicion real
+    dentro del timeline final (las cues vienen relativas al inicio de
+    CADA clip, no del timeline armado).
+
+    `separate_tracks`: si es False (default), todos los clips van en UNA
+    sola pista de video + UNA de audio, uno atrás del otro ("mismo
+    canal"). Si es True, cada clip recibe su PROPIA pista de video y de
+    audio (N clips = N tracks de cada tipo) - siguen sin superponerse en
+    el tiempo (mismos offsets acumulados que en el modo compartido), pero
+    quedan en tracks separados para poder moverlos/ajustarlos en Premiere
+    sin afectar a los clips vecinos.
 
     `video_path` es la ruta real en el server (se usa solo para leer
     metadata con ffprobe si no viene `video_info`) - NUNCA se escribe tal
@@ -192,11 +202,18 @@ def build_premiere_xml(
     ET.SubElement(char, "anamorphic").text = "FALSE"
     ET.SubElement(char, "fielddominance").text = "none"
 
-    video_track = ET.SubElement(video, "track")
-    text_track = ET.SubElement(video, "track")  # pista separada para los subtitulos
+    text_track = ET.SubElement(video, "track")  # subtítulos: siempre una pista propia y compartida
 
     audio = ET.SubElement(media, "audio")
-    audio_track = ET.SubElement(audio, "track")
+
+    # Modo compartido: una sola pista de video/audio para todos los clips,
+    # creada una vez acá afuera del loop. Modo separado: cada clip crea la
+    # suya propia DENTRO del loop (ver abajo) - acá no se define nada.
+    shared_video_track = None
+    shared_audio_track = None
+    if not separate_tracks:
+        shared_video_track = ET.SubElement(video, "track")
+        shared_audio_track = ET.SubElement(audio, "track")
 
     timeline_frame = 0  # cursor de escritura en el timeline final
 
@@ -207,6 +224,13 @@ def build_premiere_xml(
         start_frame = timeline_frame
         end_frame = timeline_frame + clip_len
         clip_name = clip.label or f"Clip {_seq_id()}"
+
+        if separate_tracks:
+            video_track = ET.SubElement(video, "track")
+            audio_track = ET.SubElement(audio, "track")
+        else:
+            video_track = shared_video_track
+            audio_track = shared_audio_track
 
         # --- clipitem de video ---
         v_item = ET.SubElement(video_track, "clipitem", id=f"clipitem-{_seq_id()}")
@@ -238,14 +262,26 @@ def build_premiere_xml(
             cue_end = max(cue_end, cue_start + 1)
             _add_generator_text(text_track, cue.text, cue_start, cue_end, fps)
 
+        if separate_tracks:
+            # enabled/locked van DESPUES de los clipitems dentro de cada
+            # <track> (schema de xmeml) - en modo separado cada track es
+            # de UN clip nomas, así que se cierra ya mismo, no se puede
+            # esperar a después del loop como en el modo compartido.
+            ET.SubElement(video_track, "enabled").text = "TRUE"
+            ET.SubElement(video_track, "locked").text = "FALSE"
+            ET.SubElement(audio_track, "enabled").text = "TRUE"
+            ET.SubElement(audio_track, "locked").text = "FALSE"
+
         timeline_frame = end_frame
 
-    ET.SubElement(video_track, "enabled").text = "TRUE"
-    ET.SubElement(video_track, "locked").text = "FALSE"
+    if not separate_tracks:
+        ET.SubElement(shared_video_track, "enabled").text = "TRUE"
+        ET.SubElement(shared_video_track, "locked").text = "FALSE"
+        ET.SubElement(shared_audio_track, "enabled").text = "TRUE"
+        ET.SubElement(shared_audio_track, "locked").text = "FALSE"
+
     ET.SubElement(text_track, "enabled").text = "TRUE"
     ET.SubElement(text_track, "locked").text = "FALSE"
-    ET.SubElement(audio_track, "enabled").text = "TRUE"
-    ET.SubElement(audio_track, "locked").text = "FALSE"
 
     return _pretty_xml(xmeml)
 

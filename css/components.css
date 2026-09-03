@@ -74,6 +74,46 @@
 .export-action-row .btn-clip-download, .export-action-row .btn-reel-download { margin: 0; white-space: nowrap; }
 
 /* ============================================
+   MODAL: opciones de export a Premiere - compartido entre
+   Clip Editor y reel/carrusel, ver js/modules/premiereExport.js
+   ============================================ */
+.premiere-options-overlay {
+    display: none; position: fixed; inset: 0; z-index: 9998;
+    align-items: center; justify-content: center; padding: 20px;
+    background: rgba(10,12,16,.72);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.premiere-options-overlay.active { display: flex; }
+.premiere-options-modal {
+    width: 100%; max-width: 400px;
+    background: var(--bg-card); border: var(--border-subtle); border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    padding: 26px 24px;
+}
+.premiere-options-title { margin: 0 0 4px; font-size: 17px; color: var(--text-main); }
+.premiere-options-subtitle { font-size: 12.5px; color: var(--text-muted); margin-bottom: 16px; }
+.premiere-options-modal label {
+    display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--text-muted); margin: 14px 0 6px;
+}
+.premiere-options-modal label:first-of-type { margin-top: 0; }
+.premiere-options-modal input[type="text"], .premiere-options-modal select {
+    background: var(--bg-input); border: var(--border); color: var(--text-main);
+    border-radius: var(--radius); padding: 10px 12px; width: 100%; box-sizing: border-box;
+    font-family: inherit; font-size: 14px; margin: 0;
+}
+.premiere-options-checkbox-row {
+    display: flex !important; align-items: flex-start; gap: 8px;
+    text-transform: none !important; font-weight: 400 !important; letter-spacing: normal !important;
+    font-size: 13px !important; color: var(--text-sub) !important; cursor: pointer;
+}
+.premiere-options-checkbox-row input { margin-top: 2px; }
+.premiere-options-footer {
+    display: flex; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: var(--border-subtle);
+}
+.premiere-options-footer button { flex: 1; margin: 0; }
+
+/* ============================================
    GENERADOR: botón principal "Generar Clips con IA"
    (reemplaza a "Copiar Prompt" como acción central,
    ahora que la IA vive adentro de la app) y la opción
