@@ -2558,9 +2558,19 @@ class ExportPremiereInput(BaseModel):
     clips: list[ClipSpec]
     sequence_name: str = "AVSuite Export"
     # Los subtítulos van o no van según si el frontend mandó cues en cada
-    # clip (no hace falta un flag acá) - separate_tracks sí necesita
-    # llegar hasta el generador de XML.
+    # clip (no hace falta un flag acá). El orden de los clips también lo
+    # decide el frontend antes de mandar la lista (no hay flag de "orden"
+    # acá, el backend siempre respeta el orden que recibe).
     separate_tracks: bool = False
+    handle_seconds: float = 0.0
+    video_track_name: str = ""
+    audio_track_name: str = ""
+    target_width: int = 0   # 0 = heredar del video fuente
+    target_height: int = 0  # 0 = heredar del video fuente
+    multiple_sequences: bool = False
+    organize_in_bin: bool = False
+    include_companion: bool = True
+    include_srt: bool = False
 
 
 @app.post("/export-premiere-xml", dependencies=[Depends(require_api_key)])
@@ -2668,6 +2678,13 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                     premiere_export.build_premiere_xml,
                     video_path, pe_clips, input_data.sequence_name, video_info, bundled_video_name,
                     separate_tracks=input_data.separate_tracks,
+                    handle_s=max(0.0, input_data.handle_seconds),
+                    video_track_name=input_data.video_track_name.strip() or None,
+                    audio_track_name=input_data.audio_track_name.strip() or None,
+                    target_width=input_data.target_width or None,
+                    target_height=input_data.target_height or None,
+                    multiple_sequences=input_data.multiple_sequences,
+                    organize_in_bin=input_data.organize_in_bin,
                 )
             except Exception as e:
                 yield event("error", f"No se pudo armar el XML de Premiere: {e}")
@@ -2677,16 +2694,25 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                 f"al importar el .xml en Premiere, relinkealo contra tu archivo original \"{bundled_video_name}\"."
                 if is_local_upload else None
             )
-            companion_str = premiere_export.build_premiere_companion_text(pe_clips, input_data.sequence_name, video_note)
 
-            yield event("merging", "Empaquetando XML + companion + video fuente en ZIP...", {"pct": 90})
+            yield event("merging", "Empaquetando XML + archivos extra en ZIP...", {"pct": 90})
             await asyncio.sleep(0)
 
             zip_name = f"premiere_{export_id}.zip"
             zip_path = str(EXPORT_DIR / zip_name)
             with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.writestr(f"{safe_seq_name}.xml", xml_str)
-                zf.writestr(f"{safe_seq_name}_companion.txt", companion_str)
+                if input_data.include_companion:
+                    companion_str = premiere_export.build_premiere_companion_text(
+                        pe_clips, input_data.sequence_name, video_note,
+                        handle_s=max(0.0, input_data.handle_seconds), src_duration_s=video_info.get("duration_s"),
+                    )
+                    zf.writestr(f"{safe_seq_name}_companion.txt", companion_str)
+                if input_data.include_srt:
+                    srt_str = premiere_export.build_premiere_srt(
+                        pe_clips, handle_s=max(0.0, input_data.handle_seconds), src_duration_s=video_info.get("duration_s"),
+                    )
+                    zf.writestr(f"{safe_seq_name}.srt", srt_str)
                 if not is_local_upload:
                     # Mismo nombre que quedó embebido en el XML (bundled_video_name)
                     # - así Premiere lo puede relinkear solo si el usuario lo
@@ -2695,7 +2721,12 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                     # usuario ya lo tiene, relinkea a mano contra su original.
                     zf.write(video_path, bundled_video_name)
 
-            done_message = "✓ Proyecto de Premiere listo (XML + companion)."
+            extras = []
+            if input_data.include_companion:
+                extras.append("companion")
+            if input_data.include_srt:
+                extras.append("srt")
+            done_message = "✓ Proyecto de Premiere listo (XML" + (" + " + " + ".join(extras) if extras else "") + ")."
             if is_local_upload:
                 done_message += f" No se incluyó el video en el ZIP (ya lo tenés) - al importar el XML en Premiere, relinkealo contra tu archivo original \"{bundled_video_name}\"."
             else:

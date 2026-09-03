@@ -128,76 +128,80 @@ def _add_rate(parent: ET.Element, fps: float) -> None:
     ET.SubElement(rate, "ntsc").text = "TRUE" if ntsc else "FALSE"
 
 
-def build_premiere_xml(
-    video_path: str,
+def _padded_clip_bounds(clip: PremiereClip, handle_s: float, src_duration_s: float | None) -> tuple[float, float, float]:
+    """
+    Devuelve (padded_start_s, padded_end_s, front_pad_s) para un clip con
+    handle/margen aplicado - agrega `handle_s` segundos de aire antes y
+    después del corte real, tomados del video FUENTE (no inventados), para
+    tener margen de ajuste fino al editar en Premiere. Recortado en los
+    bordes: no resta antes de 0 ni suma más allá de la duración real del
+    video fuente si la conocemos. `front_pad_s` (el margen que
+    efectivamente se pudo aplicar adelante, puede ser menor a `handle_s`
+    si el corte ya estaba pegado al inicio del video) hace falta después
+    para reubicar los subtítulos, que siguen siendo relativos al corte
+    ORIGINAL pedido, no al padding.
+    """
+    if handle_s <= 0:
+        return clip.source_start_s, clip.source_end_s, 0.0
+    front_pad = min(handle_s, clip.source_start_s)
+    back_pad = handle_s
+    if src_duration_s:
+        back_pad = min(handle_s, max(0.0, src_duration_s - clip.source_end_s))
+    return clip.source_start_s - front_pad, clip.source_end_s + back_pad, front_pad
+
+
+def _build_sequence(
+    seq_name: str,
     clips: list[PremiereClip],
-    sequence_name: str = "AVSuite Export",
-    video_info: dict | None = None,
-    source_filename: str | None = None,
-    separate_tracks: bool = False,
-) -> str:
+    info: dict,
+    fps: float,
+    file_id: str,
+    file_name: str,
+    file_defined: list[bool],
+    separate_tracks: bool,
+    handle_s: float,
+    video_track_name: str | None,
+    audio_track_name: str | None,
+    target_width: int | None,
+    target_height: int | None,
+) -> ET.Element:
     """
-    Arma un xmeml con una secuencia: los `clips` quedan puestos uno atras
-    del otro en el timeline (pensado para el flujo de reel/carrusel, que
-    ya arma varios clips en una sola pieza - para un clip suelto es una
-    secuencia de un solo clipitem). Cada clip aporta un clipitem de video
-    y uno de audio, ambos apuntando al MISMO <file> (definido una sola
-    vez, referenciado por id despues - así lo hace xmeml cuando varios
-    clips vienen del mismo material). Los subtitulos de cada clip se
-    agregan como <generatoritem> de texto en una pista de video aparte
-    (siempre compartida entre todos los clips, independiente de
-    `separate_tracks`), con su posicion recalculada a la posicion real
-    dentro del timeline final (las cues vienen relativas al inicio de
-    CADA clip, no del timeline armado).
+    Arma UNA <sequence> completa (video+audio+subtítulos) para los
+    `clips` dados. Factoreado aparte de build_premiere_xml() para poder
+    llamarlo más de una vez cuando `multiple_sequences=True` genera,
+    además de la secuencia "master" con todos los clips, una secuencia
+    extra por cada clip individual - mismo motor, sin duplicar la lógica.
 
-    `separate_tracks`: si es False (default), todos los clips van en UNA
-    sola pista de video + UNA de audio, uno atrás del otro ("mismo
-    canal"). Si es True, cada clip recibe su PROPIA pista de video y de
-    audio (N clips = N tracks de cada tipo) - siguen sin superponerse en
-    el tiempo (mismos offsets acumulados que en el modo compartido), pero
-    quedan en tracks separados para poder moverlos/ajustarlos en Premiere
-    sin afectar a los clips vecinos.
-
-    `video_path` es la ruta real en el server (se usa solo para leer
-    metadata con ffprobe si no viene `video_info`) - NUNCA se escribe tal
-    cual dentro del XML, esa ruta no existe en la máquina del usuario.
-    Lo que sí se escribe es `source_filename` (o el basename de
-    `video_path` si no se pasa uno): tiene que ser EXACTAMENTE el mismo
-    nombre de archivo con el que se empaqueta el video en el ZIP que
-    recibe el usuario, para que Premiere lo pueda relinkear solo si
-    queda al lado del .xml.
+    `file_defined` es una lista de un elemento (`[bool]`) compartida
+    entre TODAS las llamadas a esta función dentro del mismo XML: el
+    <file> completo (name/pathurl/rate/duration/media) solo se escribe
+    una vez en TODO el documento, sin importar cuántas secuencias lo
+    referencien - las demás referencias son solo `<file id=X/>` vacío.
     """
-    if not clips:
-        raise ValueError("Necesito al menos un clip para armar la secuencia.")
+    src_duration_s = info.get("duration_s")
+    padded = [_padded_clip_bounds(c, handle_s, src_duration_s) for c in clips]
 
-    info = video_info or probe_video_info(video_path)
-    fps = info["fps"]
-    width, height = info["width"], info["height"]
-    file_name = source_filename or video_path.rsplit("/", 1)[-1]
-    file_id = f"file-{_seq_id()}"
-    file_defined = False
+    sequence = ET.Element("sequence", id=f"sequence-{_seq_id()}")
+    ET.SubElement(sequence, "name").text = seq_name
 
-    xmeml = ET.Element("xmeml", version="5")
-    sequence = ET.SubElement(xmeml, "sequence", id=f"sequence-{_seq_id()}")
-    ET.SubElement(sequence, "name").text = sequence_name
-
-    total_frames = sum(
-        round((c.source_end_s - c.source_start_s) * fps) for c in clips
-    )
+    total_frames = sum(round((pe - ps) * fps) for ps, pe, _ in padded)
     ET.SubElement(sequence, "duration").text = str(total_frames)
     _add_rate(sequence, fps)
 
     media = ET.SubElement(sequence, "media")
     video = ET.SubElement(media, "video")
 
-    # Formato/resolucion de la secuencia (se toma del video fuente, no
-    # se deja elegir a mano - ver capability matrix del v2: lo
-    # customizable es QUE clips entran, no la estructura del archivo).
+    # Formato/resolucion de la secuencia: por default se toma del video
+    # fuente; si se pide target_width/height (ej. adaptar a 9:16 para
+    # redes) se declara ESE tamaño en la secuencia - el contenido de los
+    # clips no se escala/recorta acá (eso lo hace Premiere al importar,
+    # como con cualquier material que no matchea el tamaño del timeline),
+    # más simple y sin arriesgar transforms de motion mal armados.
     fmt = ET.SubElement(video, "format")
     char = ET.SubElement(fmt, "samplecharacteristics")
     _add_rate(char, fps)
-    ET.SubElement(char, "width").text = str(width)
-    ET.SubElement(char, "height").text = str(height)
+    ET.SubElement(char, "width").text = str(target_width or info["width"])
+    ET.SubElement(char, "height").text = str(target_height or info["height"])
     ET.SubElement(char, "pixelaspectratio").text = "square"
     ET.SubElement(char, "anamorphic").text = "FALSE"
     ET.SubElement(char, "fielddominance").text = "none"
@@ -213,13 +217,17 @@ def build_premiere_xml(
     shared_audio_track = None
     if not separate_tracks:
         shared_video_track = ET.SubElement(video, "track")
+        if video_track_name:
+            ET.SubElement(shared_video_track, "name").text = video_track_name
         shared_audio_track = ET.SubElement(audio, "track")
+        if audio_track_name:
+            ET.SubElement(shared_audio_track, "name").text = audio_track_name
 
     timeline_frame = 0  # cursor de escritura en el timeline final
 
-    for clip in clips:
-        in_frame = round(clip.source_start_s * fps)
-        out_frame = round(clip.source_end_s * fps)
+    for idx, (clip, (padded_start_s, padded_end_s, front_pad_s)) in enumerate(zip(clips, padded), 1):
+        in_frame = round(padded_start_s * fps)
+        out_frame = round(padded_end_s * fps)
         clip_len = max(1, out_frame - in_frame)
         start_frame = timeline_frame
         end_frame = timeline_frame + clip_len
@@ -227,7 +235,11 @@ def build_premiere_xml(
 
         if separate_tracks:
             video_track = ET.SubElement(video, "track")
+            if video_track_name:
+                ET.SubElement(video_track, "name").text = f"{video_track_name} {idx}"
             audio_track = ET.SubElement(audio, "track")
+            if audio_track_name:
+                ET.SubElement(audio_track, "name").text = f"{audio_track_name} {idx}"
         else:
             video_track = shared_video_track
             audio_track = shared_audio_track
@@ -241,8 +253,8 @@ def build_premiere_xml(
         ET.SubElement(v_item, "end").text = str(end_frame)
         ET.SubElement(v_item, "in").text = str(in_frame)
         ET.SubElement(v_item, "out").text = str(out_frame)
-        v_item.append(_file_element(file_id, file_name, info, fps, define_full=not file_defined))
-        file_defined = True
+        v_item.append(_file_element(file_id, file_name, info, fps, define_full=not file_defined[0]))
+        file_defined[0] = True
 
         # --- clipitem de audio (mismo material, mismo in/out/start/end) ---
         a_item = ET.SubElement(audio_track, "clipitem", id=f"clipitem-{_seq_id()}")
@@ -256,9 +268,12 @@ def build_premiere_xml(
         a_item.append(_file_element(file_id, file_name, info, fps, define_full=False))
 
         # --- subtitulos de este clip, reubicados en el timeline final ---
+        # las cues son relativas al corte ORIGINAL pedido (sin padding),
+        # así que hay que sumarles el margen que se agregó adelante
+        # (front_pad_s) para que sigan cayendo sobre el mismo audio real.
         for cue in clip.subtitles:
-            cue_start = start_frame + round(cue.start_s * fps)
-            cue_end = start_frame + round(cue.end_s * fps)
+            cue_start = start_frame + round(front_pad_s * fps) + round(cue.start_s * fps)
+            cue_end = start_frame + round(front_pad_s * fps) + round(cue.end_s * fps)
             cue_end = max(cue_end, cue_start + 1)
             _add_generator_text(text_track, cue.text, cue_start, cue_end, fps)
 
@@ -282,6 +297,108 @@ def build_premiere_xml(
 
     ET.SubElement(text_track, "enabled").text = "TRUE"
     ET.SubElement(text_track, "locked").text = "FALSE"
+
+    return sequence
+
+
+def build_premiere_xml(
+    video_path: str,
+    clips: list[PremiereClip],
+    sequence_name: str = "AVSuite Export",
+    video_info: dict | None = None,
+    source_filename: str | None = None,
+    separate_tracks: bool = False,
+    handle_s: float = 0.0,
+    video_track_name: str | None = None,
+    audio_track_name: str | None = None,
+    target_width: int | None = None,
+    target_height: int | None = None,
+    multiple_sequences: bool = False,
+    organize_in_bin: bool = False,
+) -> str:
+    """
+    Arma un xmeml con una secuencia "master": los `clips` quedan puestos
+    uno atras del otro en el timeline (pensado para el flujo de
+    reel/carrusel, que ya arma varios clips en una sola pieza - para un
+    clip suelto es una secuencia de un solo clipitem). Cada clip aporta
+    un clipitem de video y uno de audio, ambos apuntando al MISMO <file>
+    (definido una sola vez en TODO el documento, referenciado por id
+    despues). Los subtitulos de cada clip se agregan como <generatoritem>
+    de texto en una pista de video aparte.
+
+    Opciones (todas opcionales, default = comportamiento previo):
+    - `separate_tracks`: cada clip en su propia pista de video/audio en
+      vez de todos apilados en una sola ("mismo canal" vs "separados").
+    - `handle_s`: segundos de margen/aire agregados antes y después de
+      cada corte (tomados del video fuente, recortado en los bordes) -
+      ver `_padded_clip_bounds`.
+    - `video_track_name`/`audio_track_name`: nombre custom para las
+      pistas en vez del default de Premiere. SIN CONFIRMAR que Premiere
+      respete `<track><name>` (no está en la documentación que se pudo
+      conseguir) - si no lo hace, el peor caso es que el nombre se
+      ignore, no debería romper el import.
+    - `target_width`/`target_height`: declara la secuencia a este
+      tamaño en vez de heredar el del video fuente (ej. adaptar a 9:16) -
+      el contenido de los clips no se escala acá, Premiere lo maneja al
+      importar como con cualquier material que no matchea el timeline.
+    - `multiple_sequences`: además de la secuencia master (todos los
+      clips juntos), genera una secuencia extra POR CADA clip individual
+      (útil para poder abrir/exportar un clip suelto sin tocar el master).
+    - `organize_in_bin`: envuelve las secuencias en un <bin> con el
+      nombre de la secuencia, para que aparezcan agrupadas en el Project
+      Panel de Premiere en vez de sueltas en la raíz. Estructura
+      confirmada por documentación oficial (`<xmeml><bin><name>...
+      <children><sequence>...`), pero sin probar contra un Premiere real
+      (mismo caveat que el resto del archivo).
+
+    `video_path` es la ruta real en el server (se usa solo para leer
+    metadata con ffprobe si no viene `video_info`) - NUNCA se escribe tal
+    cual dentro del XML, esa ruta no existe en la máquina del usuario.
+    Lo que sí se escribe es `source_filename` (o el basename de
+    `video_path` si no se pasa uno): tiene que ser EXACTAMENTE el mismo
+    nombre de archivo con el que se empaqueta el video en el ZIP que
+    recibe el usuario, para que Premiere lo pueda relinkear solo si
+    queda al lado del .xml.
+    """
+    if not clips:
+        raise ValueError("Necesito al menos un clip para armar la secuencia.")
+
+    info = video_info or probe_video_info(video_path)
+    fps = info["fps"]
+    file_name = source_filename or video_path.rsplit("/", 1)[-1]
+    file_id = f"file-{_seq_id()}"
+    file_defined = [False]  # compartido entre todas las secuencias del documento
+
+    xmeml = ET.Element("xmeml", version="5")
+
+    sequences = [
+        _build_sequence(
+            sequence_name, clips, info, fps, file_id, file_name, file_defined,
+            separate_tracks, handle_s, video_track_name, audio_track_name,
+            target_width, target_height,
+        )
+    ]
+    if multiple_sequences:
+        for i, clip in enumerate(clips, 1):
+            single_name = f"{sequence_name} - {clip.label or f'Clip {i}'}"[:80]
+            sequences.append(
+                _build_sequence(
+                    single_name, [clip], info, fps, file_id, file_name, file_defined,
+                    separate_tracks=False, handle_s=handle_s,
+                    video_track_name=video_track_name, audio_track_name=audio_track_name,
+                    target_width=target_width, target_height=target_height,
+                )
+            )
+
+    if organize_in_bin:
+        bin_el = ET.SubElement(xmeml, "bin")
+        ET.SubElement(bin_el, "name").text = sequence_name
+        children = ET.SubElement(bin_el, "children")
+        for seq in sequences:
+            children.append(seq)
+    else:
+        for seq in sequences:
+            xmeml.append(seq)
 
     return _pretty_xml(xmeml)
 
@@ -350,7 +467,13 @@ def _pretty_xml(root: ET.Element) -> str:
     return "\n".join(line for line in pretty.split("\n") if line.strip())
 
 
-def build_premiere_companion_text(clips: list[PremiereClip], sequence_name: str = "AVSuite Export", video_note: str | None = None) -> str:
+def build_premiere_companion_text(
+    clips: list[PremiereClip],
+    sequence_name: str = "AVSuite Export",
+    video_note: str | None = None,
+    handle_s: float = 0.0,
+    src_duration_s: float | None = None,
+) -> str:
     """
     "Prompt companion": texto plano con los cortes y subtitulos de la
     secuencia, para que la persona (o un copiloto de IA dentro de
@@ -363,6 +486,10 @@ def build_premiere_companion_text(clips: list[PremiereClip], sequence_name: str 
     bundleo en el ZIP porque venia de un archivo subido localmente y el
     usuario ya lo tiene) - vive acá en vez de solo en el mensaje de "done"
     de la UI porque este texto viaja CON el ZIP y no desaparece.
+
+    `handle_s`/`src_duration_s`: mismo padding que build_premiere_xml -
+    si se usó margen/handles, este texto tiene que reflejar los MISMOS
+    tiempos que terminaron en el XML, no los del corte sin padding.
     """
     lines = [
         f"Companion de texto para \"{sequence_name}\"",
@@ -374,7 +501,8 @@ def build_premiere_companion_text(clips: list[PremiereClip], sequence_name: str 
     lines.append("")
     cursor_s = 0.0
     for i, clip in enumerate(clips, 1):
-        clip_len = clip.source_end_s - clip.source_start_s
+        padded_start_s, padded_end_s, front_pad_s = _padded_clip_bounds(clip, handle_s, src_duration_s)
+        clip_len = padded_end_s - padded_start_s
         start_mmss = _seconds_to_mmss(cursor_s)
         end_mmss = _seconds_to_mmss(cursor_s + clip_len)
         label = clip.label or f"Clip {i}"
@@ -382,11 +510,51 @@ def build_premiere_companion_text(clips: list[PremiereClip], sequence_name: str 
         if not clip.subtitles:
             lines.append("  (sin subtítulos)")
         for cue in clip.subtitles:
-            cue_mmss = _seconds_to_mmss(cursor_s + cue.start_s)
+            cue_mmss = _seconds_to_mmss(cursor_s + front_pad_s + cue.start_s)
             lines.append(f"  [{cue_mmss}] {cue.text}")
         lines.append("")
         cursor_s += clip_len
     return "\n".join(lines)
+
+
+def build_premiere_srt(
+    clips: list[PremiereClip],
+    handle_s: float = 0.0,
+    src_duration_s: float | None = None,
+) -> str:
+    """
+    SRT real (no solo texto plano) con los mismos subtítulos y timing que
+    quedó en el <generatoritem> del XML - pensado como backup adjunto en
+    el ZIP para poder importarlo directo como pista de subtítulos en
+    Premiere ("File > Import" de un .srt) si el generatoritem no entra
+    bien. Timestamps en el formato HH:MM:SS,mmm que pide el estándar SRT,
+    relativos al timeline FINAL armado (mismo criterio que el companion).
+    """
+    lines = []
+    cursor_s = 0.0
+    n = 0
+    for clip in clips:
+        padded_start_s, padded_end_s, front_pad_s = _padded_clip_bounds(clip, handle_s, src_duration_s)
+        clip_len = padded_end_s - padded_start_s
+        for cue in clip.subtitles:
+            n += 1
+            cue_start = cursor_s + front_pad_s + cue.start_s
+            cue_end = cursor_s + front_pad_s + cue.end_s
+            lines.append(str(n))
+            lines.append(f"{_seconds_to_srt_ts(cue_start)} --> {_seconds_to_srt_ts(cue_end)}")
+            lines.append(cue.text)
+            lines.append("")
+        cursor_s += clip_len
+    return "\n".join(lines)
+
+
+def _seconds_to_srt_ts(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    total_ms = round(seconds * 1000)
+    hh, rem_ms = divmod(total_ms, 3_600_000)
+    mm, rem_ms = divmod(rem_ms, 60_000)
+    ss, ms = divmod(rem_ms, 1000)
+    return f"{hh:02d}:{mm:02d}:{ss:02d},{ms:03d}"
 
 
 def _seconds_to_mmss(seconds: float) -> str:

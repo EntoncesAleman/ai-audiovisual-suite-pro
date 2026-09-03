@@ -85,29 +85,42 @@
 }
 .premiere-options-overlay.active { display: flex; }
 .premiere-options-modal {
-    width: 100%; max-width: 400px;
+    width: 100%; max-width: 440px; max-height: calc(100vh - 40px); overflow-y: auto;
     background: var(--bg-card); border: var(--border-subtle); border-radius: var(--radius);
     box-shadow: var(--shadow-card);
     padding: 26px 24px;
 }
 .premiere-options-title { margin: 0 0 4px; font-size: 17px; color: var(--text-main); }
 .premiere-options-subtitle { font-size: 12.5px; color: var(--text-muted); margin-bottom: 16px; }
+.premiere-options-section-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--accent-gold); margin: 20px 0 2px; padding-top: 14px; border-top: var(--border-subtle);
+}
+.premiere-options-modal > .premiere-options-section-title:first-of-type { padding-top: 0; border-top: none; margin-top: 0; }
 .premiere-options-modal label {
     display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
     color: var(--text-muted); margin: 14px 0 6px;
 }
 .premiere-options-modal label:first-of-type { margin-top: 0; }
-.premiere-options-modal input[type="text"], .premiere-options-modal select {
+.premiere-options-modal input[type="text"], .premiere-options-modal input[type="number"], .premiere-options-modal select {
     background: var(--bg-input); border: var(--border); color: var(--text-main);
     border-radius: var(--radius); padding: 10px 12px; width: 100%; box-sizing: border-box;
     font-family: inherit; font-size: 14px; margin: 0;
 }
+.premiere-options-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.premiere-options-row-2 label { margin-top: 14px; }
 .premiere-options-checkbox-row {
     display: flex !important; align-items: flex-start; gap: 8px;
     text-transform: none !important; font-weight: 400 !important; letter-spacing: normal !important;
     font-size: 13px !important; color: var(--text-sub) !important; cursor: pointer;
 }
 .premiere-options-checkbox-row input { margin-top: 2px; }
+.premiere-options-advanced { margin-top: 14px; }
+.premiere-options-advanced summary {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--text-muted); cursor: pointer; padding: 4px 0;
+}
+.premiere-options-advanced[open] summary { margin-bottom: 8px; }
 .premiere-options-footer {
     display: flex; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: var(--border-subtle);
 }

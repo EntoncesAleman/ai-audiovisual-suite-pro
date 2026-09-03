@@ -39,6 +39,15 @@ export function openPremiereOptions(source) {
     document.getElementById('premiereSeqName').value = (state.currentData?.title || "AVSuite Export").slice(0, 60);
     document.getElementById('premiereIncludeSubtitles').checked = true;
     document.getElementById('premiereTrackMode').value = "same";
+    document.getElementById('premiereVideoTrackName').value = "";
+    document.getElementById('premiereAudioTrackName').value = "";
+    document.getElementById('premiereOrganizeInBin').checked = false;
+    document.getElementById('premiereHandleSeconds').value = "0";
+    document.getElementById('premiereClipOrder').value = "selection";
+    document.getElementById('premiereAspectRatio').value = "";
+    document.getElementById('premiereIncludeCompanion').checked = true;
+    document.getElementById('premiereIncludeSrt').checked = false;
+    document.getElementById('premiereMultipleSequences').checked = false;
     document.getElementById('premiereOptionsClipCount').textContent =
         `${selected.length} clip${selected.length > 1 ? 's' : ''} seleccionado${selected.length > 1 ? 's' : ''}`;
     document.getElementById('premiereOptionsOverlay').classList.add('active');
@@ -54,16 +63,32 @@ export async function confirmPremiereExport() {
     const ctx = CONTEXTS[source];
     if (!ctx) return;
 
-    const sequenceName = document.getElementById('premiereSeqName').value.trim() || "AVSuite Export";
-    const includeSubtitles = document.getElementById('premiereIncludeSubtitles').checked;
-    const separateTracks = document.getElementById('premiereTrackMode').value === "separate";
+    const [targetWidth, targetHeight] = document.getElementById('premiereAspectRatio').value.split('x');
+    const options = {
+        sequenceName: document.getElementById('premiereSeqName').value.trim() || "AVSuite Export",
+        includeSubtitles: document.getElementById('premiereIncludeSubtitles').checked,
+        separateTracks: document.getElementById('premiereTrackMode').value === "separate",
+        videoTrackName: document.getElementById('premiereVideoTrackName').value.trim(),
+        audioTrackName: document.getElementById('premiereAudioTrackName').value.trim(),
+        organizeInBin: document.getElementById('premiereOrganizeInBin').checked,
+        handleSeconds: parseFloat(document.getElementById('premiereHandleSeconds').value) || 0,
+        clipOrder: document.getElementById('premiereClipOrder').value,
+        targetWidth: targetWidth ? parseInt(targetWidth) : 0,
+        targetHeight: targetHeight ? parseInt(targetHeight) : 0,
+        includeCompanion: document.getElementById('premiereIncludeCompanion').checked,
+        includeSrt: document.getElementById('premiereIncludeSrt').checked,
+        multipleSequences: document.getElementById('premiereMultipleSequences').checked,
+    };
     closePremiereOptions();
-    await runPremiereExport(ctx, sequenceName, includeSubtitles, separateTracks);
+    await runPremiereExport(ctx, options);
 }
 
-async function runPremiereExport(ctx, sequenceName, includeSubtitles, separateTracks) {
-    const selected = state[ctx.listKey].filter(c => c.selected);
+async function runPremiereExport(ctx, options) {
+    let selected = state[ctx.listKey].filter(c => c.selected);
     if (selected.length === 0) { alert("Seleccioná al menos un clip para exportar."); return; }
+    if (options.clipOrder === "timestamp") {
+        selected = [...selected].sort((a, b) => tsToSeconds(a.start) - tsToSeconds(b.start));
+    }
 
     const statusEl = document.getElementById(ctx.statusElId);
     const downloadBtn = document.getElementById(ctx.downloadBtnId);
@@ -83,11 +108,11 @@ async function runPremiereExport(ctx, sequenceName, includeSubtitles, separateTr
     downloadBtn.className = ctx.downloadBtnClass;
     resetExportProgress(ctx.progressPrefix);
     setExportProgress(ctx.progressPrefix, 2);
-    telemetryLog('telemetry', `Iniciando export a Premiere (XML) - ${separateTracks ? 'canales separados' : 'mismo canal'}, subtítulos ${includeSubtitles ? 'sí' : 'no'}...`, 'uploading');
+    telemetryLog('telemetry', `Iniciando export a Premiere (XML) - ${options.separateTracks ? 'canales separados' : 'mismo canal'}, subtítulos ${options.includeSubtitles ? 'sí' : 'no'}...`, 'uploading');
 
     const clips = selected.map(c => ({
         start: c.start, end: c.end, label: c.label,
-        subtitles: includeSubtitles
+        subtitles: options.includeSubtitles
             ? buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline)
             : [],
     }));
@@ -107,7 +132,20 @@ async function runPremiereExport(ctx, sequenceName, includeSubtitles, separateTr
         const res = await fetch(`${BACKEND_URL}/export-premiere-xml`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...source, clips, sequence_name: sequenceName, separate_tracks: separateTracks }),
+            body: JSON.stringify({
+                ...source, clips,
+                sequence_name: options.sequenceName,
+                separate_tracks: options.separateTracks,
+                video_track_name: options.videoTrackName,
+                audio_track_name: options.audioTrackName,
+                organize_in_bin: options.organizeInBin,
+                handle_seconds: options.handleSeconds,
+                target_width: options.targetWidth,
+                target_height: options.targetHeight,
+                include_companion: options.includeCompanion,
+                include_srt: options.includeSrt,
+                multiple_sequences: options.multipleSequences,
+            }),
             signal: controller.signal
         });
         if (!res.ok || !res.body) throw new Error("Sin respuesta del servidor.");

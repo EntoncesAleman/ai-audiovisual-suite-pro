@@ -465,6 +465,7 @@
             <h3 class="premiere-options-title">🎞 Exportar a Premiere</h3>
             <div class="premiere-options-subtitle" id="premiereOptionsClipCount"></div>
 
+            <div class="premiere-options-section-title">Básico</div>
             <label>Nombre de la secuencia</label>
             <input type="text" id="premiereSeqName" placeholder="AVSuite Export">
 
@@ -473,11 +474,71 @@
                 Incluir subtítulos (como texto editable, sin confirmar en un Premiere real)
             </label>
 
+            <div class="premiere-options-section-title">Pistas</div>
             <label>Organización de los clips</label>
             <select id="premiereTrackMode">
                 <option value="same">Mismo canal (uno atrás del otro)</option>
                 <option value="separate">Canales separados (un track por clip)</option>
             </select>
+
+            <div class="premiere-options-row-2">
+                <div>
+                    <label>Nombre pista de video</label>
+                    <input type="text" id="premiereVideoTrackName" placeholder="(default de Premiere)">
+                </div>
+                <div>
+                    <label>Nombre pista de audio</label>
+                    <input type="text" id="premiereAudioTrackName" placeholder="(default de Premiere)">
+                </div>
+            </div>
+
+            <label class="premiere-options-checkbox-row">
+                <input type="checkbox" id="premiereOrganizeInBin">
+                Agrupar en una carpeta (bin) dentro del proyecto de Premiere
+            </label>
+
+            <div class="premiere-options-section-title">Timing y orden</div>
+            <div class="premiere-options-row-2">
+                <div>
+                    <label>Margen extra por corte (seg)</label>
+                    <input type="number" id="premiereHandleSeconds" value="0" min="0" max="5" step="0.5">
+                </div>
+                <div>
+                    <label>Orden de los clips</label>
+                    <select id="premiereClipOrder">
+                        <option value="selection">Orden de selección</option>
+                        <option value="timestamp">Por timestamp</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="premiere-options-section-title">Formato de salida</div>
+            <label>Aspect ratio de la secuencia</label>
+            <select id="premiereAspectRatio">
+                <option value="">Original (del video fuente)</option>
+                <option value="1080x1920">9:16 vertical (1080×1920)</option>
+                <option value="1080x1080">1:1 cuadrado (1080×1080)</option>
+                <option value="1080x1350">4:5 (1080×1350)</option>
+                <option value="1280x720">16:9 horizontal (1280×720)</option>
+            </select>
+
+            <div class="premiere-options-section-title">Archivos extra</div>
+            <label class="premiere-options-checkbox-row">
+                <input type="checkbox" id="premiereIncludeCompanion" checked>
+                Incluir companion.txt (apoyo para completar subtítulos a mano)
+            </label>
+            <label class="premiere-options-checkbox-row">
+                <input type="checkbox" id="premiereIncludeSrt">
+                Adjuntar un .srt real de los subtítulos (además del texto plano)
+            </label>
+
+            <details class="premiere-options-advanced">
+                <summary>Avanzado</summary>
+                <label class="premiere-options-checkbox-row">
+                    <input type="checkbox" id="premiereMultipleSequences">
+                    Generar también una secuencia aparte por cada clip (además de la secuencia con todos juntos)
+                </label>
+            </details>
 
             <div class="premiere-options-footer">
                 <button class="btn-export-all" onclick="closePremiereOptions()">Cancelar</button>
