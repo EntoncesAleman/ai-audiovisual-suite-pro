@@ -2328,6 +2328,10 @@ class ClipSpec(BaseModel):
     end: str
     label: str = ""
     subtitles: list[SubtitleCue] = []
+    # Transición hacia el PRÓXIMO clip de la secuencia, solo usada por
+    # /export-premiere-xml (el resto de los endpoints que comparten este
+    # modelo la ignoran). "none"/vacío = corte seco. Ver premiere_export.py.
+    transition_out: str = "none"
 
 
 class ExportClipsInput(BaseModel):
@@ -2655,6 +2659,7 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                         premiere_export.PremiereSubtitleCue(cue.start, cue.end, cue.text)
                         for cue in c.subtitles
                     ],
+                    transition_out=c.transition_out or "none",
                 )
                 for c in input_data.clips
             ]

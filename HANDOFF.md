@@ -417,6 +417,21 @@ Tomás pidió explícitamente separar "Exportar a Premiere" del panel de Clips I
 - `js/modules/clips.js` y `js/modules/reelEditor.js`: cada `clip-card` ahora tiene un punto de color clickeable (`clip-card-color-dot`) que cicla por una paleta de 6 colores (`cycleClipColor`/`cycleReelClipColor`) + "sin color"; el color elegido se guarda en `clip.color` (solo estado de UI, no viaja a ningún export) y se pinta como borde izquierdo de la card completa.
 - `css/studio.css`: `.clip-card` con `border-left: 4px solid var(--border-color)` (color dinámico vía `style` inline) + estilos de `.clip-card-color-dot`.
 
+### 22. Transiciones por-clip en el export a Premiere (dissolve/fundido a negro/wipe)
+
+Después del punto 21, Tomás pidió armar también las transiciones, aceptando que es por-par (no un control global) y que un editor de timeline completo es mucho laburo - se implementó la versión mínima real: un selector de transición en cada clip-card ("🎬→", define la transición hacia el PRÓXIMO clip seleccionado), sin editor visual de timeline.
+
+- `js/modules/clips.js` y `js/modules/reelEditor.js`: nuevo `<select class="clip-card-transition">` por card con 4 opciones (Corte seco / Disolvencia cruzada / Fundido a negro / Wipe), guardado en `clip.transitionOut` (solo estado de UI, viaja al export). `css/studio.css`: estilos de la fila.
+- `js/modules/premiereExport.js`: el payload a `/export-premiere-xml` ahora manda `transition_out: c.transitionOut || "none"` por clip.
+- `main.py`: `ClipSpec` tiene el nuevo campo `transition_out: str = "none"` (compartido con `/export-clips`/`/export-reel`, que simplemente lo ignoran - no rompe nada ahí). Se pasa a `premiere_export.PremiereClip`.
+- `premiere_export.py` — la parte con más trabajo real:
+  - `PremiereClip.transition_out` (default `"none"`), `_TRANSITION_EFFECTS` (dissolve→"Cross Dissolve", dip_black→"Fade In Fade Out Dissolve", wipe→"Standard Wipe"; nombres estándar de FCP7, MISMO caveat del resto del archivo: sin confirmar contra un Premiere real), duración fija de 1s (`_TRANSITION_DURATION_S`, no expuesta como control aparte).
+  - Mecanismo: el clip SALIENTE extiende su out-point con frames extra de source (mismo mecanismo que `handle_s`, clampeado a lo que hay disponible en el video fuente y a no comerse más que el largo del próximo clip), y se inserta un `<transitionitem>` real (video Y audio - "Cross Fade (0dB)" en audio siempre que hay transición de video) entre los dos `<clipitem>` del mismo `<track>`. El próximo clip NO se mueve ni se extiende - arranca en la MISMA posición de siempre.
+  - Resultado interesante verificado matemáticamente y con datos reales: la extensión del saliente se cancela exactamente con el hecho de que el próximo clip no se corre, así que la duración total de la secuencia **no cambia** por tener transiciones (se simplificó `total_frames` a una suma directa por esto).
+  - **Solo aplica con `separate_tracks=False`** ("mismo canal") - en "canales separados" cada clip vive en su propio track y un `<transitionitem>` entre tracks distintos no es representable en xmeml; se ignora silenciosamente (no rompe nada, simplemente no hay transición). Nota agregada en la UI (`index.html`, debajo del selector de "Organización de los clips") aclarando esto.
+- **Probado con datos reales** (ffmpeg testsrc de 30s, 3 clips de 5s con dissolve/wipe/none): parseado el XML resultante con `xml.etree.ElementTree` y verificado a mano que los `<clipitem>`/`<transitionitem>` quedan en las posiciones de frame correctas (overlap de 24 frames = 1s a 24fps, out extendido de 120→144 frames tomando footage real de la fuente, duración total de la secuencia sin cambios = 360 frames = 15s). Probado también que `separate_tracks=True` con transiciones pedidas no inserta ningún `<transitionitem>` y el XML sigue siendo válido.
+- **Sin confirmar todavía contra un Premiere real** (mismo caveat de siempre en este archivo) - especialmente si Premiere acepta `<transitionitem>` con overlap de `<clipitem>` armado a mano así, y si los nombres de effectid usados existen tal cual en una instalación real.
+
 ## Open decisions / pendientes explícitos
 
 - **Pushear `d19df71` a GitHub** (nunca se pudo desde esta Mac, faltan credenciales en el entorno) y commitear los 2 archivos sueltos que quedaron sin commitear (`HANDOFF.md`, `capcut_export.py`) — ver "📍 ESTADO ACTUAL" arriba.

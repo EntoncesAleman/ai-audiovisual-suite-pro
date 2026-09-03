@@ -115,6 +115,31 @@ class PremiereClip:
     source_end_s: float    # out-point dentro del video fuente
     label: str = ""
     subtitles: list[PremiereSubtitleCue] = field(default_factory=list)
+    # Transición HACIA el próximo clip de la secuencia (por-par, no global -
+    # ver _TRANSITION_EFFECTS). "none"/vacío/desconocido = corte seco, sin
+    # <transitionitem>. Solo tiene efecto si el clip tiene un siguiente y la
+    # secuencia usa track compartido (separate_tracks=False) - un
+    # <transitionitem> vive entre dos <clipitem> del MISMO <track>.
+    transition_out: str = "none"
+
+
+# Duración fija del crossfade - no se expone como opción por clip para no
+# sumar otro control más; si hace falta ajustarla en Premiere después, es
+# un handle que se arrastra en el timeline como cualquier transición.
+_TRANSITION_DURATION_S = 1.0
+
+# effectid/name tomados de nombres estándar de FCP7 (documentación/fuentes
+# públicas, no de un XML real exportado por Premiere) - mismo caveat que
+# el resto del archivo: sin confirmar contra un Premiere real todavía.
+_TRANSITION_EFFECTS = {
+    "dissolve": ("Cross Dissolve", "Dissolve"),
+    "dip_black": ("Fade In Fade Out Dissolve", "Dissolve"),
+    "wipe": ("Standard Wipe", "Wipe"),
+}
+
+
+def _transition_duration_frames(fps: float) -> int:
+    return max(2, round(_TRANSITION_DURATION_S * fps))
 
 
 def _seq_id() -> str:
@@ -180,11 +205,18 @@ def _build_sequence(
     """
     src_duration_s = info.get("duration_s")
     padded = [_padded_clip_bounds(c, handle_s, src_duration_s) for c in clips]
+    clip_frames = [(round(ps * fps), round(pe * fps)) for ps, pe, _ in padded]
+    clip_lens = [max(1, of - inf) for inf, of in clip_frames]
+    src_total_frames = round(src_duration_s * fps) if src_duration_s else None
 
     sequence = ET.Element("sequence", id=f"sequence-{_seq_id()}")
     ET.SubElement(sequence, "name").text = seq_name
 
-    total_frames = sum(round((pe - ps) * fps) for ps, pe, _ in padded)
+    # Ojo: las transiciones NO cambian la duración total (extienden el
+    # saliente hacia adelante pero el próximo clip arranca en la misma
+    # posición de siempre - ver el loop de abajo), así que esta suma sigue
+    # siendo correcta aunque haya transiciones.
+    total_frames = sum(clip_lens)
     ET.SubElement(sequence, "duration").text = str(total_frames)
     _add_rate(sequence, fps)
 
@@ -225,47 +257,73 @@ def _build_sequence(
 
     timeline_frame = 0  # cursor de escritura en el timeline final
 
-    for idx, (clip, (padded_start_s, padded_end_s, front_pad_s)) in enumerate(zip(clips, padded), 1):
-        in_frame = round(padded_start_s * fps)
-        out_frame = round(padded_end_s * fps)
-        clip_len = max(1, out_frame - in_frame)
+    for idx, clip in enumerate(clips):
+        in_frame, out_frame = clip_frames[idx]
+        front_pad_s = padded[idx][2]
+        clip_len = clip_lens[idx]
         start_frame = timeline_frame
-        end_frame = timeline_frame + clip_len
+        end_frame = start_frame + clip_len
         clip_name = clip.label or f"Clip {_seq_id()}"
+
+        # Transición HACIA el próximo clip: extiende el out-point de ESTE
+        # clip con frames extra de source (mismo mecanismo que el handle),
+        # clampeado a lo que realmente hay disponible - no del próximo
+        # clip, que queda con su in/out sin tocar y arranca en la MISMA
+        # posición de siempre (por eso el cursor de abajo sigue avanzando
+        # por `clip_len` sin extender, ver comentario en total_frames).
+        transition_type = (clip.transition_out or "none").strip()
+        overlap_frames = 0
+        has_next = idx + 1 < len(clips)
+        if has_next and not separate_tracks and transition_type in _TRANSITION_EFFECTS:
+            want = _transition_duration_frames(fps)
+            avail_extend = max(0, src_total_frames - out_frame) if src_total_frames is not None else want
+            avail_next = max(0, clip_lens[idx + 1] - 1)
+            overlap_frames = max(0, min(want, avail_extend, avail_next))
+        ext_out_frame = out_frame + overlap_frames
+        ext_end_frame = end_frame + overlap_frames
 
         if separate_tracks:
             video_track = ET.SubElement(video, "track")
             if video_track_name:
-                ET.SubElement(video_track, "name").text = f"{video_track_name} {idx}"
+                ET.SubElement(video_track, "name").text = f"{video_track_name} {idx + 1}"
             audio_track = ET.SubElement(audio, "track")
             if audio_track_name:
-                ET.SubElement(audio_track, "name").text = f"{audio_track_name} {idx}"
+                ET.SubElement(audio_track, "name").text = f"{audio_track_name} {idx + 1}"
         else:
             video_track = shared_video_track
             audio_track = shared_audio_track
 
-        # --- clipitem de video ---
+        # --- clipitem de video (out/end extendidos si hay transición saliente) ---
         v_item = ET.SubElement(video_track, "clipitem", id=f"clipitem-{_seq_id()}")
         ET.SubElement(v_item, "name").text = clip_name
-        ET.SubElement(v_item, "duration").text = str(clip_len)
+        ET.SubElement(v_item, "duration").text = str(ext_end_frame - start_frame)
         _add_rate(v_item, fps)
         ET.SubElement(v_item, "start").text = str(start_frame)
-        ET.SubElement(v_item, "end").text = str(end_frame)
+        ET.SubElement(v_item, "end").text = str(ext_end_frame)
         ET.SubElement(v_item, "in").text = str(in_frame)
-        ET.SubElement(v_item, "out").text = str(out_frame)
+        ET.SubElement(v_item, "out").text = str(ext_out_frame)
         v_item.append(_file_element(file_id, file_name, info, fps, define_full=not file_defined[0]))
         file_defined[0] = True
 
         # --- clipitem de audio (mismo material, mismo in/out/start/end) ---
         a_item = ET.SubElement(audio_track, "clipitem", id=f"clipitem-{_seq_id()}")
         ET.SubElement(a_item, "name").text = clip_name
-        ET.SubElement(a_item, "duration").text = str(clip_len)
+        ET.SubElement(a_item, "duration").text = str(ext_end_frame - start_frame)
         _add_rate(a_item, fps)
         ET.SubElement(a_item, "start").text = str(start_frame)
-        ET.SubElement(a_item, "end").text = str(end_frame)
+        ET.SubElement(a_item, "end").text = str(ext_end_frame)
         ET.SubElement(a_item, "in").text = str(in_frame)
-        ET.SubElement(a_item, "out").text = str(out_frame)
+        ET.SubElement(a_item, "out").text = str(ext_out_frame)
         a_item.append(_file_element(file_id, file_name, info, fps, define_full=False))
+
+        # --- transitionitem hacia el próximo clip, si corresponde - tiene
+        # que quedar en el XML ENTRE el clipitem de este clip y el del
+        # próximo (orden de hijos dentro del <track>), por eso se agrega
+        # acá y no en un paso aparte al final del loop ---
+        if overlap_frames > 0:
+            eff_name, eff_category = _TRANSITION_EFFECTS[transition_type]
+            _add_transitionitem(video_track, eff_name, eff_category, end_frame, ext_end_frame, fps, "video")
+            _add_transitionitem(audio_track, "Cross Fade (0dB)", "Crossfade", end_frame, ext_end_frame, fps, "audio")
 
         # --- subtitulos de este clip, reubicados en el timeline final ---
         # las cues son relativas al corte ORIGINAL pedido (sin padding),
@@ -325,6 +383,12 @@ def build_premiere_xml(
     (definido una sola vez en TODO el documento, referenciado por id
     despues). Los subtitulos de cada clip se agregan como <generatoritem>
     de texto en una pista de video aparte.
+
+    Las transiciones son PER-CLIP (`clip.transition_out`, ver PremiereClip),
+    no una opcion de esta funcion: cada clip declara la transicion hacia el
+    SIGUIENTE, y solo se aplica si hay un clip siguiente y `separate_tracks`
+    es False (un <transitionitem> vive entre dos <clipitem> del mismo
+    <track> - en modo "canales separados" no hay forma de representarla).
 
     Opciones (todas opcionales, default = comportamiento previo):
     - `separate_tracks`: cada clip en su propia pista de video/audio en
@@ -458,6 +522,33 @@ def _add_generator_text(track: ET.Element, text: str, start_frame: int, end_fram
     param = ET.SubElement(effect, "parameter")
     ET.SubElement(param, "name").text = "Text"
     ET.SubElement(param, "value").text = text
+
+
+def _add_transitionitem(
+    track: ET.Element, effect_name: str, effect_category: str,
+    start_frame: int, end_frame: int, fps: float, mediatype: str,
+) -> None:
+    """
+    <transitionitem>: dissolve/fundido/wipe entre dos <clipitem> CONSECUTIVOS
+    del mismo <track> (por eso solo se arma en modo "mismo canal" - en
+    "canales separados" cada clip vive en su propio track y un
+    transitionitem entre tracks distintos no es representable acá). El
+    clip saliente ya viene con su out-point extendido para que exista
+    material real de source en la zona de overlap (ver el loop en
+    _build_sequence) - esto solo escribe el elemento que le dice a Premiere
+    "acá hay una transición", no mueve nada más.
+    """
+    t = ET.SubElement(track, "transitionitem", id=f"transition-{_seq_id()}")
+    ET.SubElement(t, "start").text = str(start_frame)
+    ET.SubElement(t, "end").text = str(end_frame)
+    ET.SubElement(t, "alignment").text = "center"
+    _add_rate(t, fps)
+    effect = ET.SubElement(t, "effect")
+    ET.SubElement(effect, "name").text = effect_name
+    ET.SubElement(effect, "effectid").text = effect_name
+    ET.SubElement(effect, "effectcategory").text = effect_category
+    ET.SubElement(effect, "effecttype").text = "transition"
+    ET.SubElement(effect, "mediatype").text = mediatype
 
 
 def _pretty_xml(root: ET.Element) -> str:

@@ -81,6 +81,7 @@ async function runPremiereExport(ctx, options) {
         subtitles: options.includeSubtitles
             ? buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline)
             : [],
+        transition_out: c.transitionOut || "none",
     }));
 
     // Watchdog: si no llega ningún byte en STREAM_STALL_MS, algo se colgó

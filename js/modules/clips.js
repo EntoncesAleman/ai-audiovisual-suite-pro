@@ -77,6 +77,15 @@ export function renderClipsList() {
                     <span>→</span>
                     <input type="text" value="${escapeHtml(clip.end)}" onchange="updateClip(${i}, 'end', this.value)" title="Fin (Out)">
                 </div>
+                <div class="clip-card-transition" title="Transición hacia el próximo clip seleccionado (solo aplica al exportar a Premiere, con pistas en 'mismo canal')">
+                    <span>🎬→</span>
+                    <select onchange="updateClip(${i}, 'transitionOut', this.value)">
+                        <option value="none" ${!clip.transitionOut || clip.transitionOut === 'none' ? 'selected' : ''}>Corte seco</option>
+                        <option value="dissolve" ${clip.transitionOut === 'dissolve' ? 'selected' : ''}>Disolvencia cruzada</option>
+                        <option value="dip_black" ${clip.transitionOut === 'dip_black' ? 'selected' : ''}>Fundido a negro</option>
+                        <option value="wipe" ${clip.transitionOut === 'wipe' ? 'selected' : ''}>Wipe</option>
+                    </select>
+                </div>
                 <span id="capcutStatus_${i}" style="font-size:10px;color:#94a3b8;display:block;margin-top:2px;"></span>
             </div>
         </div>
