@@ -59,13 +59,14 @@ export function renderClipsList() {
     }
 
     grid.innerHTML = state.clipsList.map((clip, i) => `
-        <div class="clip-card">
+        <div class="clip-card" style="border-left-color:${clip.color || 'var(--border-color)'};">
             <div class="clip-card-thumb">
                 <button class="clip-card-play" onclick="playClip(${i})" title="Reproducir desde acá"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
             </div>
             <div class="clip-card-body">
                 <div class="clip-card-top">
                     <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleClipSelection(${i}, this.checked)" title="Incluir en la exportación">
+                    <button class="clip-card-color-dot" style="background:${clip.color || 'transparent'};" onclick="cycleClipColor(${i})" title="Asignar color (para organizar)"></button>
                     <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateClip(${i}, 'label', this.value)" placeholder="Descripción del clip">
                     <button class="clip-card-star ${clip.favorite ? 'active' : ''}" onclick="toggleClipFavorite(${i})" title="Marcar como favorito">★</button>
                     <button class="btn-clip-remove" onclick="sendClipToCapCut(${i})" title="Enviar a CapCut (beta, requiere server local con CapCut instalado)" style="font-size:11px;width:auto;padding:0 6px;">🎞</button>
@@ -84,6 +85,19 @@ export function renderClipsList() {
 
 export function toggleClipFavorite(i) {
     state.clipsList[i].favorite = !state.clipsList[i].favorite;
+    renderClipsList();
+}
+
+/**
+ * Color-coding puramente visual para organizar clips a mano (no viaja a
+ * ningún export) - un clic pasa al siguiente color de la paleta, ciclando
+ * de vuelta a "sin color" al llegar al final.
+ */
+const CLIP_COLOR_PALETTE = ["#D97706", "#3B82F6", "#10B981", "#06B6D4", "#8B5CF6", "#F43F5E"];
+export function cycleClipColor(i) {
+    const current = state.clipsList[i].color;
+    const idx = CLIP_COLOR_PALETTE.indexOf(current);
+    state.clipsList[i].color = idx === -1 ? CLIP_COLOR_PALETTE[0] : (CLIP_COLOR_PALETTE[idx + 1] || null);
     renderClipsList();
 }
 
@@ -426,5 +440,6 @@ window.toggleClipSelection = toggleClipSelection;
 window.updateClip = updateClip;
 window.removeClip = removeClip;
 window.toggleClipFavorite = toggleClipFavorite;
+window.cycleClipColor = cycleClipColor;
 window.playClip = playClip;
 window.sendClipToCapCut = sendClipToCapCut;

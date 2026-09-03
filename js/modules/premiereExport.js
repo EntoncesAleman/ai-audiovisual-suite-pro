@@ -6,61 +6,28 @@ import { resolveExportSource } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 
 /**
- * Modal de opciones compartido entre las dos pestañas que exportan a
- * Premiere (Clip Editor y Editor de Video para Redes) - antes cada una
- * tenía su propia función que exportaba directo con lo que ya estuviera
- * tildado en el panel de subtítulos compartido; ahora el usuario elige
- * acá mismo, en el momento del export, sin tocar nada de otro lado.
+ * Card standalone de "Exportar a Premiere" (debajo de "Metraje Escaneado
+ * con Éxito"), separada de Clips Inteligentes - la fuente de clips (Clip
+ * Editor o Editor de Video para Redes) se elige acá mismo con un selector,
+ * en vez de tener un botón de export por pestaña.
  */
-const CONTEXTS = {
-    clips: {
-        listKey: 'clipsList',
-        urlInputId: 'clipSourceUrl', fileInputId: 'clipSourceFile',
-        statusElId: 'clipExportStatus', downloadBtnId: 'clipDownloadBtn',
-        progressPrefix: 'clipExport', downloadBtnClass: 'btn-clip-download',
-    },
-    reel: {
-        listKey: 'reelClipsList',
-        urlInputId: 'reelSourceUrl', fileInputId: 'reelSourceFile',
-        statusElId: 'reelExportStatus', downloadBtnId: 'reelDownloadBtn',
-        progressPrefix: 'reelExport', downloadBtnClass: 'btn-reel-download',
-    },
+const CLIP_SOURCES = {
+    clips: { listKey: 'clipsList', urlInputId: 'clipSourceUrl', fileInputId: 'clipSourceFile' },
+    reel: { listKey: 'reelClipsList', urlInputId: 'reelSourceUrl', fileInputId: 'reelSourceFile' },
 };
 
-let _pendingSource = null;
-
-export function openPremiereOptions(source) {
-    const ctx = CONTEXTS[source];
-    if (!ctx) return;
-    const selected = state[ctx.listKey].filter(c => c.selected);
-    if (selected.length === 0) { alert("Seleccioná al menos un clip para exportar."); return; }
-
-    _pendingSource = source;
-    document.getElementById('premiereSeqName').value = (state.currentData?.title || "AVSuite Export").slice(0, 60);
-    document.getElementById('premiereIncludeSubtitles').checked = true;
-    document.getElementById('premiereTrackMode').value = "same";
-    document.getElementById('premiereVideoTrackName').value = "";
-    document.getElementById('premiereAudioTrackName').value = "";
-    document.getElementById('premiereOrganizeInBin').checked = false;
-    document.getElementById('premiereHandleSeconds').value = "0";
-    document.getElementById('premiereClipOrder').value = "selection";
-    document.getElementById('premiereAspectRatio').value = "";
-    document.getElementById('premiereIncludeCompanion').checked = true;
-    document.getElementById('premiereIncludeSrt').checked = false;
-    document.getElementById('premiereMultipleSequences').checked = false;
-    document.getElementById('premiereOptionsClipCount').textContent =
-        `${selected.length} clip${selected.length > 1 ? 's' : ''} seleccionado${selected.length > 1 ? 's' : ''}`;
-    document.getElementById('premiereOptionsOverlay').classList.add('active');
+export function updatePremiereClipCount() {
+    const source = document.getElementById('premiereClipSource').value;
+    const ctx = CLIP_SOURCES[source];
+    const countEl = document.getElementById('premiereOptionsClipCount');
+    if (!ctx || !countEl) return;
+    const selected = state[ctx.listKey].filter(c => c.selected).length;
+    countEl.textContent = `${selected} clip${selected !== 1 ? 's' : ''} seleccionado${selected !== 1 ? 's' : ''}`;
 }
 
-export function closePremiereOptions() {
-    document.getElementById('premiereOptionsOverlay').classList.remove('active');
-    _pendingSource = null;
-}
-
-export async function confirmPremiereExport() {
-    const source = _pendingSource;
-    const ctx = CONTEXTS[source];
+export async function startPremiereExport() {
+    const source = document.getElementById('premiereClipSource').value;
+    const ctx = CLIP_SOURCES[source];
     if (!ctx) return;
 
     const [targetWidth, targetHeight] = document.getElementById('premiereAspectRatio').value.split('x');
@@ -79,19 +46,18 @@ export async function confirmPremiereExport() {
         includeSrt: document.getElementById('premiereIncludeSrt').checked,
         multipleSequences: document.getElementById('premiereMultipleSequences').checked,
     };
-    closePremiereOptions();
     await runPremiereExport(ctx, options);
 }
 
 async function runPremiereExport(ctx, options) {
     let selected = state[ctx.listKey].filter(c => c.selected);
-    if (selected.length === 0) { alert("Seleccioná al menos un clip para exportar."); return; }
+    if (selected.length === 0) { alert("Seleccioná al menos un clip para exportar (en Clip Editor o Editor de Video para Redes, según lo que hayas elegido arriba)."); return; }
     if (options.clipOrder === "timestamp") {
         selected = [...selected].sort((a, b) => tsToSeconds(a.start) - tsToSeconds(b.start));
     }
 
-    const statusEl = document.getElementById(ctx.statusElId);
-    const downloadBtn = document.getElementById(ctx.downloadBtnId);
+    const statusEl = document.getElementById('premiereExportStatus');
+    const downloadBtn = document.getElementById('premiereDownloadBtn');
 
     let source;
     try {
@@ -105,9 +71,9 @@ async function runPremiereExport(ctx, options) {
 
     statusEl.className = "clip-export-status active";
     statusEl.textContent = "⏳ Armando proyecto de Premiere...";
-    downloadBtn.className = ctx.downloadBtnClass;
-    resetExportProgress(ctx.progressPrefix);
-    setExportProgress(ctx.progressPrefix, 2);
+    downloadBtn.className = "btn-clip-download";
+    resetExportProgress('premiereExport');
+    setExportProgress('premiereExport', 2);
     telemetryLog('telemetry', `Iniciando export a Premiere (XML) - ${options.separateTracks ? 'canales separados' : 'mismo canal'}, subtítulos ${options.includeSubtitles ? 'sí' : 'no'}...`, 'uploading');
 
     const clips = selected.map(c => ({
@@ -165,7 +131,7 @@ async function runPremiereExport(ctx, options) {
                 if (!line.startsWith("data:")) continue;
                 try {
                     const payload = JSON.parse(line.slice(5).trim());
-                    if (typeof payload.pct === "number") setExportProgress(ctx.progressPrefix, payload.pct);
+                    if (typeof payload.pct === "number") setExportProgress('premiereExport', payload.pct);
                     telemetryLog('telemetry', payload.message, payload.stage);
                     if (payload.stage === "error") {
                         statusEl.className = "clip-export-status active error";
@@ -173,11 +139,11 @@ async function runPremiereExport(ctx, options) {
                         return;
                     }
                     if (payload.stage === "done") {
-                        setExportProgress(ctx.progressPrefix, 100);
+                        setExportProgress('premiereExport', 100);
                         statusEl.textContent = "✅ " + payload.message;
                         downloadBtn.href = BACKEND_URL + payload.download_url;
                         downloadBtn.download = payload.filename;
-                        downloadBtn.className = ctx.downloadBtnClass + " active";
+                        downloadBtn.className = "btn-clip-download active";
                     } else {
                         statusEl.textContent = "⏳ " + payload.message;
                     }

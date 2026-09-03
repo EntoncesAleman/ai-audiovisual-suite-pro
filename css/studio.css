@@ -212,9 +212,16 @@
 .clip-card-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 420px; overflow-y: auto; padding-right: 2px; }
 .clip-card {
     display: flex; gap: 10px; background: var(--bg-input); border: var(--border);
+    border-left: 4px solid var(--border-color);
     border-radius: var(--radius); padding: 8px; transition: border-color .15s var(--ease);
 }
 .clip-card:hover { border-color: #3a4257; }
+.clip-card-color-dot {
+    width: 15px; height: 15px; border-radius: 50%; flex-shrink: 0; padding: 0; margin: 0;
+    border: 1px solid rgba(255,255,255,.25); cursor: pointer; background: transparent;
+    transition: transform .1s var(--ease);
+}
+.clip-card-color-dot:hover { transform: scale(1.15); }
 .clip-card-thumb {
     position: relative; flex-shrink: 0; width: 64px; height: 64px; border-radius: 6px;
     background: linear-gradient(135deg, var(--bg-card-inner), #20242c);

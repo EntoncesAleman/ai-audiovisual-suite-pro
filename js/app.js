@@ -11,7 +11,7 @@ import { initPlayer, loadLocalSourcePreview } from './modules/player.js';
 import { initSpeechMapSync, renderInteractiveTranscript } from './modules/transcriptPanel.js';
 import { initAuthGuard } from './modules/auth.js';
 import { toggleSubtitleStylePanel, updateSubtitlePreview } from './modules/subtitleStyle.js';
-import { openPremiereOptions, closePremiereOptions, confirmPremiereExport } from './modules/premiereExport.js';
+import { startPremiereExport, updatePremiereClipCount } from './modules/premiereExport.js';
 
 /**
  * Render (plan free) apaga el servidor tras 15 min sin requests entrantes;
@@ -214,9 +214,8 @@ window.addReelClipManual = addReelClipManual;
 window.generateActiveClipsWithAI = generateActiveClipsWithAI;
 window.selectStudioFormat = selectStudioFormat;
 window.startReelExport = startReelExport;
-window.openPremiereOptions = openPremiereOptions;
-window.closePremiereOptions = closePremiereOptions;
-window.confirmPremiereExport = confirmPremiereExport;
+window.startPremiereExport = startPremiereExport;
+window.updatePremiereClipCount = updatePremiereClipCount;
 window.renderReader = renderReader;
 window.changeReaderFontSize = changeReaderFontSize;
 window.closeReader = closeReader;

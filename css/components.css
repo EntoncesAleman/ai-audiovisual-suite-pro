@@ -74,35 +74,26 @@
 .export-action-row .btn-clip-download, .export-action-row .btn-reel-download { margin: 0; white-space: nowrap; }
 
 /* ============================================
-   MODAL: opciones de export a Premiere - compartido entre
-   Clip Editor y reel/carrusel, ver js/modules/premiereExport.js
+   CARD: Exportar a Premiere, standalone debajo de
+   "Metraje Escaneado con Éxito" - ver js/modules/premiereExport.js
    ============================================ */
-.premiere-options-overlay {
-    display: none; position: fixed; inset: 0; z-index: 9998;
-    align-items: center; justify-content: center; padding: 20px;
-    background: rgba(10,12,16,.72);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+.beta-tag {
+    background: #0d3b2c; color: #6ee7b7; border-radius: 4px; padding: 2px 8px;
+    font-size: 11px; font-weight: bold; margin-left: 8px; text-transform: uppercase;
+    letter-spacing: .4px; vertical-align: middle;
 }
-.premiere-options-overlay.active { display: flex; }
-.premiere-options-modal {
-    width: 100%; max-width: 440px; max-height: calc(100vh - 40px); overflow-y: auto;
-    background: var(--bg-card); border: var(--border-subtle); border-radius: var(--radius);
-    box-shadow: var(--shadow-card);
-    padding: 26px 24px;
-}
-.premiere-options-title { margin: 0 0 4px; font-size: 17px; color: var(--text-main); }
 .premiere-options-subtitle { font-size: 12.5px; color: var(--text-muted); margin-bottom: 16px; }
 .premiere-options-section-title {
     font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
     color: var(--accent-gold); margin: 20px 0 2px; padding-top: 14px; border-top: var(--border-subtle);
 }
-.premiere-options-modal > .premiere-options-section-title:first-of-type { padding-top: 0; border-top: none; margin-top: 0; }
-.premiere-options-modal label {
+.premiere-export-card > .premiere-options-section-title:first-of-type { padding-top: 0; border-top: none; margin-top: 0; }
+.premiere-export-card label {
     display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
     color: var(--text-muted); margin: 14px 0 6px;
 }
-.premiere-options-modal label:first-of-type { margin-top: 0; }
-.premiere-options-modal input[type="text"], .premiere-options-modal input[type="number"], .premiere-options-modal select {
+.premiere-export-card label:first-of-type { margin-top: 0; }
+.premiere-export-card input[type="text"], .premiere-export-card input[type="number"], .premiere-export-card select {
     background: var(--bg-input); border: var(--border); color: var(--text-main);
     border-radius: var(--radius); padding: 10px 12px; width: 100%; box-sizing: border-box;
     font-family: inherit; font-size: 14px; margin: 0;
@@ -121,10 +112,6 @@
     color: var(--text-muted); cursor: pointer; padding: 4px 0;
 }
 .premiere-options-advanced[open] summary { margin-bottom: 8px; }
-.premiere-options-footer {
-    display: flex; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: var(--border-subtle);
-}
-.premiere-options-footer button { flex: 1; margin: 0; }
 
 /* ============================================
    GENERADOR: botón principal "Generar Clips con IA"

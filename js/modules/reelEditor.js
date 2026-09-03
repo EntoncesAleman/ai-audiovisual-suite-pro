@@ -94,13 +94,14 @@ export function renderReelClipsList() {
         return;
     }
     grid.innerHTML = state.reelClipsList.map((clip, i) => `
-        <div class="clip-card">
+        <div class="clip-card" style="border-left-color:${clip.color || 'var(--border-color)'};">
             <div class="clip-card-thumb">
                 <button class="clip-card-play" onclick="playReelClip(${i})" title="Reproducir desde acá"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
             </div>
             <div class="clip-card-body">
                 <div class="clip-card-top">
                     <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleReelClip(${i}, this.checked)" title="Incluir en la exportación">
+                    <button class="clip-card-color-dot" style="background:${clip.color || 'transparent'};" onclick="cycleReelClipColor(${i})" title="Asignar color (para organizar)"></button>
                     <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateReelClip(${i}, 'label', this.value)" placeholder="Descripción / Speaker">
                     <button class="clip-card-star ${clip.favorite ? 'active' : ''}" onclick="toggleReelClipFavorite(${i})" title="Marcar como favorito">★</button>
                     <button class="btn-clip-remove" onclick="removeReelClip(${i})" title="Quitar">×</button>
@@ -126,6 +127,15 @@ export function updateReelClip(i, field, value) { state.reelClipsList[i][field] 
 export function removeReelClip(i) { state.reelClipsList.splice(i, 1); renderReelClipsList(); }
 export function selectAllReelClips(val) { state.reelClipsList.forEach(c => c.selected = val); renderReelClipsList(); }
 export function toggleReelClipFavorite(i) { state.reelClipsList[i].favorite = !state.reelClipsList[i].favorite; renderReelClipsList(); }
+
+/** Color-coding puramente visual (no viaja a ningún export) - ver cycleClipColor en clips.js. */
+const REEL_CLIP_COLOR_PALETTE = ["#D97706", "#3B82F6", "#10B981", "#06B6D4", "#8B5CF6", "#F43F5E"];
+export function cycleReelClipColor(i) {
+    const current = state.reelClipsList[i].color;
+    const idx = REEL_CLIP_COLOR_PALETTE.indexOf(current);
+    state.reelClipsList[i].color = idx === -1 ? REEL_CLIP_COLOR_PALETTE[0] : (REEL_CLIP_COLOR_PALETTE[idx + 1] || null);
+    renderReelClipsList();
+}
 export function playReelClip(i) { seekAndPlay(state.reelClipsList[i].start); }
 export async function exportAllReelClips() { selectAllReelClips(true); await startReelExport(); }
 
@@ -347,4 +357,5 @@ window.toggleReelClip = toggleReelClip;
 window.updateReelClip = updateReelClip;
 window.removeReelClip = removeReelClip;
 window.toggleReelClipFavorite = toggleReelClipFavorite;
+window.cycleReelClipColor = cycleReelClipColor;
 window.playReelClip = playReelClip;

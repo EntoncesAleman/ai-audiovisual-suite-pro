@@ -402,6 +402,21 @@ Tomás pidió explícitamente que "v2" fuera una rama de git de verdad (no solo 
 - `main`: exactamente como `origin/main`, sin nada de Premiere/CapCut.
 - `v2`: Premiere wireado + probado (falta confirmar en Premiere real), CapCut wireado + probado con datos reales (falta la confirmación visual de Tomás en CapCut). Todavía sin commitear al cierre de este punto - ver estado de git al momento de leer esto.
 
+### 21. Exportar a Premiere separado de Clips Inteligentes (card standalone) + color-coding por clip
+
+Tomás pidió explícitamente separar "Exportar a Premiere" del panel de Clips Inteligentes: antes vivía como un botón por pestaña (Clip Editor / Reel) que abría un modal compartido; ahora es su propia card fija, ubicada debajo de "Metraje Escaneado con Éxito" (columna del medio), con todas las opciones siempre visibles (sin modal) y un selector propio de "Fuente de clips" (Clip Editor o Editor de Video para Redes) para elegir de qué lista exportar.
+
+**Cambios:**
+- `index.html`: se sacaron los botones "🎞 Exportar a Premiere" de las dos pestañas del Clip Editor (Clip Editor simple y Reel/Redes) y se borró el modal (`premiereOptionsOverlay`). En su lugar, nueva `<div class="card premiere-export-card">` con: selector `premiereClipSource` (clips/reel), todas las mismas 8 opciones de antes (handles, orden, nombres de pista, bins, aspect ratio, companion/srt, múltiples secuencias), y su propio botón/estado/progreso/descarga (`premiereExportStatus`, `premiereExportProgress*`, `premiereDownloadBtn`).
+- `js/modules/premiereExport.js`: reescrito. Ya no hay modal (`openPremiereOptions`/`closePremiereOptions`/`confirmPremiereExport` eliminadas) - ahora `updatePremiereClipCount()` (actualiza el contador al cambiar el selector de fuente) y `startPremiereExport()` (lee todas las opciones directo del DOM de la card y llama al mismo `/export-premiere-xml` de siempre). `CONTEXTS` (por pestaña) pasó a `CLIP_SOURCES` (por fuente de clips).
+- `js/app.js`: import/exposición en `window` actualizados a las 2 funciones nuevas.
+- `css/components.css`: reglas `.premiere-options-modal`/`.premiere-options-overlay`/`.premiere-options-footer` (dead code del modal) eliminadas; el resto de las reglas de opciones (`.premiere-options-section-title`, `-row-2`, `-checkbox-row`, `-advanced`) se reusan tal cual, ahora scopeadas a `.premiere-export-card`. Nueva `.beta-tag` para el badge "beta" del título de la card.
+- **Verificado:** balance de `<div>`/`<details>` en `index.html` (124/124, 1/1), `node --check` en los 2 JS tocados, server local reiniciado y confirmado por `curl` que sirve `startPremiereExport`/`updatePremiereClipCount`/`premiereClipSource`.
+
+**Además, color-coding por clip** (pedido explícito de Tomás, con su propia justificación: color es per-clip así que tiene sentido en la card del clip mientras se organiza, no en el export; transiciones son per-par (entre clip N y N+1) y requerirían un editor de verdad — **no implementado**, queda fuera de alcance por ahora):
+- `js/modules/clips.js` y `js/modules/reelEditor.js`: cada `clip-card` ahora tiene un punto de color clickeable (`clip-card-color-dot`) que cicla por una paleta de 6 colores (`cycleClipColor`/`cycleReelClipColor`) + "sin color"; el color elegido se guarda en `clip.color` (solo estado de UI, no viaja a ningún export) y se pinta como borde izquierdo de la card completa.
+- `css/studio.css`: `.clip-card` con `border-left: 4px solid var(--border-color)` (color dinámico vía `style` inline) + estilos de `.clip-card-color-dot`.
+
 ## Open decisions / pendientes explícitos
 
 - **Pushear `d19df71` a GitHub** (nunca se pudo desde esta Mac, faltan credenciales en el entorno) y commitear los 2 archivos sueltos que quedaron sin commitear (`HANDOFF.md`, `capcut_export.py`) — ver "📍 ESTADO ACTUAL" arriba.
