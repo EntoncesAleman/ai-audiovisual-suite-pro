@@ -3,6 +3,7 @@ import os
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+import re
 import shutil
 import tempfile
 import time
@@ -2062,12 +2063,60 @@ def ts_to_seconds_f(ts: str) -> float:
     return 0.0
 
 
+_TS_STRICT_RE = re.compile(r"^\d{1,3}(:\d{1,2}){1,2}$")
+
+
+def _parse_ts_strict(ts: str) -> float | None:
+    """
+    Como ts_to_seconds_f, pero devuelve None (en vez de 0.0) si el string no
+    tiene la forma MM:SS/HH:MM:SS esperada - así un timestamp no parseable
+    ("hola", vacío, etc.) se puede distinguir de un "00:00" real en vez de
+    confundirse silenciosamente con el inicio del video.
+    """
+    ts = (ts or "").strip()
+    if not _TS_STRICT_RE.match(ts):
+        return None
+    try:
+        parts = [float(p) for p in ts.split(":")]
+    except ValueError:
+        return None
+    if len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+
+def validate_clips_timespan(clips: list) -> str | None:
+    """
+    Valida el rango de cada clip ANTES de cortar/armar nada - devuelve un
+    mensaje de error legible (o None si todo está bien).
+
+    Sin esto, un timestamp mal escrito o invertido pasaba silencioso:
+    ts_to_seconds_f() devuelve 0.0 para texto no parseable, y el fallback
+    de +30s que tenía cut_single_clip terminaba entregando el video
+    completo (o un tramo que no era el pedido) reportando "éxito" igual -
+    mismo problema en el XML de Premiere, con <in>/<out> invertidos.
+    """
+    errors = []
+    for i, c in enumerate(clips, 1):
+        start_s = _parse_ts_strict(c.start)
+        end_s = _parse_ts_strict(c.end)
+        if start_s is None:
+            errors.append(f"Clip {i}: no pude interpretar el inicio \"{c.start}\" (formato esperado MM:SS o HH:MM:SS).")
+        elif end_s is None:
+            errors.append(f"Clip {i}: no pude interpretar el fin \"{c.end}\" (formato esperado MM:SS o HH:MM:SS).")
+        elif end_s <= start_s:
+            errors.append(f"Clip {i}: el fin ({c.end}) tiene que ser posterior al inicio ({c.start}).")
+    return " | ".join(errors) if errors else None
+
+
 def cut_single_clip(video_path: str, start_ts: str, end_ts: str, output_path: str):
     import subprocess
     start_s = ts_to_seconds_f(start_ts)
     end_s = ts_to_seconds_f(end_ts)
     if end_s <= start_s:
-        end_s = start_s + 30  # fallback: 30 segundos
+        # Ya debería haber sido rechazado antes por validate_clips_timespan()
+        # - esto es defensa en profundidad, no el camino esperado.
+        raise ValueError(f"Rango de tiempo inválido: el fin ({end_ts}) no es posterior al inicio ({start_ts}).")
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-ss", str(start_s), "-to", str(end_s),
@@ -2362,6 +2411,10 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         if not input_data.clips:
             yield event("error", "No hay clips definidos para exportar.")
             return
+        timespan_error = validate_clips_timespan(input_data.clips)
+        if timespan_error:
+            yield event("error", f"Timestamps inválidos: {timespan_error}")
+            return
 
         # Cola por el semáforo de operaciones pesadas (ver comentario junto a
         # _heavy_ops_semaphore) antes de tocar disco/red/ffmpeg.
@@ -2594,6 +2647,10 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
         if not input_data.clips:
             yield event("error", "No hay clips definidos para exportar.")
             return
+        timespan_error = validate_clips_timespan(input_data.clips)
+        if timespan_error:
+            yield event("error", f"Timestamps inválidos: {timespan_error}")
+            return
 
         async for _ in _wait_for_heavy_slot():
             yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
@@ -2803,6 +2860,10 @@ async def export_capcut_endpoint(input_data: ExportCapCutInput):
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido.")
             return
+        timespan_error = validate_clips_timespan([input_data.clip])
+        if timespan_error:
+            yield event("error", f"Timestamps inválidos: {timespan_error}")
+            return
 
         async for _ in _wait_for_heavy_slot():
             yield event("queued", "Hay otra operación pesada en curso en el servidor. Esperando turno...")
@@ -2946,6 +3007,9 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
             yield event("error", "No hay clips definidos."); return
+        timespan_error = validate_clips_timespan(input_data.clips)
+        if timespan_error:
+            yield event("error", f"Timestamps inválidos: {timespan_error}"); return
         cfg = PLATFORM_CONFIGS.get(input_data.platform)
         if not cfg:
             yield event("error", f"Plataforma desconocida: {input_data.platform}"); return
@@ -3135,6 +3199,17 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             yield event("error", "No hay slides definidos."); return
         if input_data.platform not in CAROUSEL_PLATFORMS:
             yield event("error", f"Plataforma no es carrusel: {input_data.platform}"); return
+        if input_data.platform == "ig_carrusel_clips":
+            # Slides de video (rango start→end real, mismo riesgo que /export-clips).
+            timespan_error = validate_clips_timespan(input_data.clips)
+            if timespan_error:
+                yield event("error", f"Timestamps inválidos: {timespan_error}"); return
+        else:
+            # Placas de texto: solo se usa `start` (un frame puntual, ver
+            # extract_frame más abajo) - `end` no aplica acá, no exigir rango.
+            bad = [i for i, c in enumerate(input_data.clips, 1) if _parse_ts_strict(c.start) is None]
+            if bad:
+                yield event("error", f"No pude interpretar el timestamp de la(s) placa(s) {', '.join(map(str, bad))} (formato esperado MM:SS o HH:MM:SS)."); return
 
         # Cola por el semáforo de operaciones pesadas antes de tocar disco/red/ffmpeg.
         async for _ in _wait_for_heavy_slot():
