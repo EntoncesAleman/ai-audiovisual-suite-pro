@@ -7,8 +7,9 @@ export const state = {
     editing: false,
     _pendingSourceUrl: "",  // URL guardada antes de analizar, para persistir en sesión
     clipsList: [],          // array de {start, end, label, selected}
-    reelClipsList: [],      // array para el panel de video para redes
+    reelClipsList: [],      // array para el panel de video para redes (cada item puede tener .caption)
     currentPlatformKey: null, // key del enfoque de video activo
+    reelCarouselCaption: "", // copy único (+ hashtags) para posts de carrusel, ver "Generar copies"
 
     // Metadata del último análisis arrancado, para la tabla de System
     // Telemetry (Engine/Input/Diarization) - se persiste en la sesión
@@ -19,6 +20,10 @@ export const state = {
 
     // Biblioteca de enfoques (modular: se puede sobrescribir desde prompts.json)
     PROMPTS_LIBRARY: null,
+    // Enfoques agrupados por categoría, cacheados acá para no recalcularlos
+    // cada vez que se cambia de modo (botones Montaje Audiovisual / Redes
+    // Sociales) - ver populatePromptSelect/selectPromptMode en prompts.js.
+    promptsByCategory: {},
     TEASER_TEMPLATES: null,  // plantillas de curva dramática
 
     // Controller del análisis en curso, para poder frenarlo con el botón "Detener".

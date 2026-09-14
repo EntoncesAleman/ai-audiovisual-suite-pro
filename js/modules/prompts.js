@@ -1,6 +1,7 @@
 import { BACKEND_URL, PROMPTS_FALLBACK } from '../config.js';
 import { state } from '../state.js';
 import { updateVideoPanel } from './reelEditor.js';
+import { switchClipEditorTab } from './clips.js';
 import { fetchWithTimeout } from '../utils/helpers.js';
 
 export async function loadPromptsLibrary() {
@@ -18,10 +19,15 @@ export async function loadPromptsLibrary() {
     populatePromptSelect();
 }
 
+// Las dos categorías que se usan todo el tiempo (una por cada pestaña del
+// Clipper: Simple/Montaje vs Social/Redes) se vuelven botones grandes en vez
+// de quedar mezcladas como optgroups dentro del <select>. El resto de las
+// categorías (editorial, análisis, estudios, creativo, libre) son enfoques
+// de texto que no dependen de ninguna pestaña de clips, así que quedan
+// agrupadas en el selector secundario "Más enfoques".
+const PRIMARY_MODE_CATEGORIES = ["audiovisual", "video"];
+
 export function populatePromptSelect() {
-    const sel = document.getElementById("promptType");
-    sel.innerHTML = "";
-    sel.disabled = false; // arranca disabled con el placeholder "Cargando enfoques…" (ver index.html)
     const cats = state.PROMPTS_LIBRARY.categorias || {};
     const enfoques = state.PROMPTS_LIBRARY.enfoques || {};
 
@@ -32,10 +38,35 @@ export function populatePromptSelect() {
         if (!byCat[cat]) byCat[cat] = [];
         byCat[cat].push({ key, ...val });
     }
+    state.promptsByCategory = byCat;
 
-    // Renderizar respetando el orden de categorias en el JSON
-    for (const catKey of Object.keys(cats)) {
+    renderPromptModeBar(cats, byCat);
+    renderPromptOtherSelect(cats, byCat);
+
+    // Arranca en el modo "audiovisual" (mismo default de siempre: "teaser").
+    selectPromptMode("audiovisual");
+}
+
+function renderPromptModeBar(cats, byCat) {
+    const bar = document.getElementById("promptModeBar");
+    bar.innerHTML = "";
+    for (const catKey of PRIMARY_MODE_CATEGORIES) {
         if (!byCat[catKey]) continue;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "format-bar-btn prompt-mode-btn";
+        btn.dataset.mode = catKey;
+        btn.textContent = cats[catKey] || catKey;
+        btn.onclick = () => selectPromptMode(catKey);
+        bar.appendChild(btn);
+    }
+}
+
+function renderPromptOtherSelect(cats, byCat) {
+    const otherSel = document.getElementById("promptTypeOther");
+    otherSel.innerHTML = '<option value="">Más enfoques (editorial, análisis, estudio, creativo, libre)…</option>';
+    for (const catKey of Object.keys(cats)) {
+        if (PRIMARY_MODE_CATEGORIES.includes(catKey) || !byCat[catKey]) continue;
         const og = document.createElement("optgroup");
         og.label = cats[catKey];
         for (const enf of byCat[catKey]) {
@@ -44,13 +75,71 @@ export function populatePromptSelect() {
             opt.textContent = enf.nombre;
             og.appendChild(opt);
         }
-        sel.appendChild(og);
+        otherSel.appendChild(og);
+    }
+}
+
+/**
+ * Cambia de modo (botón "Montaje Audiovisual" / "Redes Sociales"): repuebla
+ * el <select> principal con solo los enfoques de esa categoría y elige el
+ * primero. La usa también el format-bar de la card FORMAT & EXPORT (columna
+ * 3, ver selectStudioFormat en app.js) antes de fijar una plataforma
+ * puntual, para asegurarse de que esa opción exista en el select.
+ *
+ * `syncTab`: además de repoblar el select, cambia la pestaña activa del
+ * Clipper (columna 3) para que coincida con el modo elegido acá - solo
+ * tiene sentido para los dos modos "primarios" (audiovisual → Simple,
+ * video → Social). El selector "Más enfoques" (otras categorías, que no
+ * son ni una cosa ni la otra) lo pasa en false para no tocar esa pestaña.
+ */
+export function selectPromptMode(catKey, preferredKey, syncTab = true) {
+    document.querySelectorAll(".prompt-mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === catKey));
+    const otherSel = document.getElementById("promptTypeOther");
+    if (otherSel) otherSel.value = "";
+
+    const sel = document.getElementById("promptType");
+    sel.innerHTML = "";
+    sel.disabled = false; // arranca disabled con el placeholder "Cargando enfoques…" (ver index.html)
+    const list = state.promptsByCategory[catKey] || [];
+    for (const enf of list) {
+        const opt = document.createElement("option");
+        opt.value = enf.key;
+        opt.textContent = enf.nombre;
+        sel.appendChild(opt);
+    }
+    if (preferredKey && list.some(e => e.key === preferredKey)) {
+        sel.value = preferredKey;
+    } else if (sel.options.length) {
+        sel.value = sel.options[0].value;
     }
 
-    // FIX: como el desplegable arranca con "teaser" por defecto,
-    // el evento onchange NO se dispara al cargar. Lo llamamos a mano
-    // para que el panel de personalización del teaser se muestre.
+    if (syncTab && PRIMARY_MODE_CATEGORIES.includes(catKey)) {
+        switchClipEditorTab(catKey === "video" ? "social" : "simple");
+        // El format-bar de FORMAT & EXPORT (columna 3) solo tiene atajos para
+        // ALGUNAS plataformas de "video" (no todos los enfoques de esa
+        // categoría) - si el enfoque elegido acá no es uno de esos atajos,
+        // se desmarca cualquier botón de plataforma que hubiera quedado activo.
+        document.querySelectorAll(".format-bar-btn[data-format]").forEach(b => {
+            b.classList.toggle("active", b.dataset.format === sel.value || (catKey === "audiovisual" && b.dataset.format === "simple"));
+        });
+    }
+
+    // FIX: si el <select> ya arranca en el valor elegido, el evento onchange
+    // NO se dispara solo. Lo llamamos a mano para que el panel de
+    // personalización correspondiente (teaser, libre, etc.) se actualice.
     onPromptTypeChange();
+}
+
+/** Selector secundario ("Más enfoques"): editorial / análisis / estudios / creativo / libre. */
+export function onPromptTypeOtherChange() {
+    const enfKey = document.getElementById("promptTypeOther").value;
+    if (!enfKey) return;
+    const enf = state.PROMPTS_LIBRARY?.enfoques?.[enfKey];
+    if (!enf) return;
+    selectPromptMode(enf.categoria, enfKey, /* syncTab */ false);
+    // El enfoque elegido no pertenece a ninguno de los dos modos principales:
+    // ningún botón queda marcado como activo.
+    document.querySelectorAll(".prompt-mode-btn").forEach(b => b.classList.remove("active"));
 }
 
 export function onPromptTypeChange() {

@@ -79,6 +79,7 @@ export function parseClipsForReel() {
     }
     if (parsed.length === 0) { alert("No se encontraron timestamps en el análisis."); return; }
     state.reelClipsList = parsed;
+    state.reelCarouselCaption = ""; // clips nuevos: los copies viejos ya no aplican
     renderReelClipsList();
 }
 
@@ -88,6 +89,7 @@ export function renderReelClipsList() {
     if (!grid) return;
     const selected = state.reelClipsList.filter(c => c.selected).length;
     if (badge) badge.textContent = `${selected}/${state.reelClipsList.length} clips`;
+    renderReelCaptions();
 
     if (state.reelClipsList.length === 0) {
         grid.innerHTML = '<div class="clip-empty">Elegí un formato abajo y usá "⚡ Generar Clips con IA" (arriba).</div>';
@@ -171,6 +173,7 @@ export function importAiTimestamps() {
     }
 
     state.reelClipsList = imported;
+    state.reelCarouselCaption = ""; // clips nuevos: los copies viejos ya no aplican
     renderReelClipsList();
     feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} importado${imported.length > 1 ? 's' : ''} correctamente.`;
     document.getElementById("aiResponseInput").value = "";
@@ -220,6 +223,7 @@ export async function generateReelClipsWithAI() {
         }
 
         state.reelClipsList = imported;
+        state.reelCarouselCaption = ""; // clips nuevos: los copies viejos ya no aplican
         renderReelClipsList();
         const engineLabel = data.engine === "groq" ? "Groq (respaldo, Gemini no estaba disponible)" : "Gemini";
         if (feedback) feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} generado${imported.length > 1 ? 's' : ''} e importado${imported.length > 1 ? 's' : ''} directo con ${engineLabel}, sin pasar por otra IA.`;
@@ -245,6 +249,142 @@ export function addReelClipManual() {
     document.getElementById("newReelEnd").value = "";
     document.getElementById("newReelLabel").value = "";
     renderReelClipsList();
+}
+
+// ============================================================
+// COPIES PARA REDES: texto para poner debajo de cada publicación.
+// Botón aparte (no automático) para no gastar una llamada a la IA antes de
+// que la persona termine de confirmar/editar los clips - ver
+// generateReelCaptions más abajo, atado a "📝 Generar copies" en el HTML.
+// ============================================================
+
+/** Repinta el panel de copies según los clips seleccionados / el copy de carrusel guardados en state. */
+export function renderReelCaptions() {
+    const body = document.getElementById("reelCaptionsBody");
+    if (!body) return;
+    const pdata = state.currentPlatformKey ? PLATFORM_DATA[state.currentPlatformKey] : null;
+    const isCarousel = !!pdata?.isCarousel;
+
+    if (isCarousel) {
+        if (!state.reelCarouselCaption) { body.style.display = "none"; body.innerHTML = ""; return; }
+        body.style.display = "flex";
+        body.innerHTML = `
+            <div class="reel-caption-card">
+                <div class="reel-caption-label">Caption único para todo el post del carrusel (+ hashtags)</div>
+                <textarea class="reel-caption-textarea" rows="5" oninput="updateReelCarouselCaption(this.value)">${escapeHtml(state.reelCarouselCaption)}</textarea>
+            </div>
+            <button class="btn-download-captions" onclick="downloadReelCaptions()">📥 Descargar texto (.txt)</button>
+        `;
+        return;
+    }
+
+    const cardsHtml = state.reelClipsList
+        .map((clip, i) => ({ clip, i }))
+        .filter(({ clip }) => clip.selected && clip.caption)
+        .map(({ clip, i }) => `
+            <div class="reel-caption-card">
+                <div class="reel-caption-label">${escapeHtml(clip.start)} → ${escapeHtml(clip.end)}${clip.label ? " — " + escapeHtml(clip.label) : ""}</div>
+                <textarea class="reel-caption-textarea" rows="3" oninput="updateReelClipCaption(${i}, this.value)">${escapeHtml(clip.caption)}</textarea>
+            </div>
+        `).join("");
+
+    if (!cardsHtml) { body.style.display = "none"; body.innerHTML = ""; return; }
+    body.style.display = "flex";
+    body.innerHTML = cardsHtml + `<button class="btn-download-captions" onclick="downloadReelCaptions()">📥 Descargar textos (.txt)</button>`;
+}
+
+export function updateReelClipCaption(i, value) { state.reelClipsList[i].caption = value; }
+export function updateReelCarouselCaption(value) { state.reelCarouselCaption = value; }
+
+/**
+ * Le pide a la IA (mismo endpoint que "Generar Clips con IA", reutilizado
+ * para no duplicar la integración con Gemini/Groq) un texto de publicación:
+ * un caption por clip si son posts independientes, o un solo caption +
+ * hashtags si el formato activo es un carrusel (un carrusel es un solo
+ * post con varias slides, no admite un caption distinto por slide).
+ */
+export async function generateReelCaptions() {
+    const selected = state.reelClipsList.filter(c => c.selected);
+    if (selected.length === 0) { alert("Seleccioná al menos un clip primero."); return; }
+
+    const pdata = state.currentPlatformKey ? PLATFORM_DATA[state.currentPlatformKey] : null;
+    const isCarousel = !!pdata?.isCarousel;
+    const platformLabel = pdata?.label || "redes sociales";
+
+    const feedback = document.getElementById("reelCaptionsFeedback");
+    const btn = document.getElementById("btnGenerateReelCaptions");
+    if (btn) { btn.disabled = true; btn.dataset.origHtml = btn.innerHTML; btn.textContent = "⏳ Escribiendo copies..."; }
+    if (feedback) feedback.textContent = "⏳ Generando el/los texto(s) con IA...";
+    telemetryLog('telemetry', 'Generando copies para redes...', 'uploading');
+
+    let prompt;
+    if (isCarousel) {
+        const slides = selected.map((c, i) => `Slide ${i + 1}: ${c.label || "(sin descripción)"}`).join("\n");
+        prompt = `Actuá como Social Media Manager senior. Vas a publicar un carrusel en ${platformLabel} con estas slides, en este orden:\n${slides}\n\nEscribí UN SOLO caption para todo el post (nunca uno por slide - un carrusel es una sola publicación), en español, con un gancho fuerte en la primera línea que invite a deslizar, cuerpo breve, y una tanda de hashtags relevantes al final. Respondé solo con el texto final del caption, sin comillas ni explicaciones tuyas.`;
+    } else {
+        const clipsList = selected.map((c, i) => `Clip ${i + 1} (${c.start} → ${c.end}): ${c.label || "(sin descripción)"}`).join("\n");
+        prompt = `Actuá como Social Media Manager senior. Estos clips se van a publicar como posts INDEPENDIENTES en ${platformLabel}. Para cada uno, escribí un caption corto en español (con hashtags relevantes al final) para poner debajo de esa publicación puntual:\n${clipsList}\n\nRespondé usando EXACTAMENTE este formato, uno por clip y en el mismo orden:\n### CLIP 1\n<caption con hashtags>\n### CLIP 2\n<caption con hashtags>\n(y así con todos, hasta CLIP ${selected.length}). No escribas nada antes de "### CLIP 1" ni comentarios finales.`;
+    }
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+        if (isCarousel) {
+            state.reelCarouselCaption = (data.text || "").trim();
+        } else {
+            const text = data.text || "";
+            const firstMarkerIdx = text.search(/###\s*CLIP\s*1\b/i);
+            const cleaned = firstMarkerIdx >= 0 ? text.slice(firstMarkerIdx) : text;
+            const parts = cleaned.split(/###\s*CLIP\s*\d+/i).map(s => s.trim()).filter(Boolean);
+            selected.forEach((clip, i) => { clip.caption = parts[i] || ""; });
+        }
+        renderReelCaptions();
+        const engineLabel = data.engine === "groq" ? "Groq (respaldo, Gemini no estaba disponible)" : "Gemini";
+        const missing = !isCarousel && selected.some(c => !c.caption);
+        if (feedback) {
+            feedback.textContent = missing
+                ? `⚠ ${engineLabel} respondió pero no pude separar un copy para cada clip. Revisá el texto abajo y completá a mano lo que falte.`
+                : `✅ Copies generados con ${engineLabel}. Podés editarlos abajo antes de descargar/exportar.`;
+        }
+        telemetryLog('telemetry', missing ? '⚠ Copies generados con formato inesperado.' : '✓ Copies para redes generados.', missing ? 'error' : 'done');
+    } catch (e) {
+        if (feedback) feedback.textContent = "❌ Error generando los copies: " + e.message;
+        telemetryLog('telemetry', '❌ Error generando copies: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml; }
+    }
+}
+
+/** Descarga client-side (sin ir al backend): junta lo que haya en state y arma un .txt. */
+export function downloadReelCaptions() {
+    const pdata = state.currentPlatformKey ? PLATFORM_DATA[state.currentPlatformKey] : null;
+    const isCarousel = !!pdata?.isCarousel;
+    let text = "";
+    if (isCarousel) {
+        text = state.reelCarouselCaption || "";
+    } else {
+        text = state.reelClipsList
+            .filter(c => c.selected && c.caption)
+            .map((c, i) => `--- Post ${i + 1} (${c.start} → ${c.end}) ---\n${c.caption}`)
+            .join("\n\n");
+    }
+    if (!text.trim()) { alert("Todavía no generaste los copies (botón \"📝 Generar copies\")."); return; }
+
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "copies_redes.txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 export async function startReelExport() {
@@ -368,3 +508,6 @@ window.removeReelClip = removeReelClip;
 window.toggleReelClipFavorite = toggleReelClipFavorite;
 window.cycleReelClipColor = cycleReelClipColor;
 window.playReelClip = playReelClip;
+window.updateReelClipCaption = updateReelClipCaption;
+window.updateReelCarouselCaption = updateReelCarouselCaption;
+window.downloadReelCaptions = downloadReelCaptions;

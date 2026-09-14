@@ -145,10 +145,15 @@
                         </div>
                         <h3>PROMPT GENERATOR &amp; DRAMATURGY</h3>
 
+                        <!-- MODO: los dos enfoques de uso constante (uno por pestaña del
+                             Clipper, ver switchClipEditorTab) son botones en vez de quedar
+                             mezclados en el desplegable - se rellena en populatePromptSelect. -->
+                        <div class="prompt-mode-bar" id="promptModeBar"></div>
+
                         <!-- BARRA DE CONTROL: enfoque + instrucción libre siempre visible -->
                         <div class="studio-control-bar">
                             <div class="studio-control-col">
-                                <label>Enfoque Inteligente</label>
+                                <label>Enfoque</label>
                                 <select id="promptType" onchange="onPromptTypeChange()" disabled>
                                     <option value="">Cargando enfoques…</option>
                                 </select>
@@ -157,6 +162,15 @@
                                 <label>Prompt Libre / Instrucción Personalizada</label>
                                 <input type="text" id="promptExtraInstruction" oninput="generateIAPrompt()" placeholder='Añadí un pedido específico (ej: "Buscá solo las partes donde se hable de precios")...'>
                             </div>
+                        </div>
+
+                        <!-- Enfoques que no dependen de ninguna pestaña de clips (editorial,
+                             análisis, estudios, creativo, libre): un click más lejos para no
+                             competir en jerarquía visual con los dos botones de arriba. -->
+                        <div class="prompt-other-row">
+                            <select id="promptTypeOther" onchange="onPromptTypeOtherChange()">
+                                <option value="">Más enfoques (editorial, análisis, estudio, creativo, libre)…</option>
+                            </select>
                         </div>
 
                         <button class="btn-generate-ai-main" id="btnGenerateActiveClips" onclick="generateActiveClipsWithAI()">⚡ GENERAR CLIPS CON IA</button>
@@ -478,6 +492,16 @@
                                     <input type="text" class="ts-input" id="newReelEnd" placeholder="00:30">
                                     <input type="text" class="label-input" id="newReelLabel" placeholder="Speaker: descripción del momento">
                                     <button class="btn-mini" onclick="addReelClipManual()"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>
+                                </div>
+
+                                <!-- COPIES: texto para poner debajo de cada publicación. Se genera
+                                     con IA a pedido (botón aparte, después de confirmar los clips) -
+                                     no es automático porque conviene revisar/editar los clips antes
+                                     de gastar una llamada a la IA en escribir el copy. Ver reelEditor.js. -->
+                                <div class="reel-captions-section">
+                                    <button class="btn-mini" onclick="generateReelCaptions()" id="btnGenerateReelCaptions" style="background:#1e1f45;border-color:#6366f1;color:#a5b4fc;">📝 Generar copies (texto para la publicación)</button>
+                                    <div class="reel-captions-feedback" id="reelCaptionsFeedback"></div>
+                                    <div class="reel-captions-body" id="reelCaptionsBody" style="display:none;"></div>
                                 </div>
 
                                 <div class="export-action-row">

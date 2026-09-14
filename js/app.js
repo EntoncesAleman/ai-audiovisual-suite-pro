@@ -2,11 +2,11 @@ import { BACKEND_URL } from './config.js';
 import { getUrlDraft, setUrlDraft } from './utils/storage.js';
 import { startNewSession, loadSessionById } from './modules/sessions.js';
 import { analyzeUrlStream, analyzeLocalFile, stopCurrentAnalysis, startAnalysis } from './api/analysis.js';
-import { loadPromptsLibrary, onPromptTypeChange, generateIAPrompt } from './modules/prompts.js';
+import { loadPromptsLibrary, onPromptTypeChange, onPromptTypeOtherChange, generateIAPrompt, selectPromptMode } from './modules/prompts.js';
 import { searchTimeline, toggleEdit, downloadTimeline } from './modules/timeline.js';
 import { openReader, closeReader, renderReader, changeReaderFontSize } from './modules/reader.js';
 import { parseClipsFromTimeline, selectAllClips, addClipManual, startClipExport, toggleClipAiImport, importClipAiTimestamps, generateClipsWithAI, switchClipEditorTab, exportAllClips } from './modules/clips.js';
-import { parseClipsForReel, toggleAiImport, selectAllReelClips, importAiTimestamps, generateReelClipsWithAI, addReelClipManual, startReelExport, exportAllReelClips } from './modules/reelEditor.js';
+import { parseClipsForReel, toggleAiImport, selectAllReelClips, importAiTimestamps, generateReelClipsWithAI, addReelClipManual, startReelExport, exportAllReelClips, generateReelCaptions } from './modules/reelEditor.js';
 import { initPlayer, loadLocalSourcePreview } from './modules/player.js';
 import { initSpeechMapSync, renderInteractiveTranscript } from './modules/transcriptPanel.js';
 import { initAuthGuard } from './modules/auth.js';
@@ -117,12 +117,12 @@ function selectStudioFormat(format) {
         setActiveFormatBtn('simple');
         return;
     }
-    const sel = document.getElementById('promptType');
-    if (!sel || !sel.querySelector(`option[value="${format}"]`)) return;
-    sel.value = format;
-    onPromptTypeChange();
-    switchClipEditorTab('social');
-    setActiveFormatBtn(format);
+    // selectPromptMode repuebla el <select> con la categoría "video" (ya no
+    // trae todas las categorías mezcladas de una, ver prompts.js), fija esta
+    // plataforma puntual como valor, y de paso ya cambia la pestaña del
+    // Clipper a "social" y marca este mismo botón como activo en el
+    // format-bar - no hace falta repetir esa lógica acá.
+    selectPromptMode('video', format);
 }
 
 /**
@@ -192,6 +192,7 @@ window.startNewSession = startNewSession;
 window.analyzeUrlStream = analyzeUrlStream;
 window.analyzeLocalFile = analyzeLocalFile;
 window.onPromptTypeChange = onPromptTypeChange;
+window.onPromptTypeOtherChange = onPromptTypeOtherChange;
 window.generateIAPrompt = generateIAPrompt;
 window.searchTimeline = searchTimeline;
 window.openReader = openReader;
@@ -214,6 +215,7 @@ window.addReelClipManual = addReelClipManual;
 window.generateActiveClipsWithAI = generateActiveClipsWithAI;
 window.selectStudioFormat = selectStudioFormat;
 window.startReelExport = startReelExport;
+window.generateReelCaptions = generateReelCaptions;
 window.startPremiereExport = startPremiereExport;
 window.updatePremiereClipCount = updatePremiereClipCount;
 window.renderReader = renderReader;

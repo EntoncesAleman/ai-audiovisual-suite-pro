@@ -152,6 +152,12 @@
 /* ============================================
    COLUMNA 2 · PROMPT GENERATOR & DRAMATURGY
    ============================================ */
+.prompt-mode-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.prompt-mode-bar .prompt-mode-btn { font-size: 13px; padding: 10px 16px; }
+
+.prompt-other-row { margin: 8px 0 4px; }
+.prompt-other-row select { width: 100%; margin: 0; font-size: 12.5px; color: var(--text-sub); }
+
 .studio-control-bar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; align-items: end; margin-bottom: 4px; }
 .studio-control-col label {
     display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
