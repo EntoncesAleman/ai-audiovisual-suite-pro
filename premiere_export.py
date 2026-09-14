@@ -27,24 +27,18 @@ parecidos e INCOMPATIBLES entre si -
     especificos de Adobe". Todo este archivo genera xmeml, no FCPXML.
 
 Fuente del schema: documentacion oficial de Apple (developer.apple.com,
-"Final Cut Pro XML Interchange Format", DTDs v1-5) - no se tuvo acceso a
-un Premiere real para reversear un archivo exportado de verdad (a
-diferencia de CapCut, donde si habia proyectos reales del usuario para
-copiar). La estructura de <clipitem> (video+audio, in/out/start/end en
-frames, <file> compartido entre clips del mismo material) esta bien
-documentada y multiples fuentes independientes la confirman. La parte de
-<generatoritem> para subtitulos como texto nativo editable es MAS
-incierta - existe en el DTD pero no hay confirmacion de que el
-generador "Text" de FCP7 se importe igual en Premiere. Por eso
-build_premiere_companion_text() genera ademas un texto plano con los
-mismos subtitulos y timestamps, pensado para que una persona (o un
-copiloto de IA dentro de Premiere) los recree a mano si el
-<generatoritem> no entra bien.
+"Final Cut Pro XML Interchange Format", DTDs v1-5). La estructura de
+<clipitem> (video+audio, in/out/start/end en frames, <file> compartido
+entre clips del mismo material) esta bien documentada y multiples
+fuentes independientes la confirman.
 
-SIN PROBAR contra un Premiere real todavia - ver "Open decisions" en
-HANDOFF.md. Antes de ofrecer este export a un cliente real, alguien con
-Premiere instalado tiene que confirmar que el .xml generado abre bien y
-que decidir si el generatoritem de subtitulos sobrevive o no.
+CONFIRMADO CONTRA UN PREMIERE REAL (2026-09-05, por el usuario): el .xml
+generado abre bien en Premiere. Sigue habiendo margen para reportar
+detalles finos si aparecen (ej: si el <generatoritem> de subtitulos se
+importa como texto editable de verdad, o si Premiere lo trata distinto),
+pero la duda de fondo ("esto abre o no") ya esta resuelta - dejo
+build_premiere_companion_text() como red de contencion igual, no porque
+se espere que falle, sino porque no cuesta nada tenerlo.
 """
 
 from __future__ import annotations
@@ -129,8 +123,9 @@ class PremiereClip:
 _TRANSITION_DURATION_S = 1.0
 
 # effectid/name tomados de nombres estándar de FCP7 (documentación/fuentes
-# públicas, no de un XML real exportado por Premiere) - mismo caveat que
-# el resto del archivo: sin confirmar contra un Premiere real todavía.
+# públicas) - confirmado que el XML en general abre bien en un Premiere
+# real (2026-09-05), sin reporte específico todavía de que estos nombres
+# de transición en particular se hayan visto abiertos.
 _TRANSITION_EFFECTS = {
     "dissolve": ("Cross Dissolve", "Dissolve"),
     "dip_black": ("Fade In Fade Out Dissolve", "Dissolve"),
@@ -412,8 +407,8 @@ def build_premiere_xml(
       nombre de la secuencia, para que aparezcan agrupadas en el Project
       Panel de Premiere en vez de sueltas en la raíz. Estructura
       confirmada por documentación oficial (`<xmeml><bin><name>...
-      <children><sequence>...`), pero sin probar contra un Premiere real
-      (mismo caveat que el resto del archivo).
+      <children><sequence>...`) y por uso real - el XML en general ya
+      se confirmó abriendo bien en un Premiere real (2026-09-05).
 
     `video_path` es la ruta real en el server (se usa solo para leer
     metadata con ffprobe si no viene `video_info`) - NUNCA se escribe tal
