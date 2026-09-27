@@ -3,6 +3,32 @@
 .icon { vertical-align: -3px; flex-shrink: 0; }
 .icon-heading { display: inline-flex; align-items: center; gap: 8px; }
 
+/* ============================================
+   HERRAMIENTAS AVANZADAS: acordeón que agrupa Premiere
+   Export + Voiceover (columna derecha) - "shelf" liviano
+   sin sombra propia, así las cards de adentro (que sí
+   tienen su propio fondo/sombra) siguen siendo la unidad
+   visual principal en vez de competir con un doble borde.
+   ============================================ */
+.advanced-tools-accordion {
+    border: var(--border-subtle);
+    border-radius: var(--radius);
+    background: var(--bg-card-inner);
+}
+.advanced-tools-accordion summary {
+    cursor: pointer; padding: 14px 20px; font-size: 13.5px; font-weight: 700;
+    color: var(--text-sub); list-style: none;
+    transition: color .15s var(--ease);
+}
+.advanced-tools-accordion summary::-webkit-details-marker { display: none; }
+.advanced-tools-accordion summary:hover { color: var(--text-main); }
+.advanced-tools-accordion summary::after {
+    content: "▾"; float: right; color: var(--text-muted);
+    transition: transform .15s var(--ease);
+}
+.advanced-tools-accordion[open] summary::after { transform: rotate(180deg); }
+.advanced-tools-content { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+
 .btn-del { background: none; border: none; color: var(--accent-coral); cursor: pointer; font-size: 15px; opacity: .6; transition: opacity .15s var(--ease); }
 .btn-del:hover { opacity: 1; }
 
@@ -12,13 +38,13 @@
     padding: 9px 14px; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 600;
     transition: background .15s var(--ease), border-color .15s var(--ease);
 }
-.btn-tool:hover { background: #20242c; border-color: var(--border-subtle-color); }
+.btn-tool:hover { background: var(--bg-hover); border-color: var(--border-subtle-color); }
 .btn-delete-all {
-    background: rgba(244,63,94,.12); border: 1px solid rgba(244,63,94,.4); color: #fda4af;
+    background: rgba(244,63,94,.1); border: 1px solid rgba(244,63,94,.35); color: #BE123C;
     padding: 9px 14px; border-radius: var(--radius); cursor: pointer; font-weight: 700; font-size: 13px;
     transition: background .15s var(--ease);
 }
-.btn-delete-all:hover { background: rgba(244,63,94,.2); }
+.btn-delete-all:hover { background: rgba(244,63,94,.18); }
 
 .btn-new-session {
     background: linear-gradient(180deg, #e08814, var(--accent-gold)); color: white; border: 1px solid #e2942b;
@@ -31,12 +57,12 @@
 .btn-new-session:active { transform: translateY(1px); }
 
 #loading {
-    display: none; background: linear-gradient(180deg, #1c2a45, #16223a);
+    display: none; background: linear-gradient(180deg, #EAF1FE, #DCE8FD);
     border: 1px solid var(--accent-blue); padding: 16px 18px; border-radius: var(--radius); box-shadow: var(--shadow-card);
 }
 #loading.active { display: block; }
-.loading-stage { font-weight: 700; margin-bottom: 8px; font-size: 14px; }
-.loading-detail { font-size: 12.5px; color: #93c5fd; }
+.loading-stage { font-weight: 700; margin-bottom: 8px; font-size: 14px; color: var(--text-main); }
+.loading-detail { font-size: 12.5px; color: var(--accent-blue-hover); }
 .progress-bar { background: rgba(0,0,0,.35); height: 6px; border-radius: 3px; margin-top: 10px; overflow: hidden; }
 .progress-fill { background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); height: 100%; width: 0%; transition: width 0.4s ease; }
 
@@ -48,7 +74,7 @@
 /* Mini-player: SIEMPRE visible (no aparece/desaparece) - placeholder hasta
    que haya un clip exportado y descargable, ahí se completa solo. */
 .export-preview {
-    margin-bottom: 16px; padding: 12px; background: rgba(255,255,255,.02);
+    margin-bottom: 16px; padding: 12px; background: var(--bg-card-inner);
     border: var(--border-subtle); border-radius: var(--radius);
 }
 .export-preview-label {
@@ -64,7 +90,7 @@
 .export-preview-placeholder {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 8px; height: 160px; color: var(--text-muted);
-    background: repeating-linear-gradient(135deg, #14171d, #14171d 10px, #171a21 10px, #171a21 20px);
+    background: repeating-linear-gradient(135deg, #EEF1F5, #EEF1F5 10px, #E6E9EF 10px, #E6E9EF 20px);
 }
 .export-preview-placeholder span { font-size: 12px; max-width: 220px; text-align: center; }
 .export-preview-video.has-src ~ .export-preview-placeholder { display: none; }
@@ -78,7 +104,7 @@
    "Metraje Escaneado con Éxito" - ver js/modules/premiereExport.js
    ============================================ */
 .beta-tag {
-    background: #0d3b2c; color: #6ee7b7; border-radius: 4px; padding: 2px 8px;
+    background: #D1FAE5; color: var(--accent-green); border-radius: 4px; padding: 2px 8px;
     font-size: 11px; font-weight: bold; margin-left: 8px; text-transform: uppercase;
     letter-spacing: .4px; vertical-align: middle;
 }
@@ -152,9 +178,11 @@ mark { background: var(--accent-gold); color: #14100a; padding: 1px 3px; border-
     padding: 6px 12px; border-radius: var(--radius); cursor: pointer; font-size: 12px;
     transition: background .15s var(--ease), border-color .15s var(--ease), transform .1s var(--ease);
 }
-.btn-mini:hover { background: #20242c; border-color: #3a4257; }
+.btn-mini:hover { background: var(--bg-hover); border-color: var(--border-hover-color); }
 .btn-mini:active { transform: translateY(1px); }
 .btn-mini.editing { background: var(--accent-gold); color: #14100a; border-color: var(--accent-gold); font-weight: bold; }
+.btn-mini-danger { color: #BE123C; border-color: rgba(244,63,94,.35); background: rgba(244,63,94,.06); margin-left: auto; }
+.btn-mini-danger:hover { background: rgba(244,63,94,.14); border-color: rgba(244,63,94,.5); }
 
 .prompt-box { background: var(--bg-input); border: var(--border); padding: 15px; border-radius: var(--radius); font-family: 'SFMono-Regular', Consolas, Menlo, monospace; font-size: 12px; color: var(--accent-green); max-height: 350px; overflow-y: auto; white-space: pre-wrap; margin-top: 10px; }
 .btn-copy {
@@ -208,9 +236,9 @@ mark { background: var(--accent-gold); color: #14100a; padding: 1px 3px; border-
     border: var(--border);
     transition: background .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease);
 }
-.telemetry-badge.state-live { background: #123043; color: var(--accent-cyan); border-color: var(--accent-cyan); }
-.telemetry-badge.state-done { background: #0d2b23; color: #6ee7b7; border-color: var(--accent-green); }
-.telemetry-badge.state-error { background: #3a1220; color: #fda4af; border-color: var(--accent-coral); }
+.telemetry-badge.state-live { background: #E0F2FE; color: var(--accent-cyan); border-color: var(--accent-cyan); }
+.telemetry-badge.state-done { background: #D1FAE5; color: var(--accent-green); border-color: var(--accent-green); }
+.telemetry-badge.state-error { background: #FFE4E8; color: #BE123C; border-color: var(--accent-coral); }
 .telemetry-log {
     height: 420px;
     overflow-y: auto;
@@ -226,5 +254,5 @@ mark { background: var(--accent-gold); color: #14100a; padding: 1px 3px; border-
 .telemetry-line { color: var(--text-sub); white-space: pre-wrap; word-break: break-word; }
 .telemetry-line .telemetry-ts { color: var(--text-muted); margin-right: 7px; }
 .telemetry-line.telemetry-error { color: var(--accent-coral); }
-.telemetry-line.telemetry-success { color: #6ee7b7; }
+.telemetry-line.telemetry-success { color: var(--accent-green); }
 .telemetry-line.telemetry-warn { color: var(--accent-gold); }

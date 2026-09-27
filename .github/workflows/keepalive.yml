@@ -1,0 +1,13 @@
+name: Keepalive Render
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render service
+        run: curl -sS -o /dev/null -w "status: %{http_code}, time: %{time_total}s\n" --max-time 30 https://audiovisual-suite-pro.onrender.com/

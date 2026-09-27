@@ -50,13 +50,13 @@
 
 .auth-error {
     margin: 12px 0 0; padding: 9px 12px; border-radius: var(--radius);
-    background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.4);
-    color: #fca5a5; font-size: 12.5px;
+    background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.35);
+    color: #B91C1C; font-size: 12.5px;
 }
 .auth-success {
     margin: 12px 0 0; padding: 12px; border-radius: var(--radius);
-    background: rgba(16,185,129,.12); border: 1px solid rgba(16,185,129,.4);
-    color: #6ee7b7; font-size: 13px; text-align: center; line-height: 1.5;
+    background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.35);
+    color: var(--accent-green); font-size: 13px; text-align: center; line-height: 1.5;
 }
 
 .auth-modal-footer {
@@ -136,7 +136,7 @@
     width: 30px; height: 30px; border-radius: var(--radius); cursor: pointer; font-size: 14px;
     transition: color .15s var(--ease), background .15s var(--ease);
 }
-.btn-close-drawer:hover { color: var(--text-main); background: #20242c; }
+.btn-close-drawer:hover { color: var(--text-main); background: var(--bg-hover); }
 
 .admin-drawer-tabs { display: flex; gap: 4px; padding: 0 22px; border-bottom: var(--border-subtle); }
 .admin-tab-btn {
@@ -194,5 +194,5 @@
     width: 28px; height: 28px; border-radius: var(--radius); cursor: pointer; font-size: 13px;
     transition: background .15s var(--ease), color .15s var(--ease);
 }
-.btn-admin-mini:hover:not(:disabled) { background: #20242c; color: var(--text-main); }
+.btn-admin-mini:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-main); }
 .btn-admin-mini:disabled { opacity: .35; cursor: not-allowed; }

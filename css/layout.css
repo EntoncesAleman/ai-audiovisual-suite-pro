@@ -7,7 +7,11 @@
    3 enlaces simples de navegación a la derecha.
    ============================================ */
 .app-header {
-    background: var(--bg-app);
+    position: sticky; top: 0; z-index: 30;
+    background:
+        linear-gradient(120deg, rgba(217,119,6,.05), rgba(37,99,235,.05) 55%, rgba(139,92,246,.05)),
+        rgba(255,255,255,.72);
+    backdrop-filter: blur(14px) saturate(160%); -webkit-backdrop-filter: blur(14px) saturate(160%);
     border-bottom: var(--border);
     padding: 14px 24px;
     display: flex; align-items: center; justify-content: space-between;
@@ -30,26 +34,34 @@
 .nav-link-disabled:hover { color: var(--text-sub); }
 
 /* ============================================
-   DASHBOARD: contenedor principal de la app, 3
-   columnas fijas. Col 1 = ingreso y estado del
-   sistema. Col 2 = generador de IA (arriba) +
-   transcripción/speech map (abajo). Col 3 = mini-
-   player (arriba) + clips + formato de exportación.
+   DASHBOARD: contenedor principal, 3 columnas.
+   Izquierda = ingreso y estado del sistema. Centro =
+   generador de IA + transcripción. Derecha = player +
+   clips (con thumbnails) + formato de exportación +
+   herramientas avanzadas (Premiere/Voiceover). Prompts
+   y clips quedan uno al lado del otro (no apilados en
+   la misma columna) para que un clip recién generado
+   quede a la vista sin tener que scrollear a buscarlo.
    ============================================ */
 .dashboard {
     display: grid;
-    grid-template-columns: 320px 1fr 360px;
-    gap: 16px;
+    grid-template-columns: 320px 1fr 1fr;
+    gap: 20px;
     padding: 16px;
     background: var(--bg-app);
     align-items: start;
-    max-width: 1800px;
+    max-width: 1900px;
     margin: 0 auto;
     box-sizing: border-box;
 }
 .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.col-left, .col-right { position: sticky; top: 16px; }
 .col-header { color: var(--text-main); font-size: 15px; font-weight: 600; margin: 0; }
+
+/* Las columnas de los costados suelen terminar más cortas que la del medio
+   (transcripción larga) - sticky evita que queden "flotando" con un hueco
+   vacío debajo mientras se scrollea el medio, y de paso deja el log de
+   telemetría y los botones de export siempre a la vista. */
+.col-left, .col-right { position: sticky; top: 88px; align-self: start; }
 
 .player-hint { font-size: 11.5px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }
 
@@ -86,13 +98,15 @@
 
 .sidebar-tools { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
 
-@media (max-width: 1500px) {
-    .dashboard { grid-template-columns: 280px 1fr 320px; }
+@media (max-width: 1750px) {
+    .dashboard { grid-template-columns: 300px 1fr 1fr; }
 }
 
-@media (max-width: 1150px) {
-    .dashboard { grid-template-columns: 1fr 1fr; }
-    .col-right { grid-column: span 2; position: static; }
+@media (max-width: 1350px) {
+    /* Deja de entrar cómodo en 3 columnas - el medio (prompts+metraje) y la
+       derecha (clips+export) pasan a apilarse, la izquierda sigue aparte. */
+    .dashboard { grid-template-columns: 280px 1fr; }
+    .col-right { grid-column: 2; position: static; }
 }
 
 @media (max-width: 860px) {

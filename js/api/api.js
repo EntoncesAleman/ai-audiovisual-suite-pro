@@ -48,3 +48,45 @@ export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
     }
     return { url };
 }
+
+/**
+ * Pide miniaturas reales (un frame por clip, en su timestamp de inicio) al
+ * backend - solo funciona si el video ya quedó cacheado del análisis (o hay
+ * una URL a mano): a propósito NO fuerza descarga ni re-subida de archivo
+ * local solo para una miniatura, así que si no hay nada disponible, los
+ * clips se quedan con `thumbnail: null` (el grid cae al placeholder de
+ * siempre) en vez de bloquear o mostrar un error.
+ *
+ * Muta `clip.thumbnail` in-place en los clips de `clipsList` que todavía no
+ * tengan esa propiedad (`undefined`) - llamar de nuevo con la misma lista es
+ * barato, solo pide lo que falta. Usado por clips.js y reelEditor.js.
+ */
+export async function fetchClipThumbnails(clipsList, sourceUrlInputId, onUpdate) {
+    const pending = clipsList.filter(c => c.thumbnail === undefined);
+    if (pending.length === 0) return;
+
+    const cacheKey = state.currentData?.cache_key || "";
+    const urlInput = document.getElementById(sourceUrlInputId);
+    const url = (urlInput?.value || "").trim() || state.currentData?.source_url || "";
+    if (!cacheKey && !url) {
+        pending.forEach(c => { c.thumbnail = null; });
+        return;
+    }
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/generate-thumbnails`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cache_key: cacheKey, url, clips: pending.map(c => ({ start: c.start })) }),
+        });
+        if (!res.ok) {
+            pending.forEach(c => { c.thumbnail = null; });
+            return;
+        }
+        const data = await res.json();
+        pending.forEach((c, idx) => { c.thumbnail = data.thumbnails[idx] || null; });
+    } catch (e) {
+        pending.forEach(c => { c.thumbnail = null; });
+    }
+    if (onUpdate) onUpdate();
+}

@@ -2,7 +2,7 @@ import { state } from '../state.js';
 import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip } from '../utils/helpers.js';
-import { resolveExportSource } from '../api/api.js';
+import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { seekAndPlay } from './player.js';
 import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
@@ -59,37 +59,47 @@ export function renderClipsList() {
     }
 
     grid.innerHTML = state.clipsList.map((clip, i) => `
-        <div class="clip-card" style="border-left-color:${clip.color || 'var(--border-color)'};">
-            <div class="clip-card-thumb">
-                <button class="clip-card-play" onclick="playClip(${i})" title="Reproducir desde acá"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
+        <div class="clip-card" style="--clip-accent:${clip.color || 'var(--border-color)'};">
+            <div class="clip-card-media">
+                ${clip.thumbnail ? `<img class="clip-card-thumb-img" src="${clip.thumbnail}" alt="">` : '<div class="clip-card-thumb-placeholder"></div>'}
+                <label class="clip-card-select-overlay" title="Incluir en la exportación">
+                    <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleClipSelection(${i}, this.checked)">
+                    <span class="clip-card-checkmark"></span>
+                </label>
+                <button class="clip-card-star-overlay ${clip.favorite ? 'active' : ''}" onclick="toggleClipFavorite(${i})" title="Marcar como favorito">★</button>
+                <button class="clip-card-play-overlay" onclick="playClip(${i})" title="Reproducir desde acá"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
+                <span class="clip-card-time-badge">${escapeHtml(clip.start)} → ${escapeHtml(clip.end)}</span>
             </div>
-            <div class="clip-card-body">
-                <div class="clip-card-top">
-                    <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleClipSelection(${i}, this.checked)" title="Incluir en la exportación">
-                    <button class="clip-card-color-dot" style="background:${clip.color || 'transparent'};" onclick="cycleClipColor(${i})" title="Asignar color (para organizar)"></button>
-                    <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateClip(${i}, 'label', this.value)" placeholder="Descripción del clip">
-                    <button class="clip-card-star ${clip.favorite ? 'active' : ''}" onclick="toggleClipFavorite(${i})" title="Marcar como favorito">★</button>
-                    <button class="btn-clip-remove" onclick="sendClipToCapCut(${i})" title="Enviar a CapCut (beta, requiere server local con CapCut instalado)" style="font-size:11px;width:auto;padding:0 6px;">🎞</button>
-                    <button class="btn-clip-remove" onclick="removeClip(${i})" title="Quitar">×</button>
-                </div>
-                <div class="clip-card-times">
-                    <input type="text" value="${escapeHtml(clip.start)}" onchange="updateClip(${i}, 'start', this.value)" title="Inicio (In)">
-                    <span>→</span>
-                    <input type="text" value="${escapeHtml(clip.end)}" onchange="updateClip(${i}, 'end', this.value)" title="Fin (Out)">
-                </div>
-                <div class="clip-card-transition" title="Transición hacia el próximo clip seleccionado (solo aplica al exportar a Premiere, con pistas en 'mismo canal')">
-                    <span>🎬→</span>
-                    <select onchange="updateClip(${i}, 'transitionOut', this.value)">
-                        <option value="none" ${!clip.transitionOut || clip.transitionOut === 'none' ? 'selected' : ''}>Corte seco</option>
-                        <option value="dissolve" ${clip.transitionOut === 'dissolve' ? 'selected' : ''}>Disolvencia cruzada</option>
-                        <option value="dip_black" ${clip.transitionOut === 'dip_black' ? 'selected' : ''}>Fundido a negro</option>
-                        <option value="wipe" ${clip.transitionOut === 'wipe' ? 'selected' : ''}>Wipe</option>
-                    </select>
-                </div>
-                <span id="capcutStatus_${i}" style="font-size:10px;color:#94a3b8;display:block;margin-top:2px;"></span>
+            <div class="clip-card-footer">
+                <button class="clip-card-color-dot" style="background:${clip.color || 'transparent'};" onclick="cycleClipColor(${i})" title="Asignar color (para organizar)"></button>
+                <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateClip(${i}, 'label', this.value)" placeholder="Descripción del clip">
+                <button class="btn-clip-remove" onclick="sendClipToCapCut(${i})" title="Enviar a CapCut (beta, requiere server local con CapCut instalado)" style="font-size:11px;width:auto;padding:0 4px;">🎞</button>
+                <button class="btn-clip-remove" onclick="removeClip(${i})" title="Quitar">×</button>
             </div>
+            <details class="clip-card-advanced">
+                <summary>Ajustar tiempos / transición</summary>
+                <div class="clip-card-advanced-body">
+                    <div class="clip-card-times">
+                        <input type="text" value="${escapeHtml(clip.start)}" onchange="updateClip(${i}, 'start', this.value)" title="Inicio (In)">
+                        <span>→</span>
+                        <input type="text" value="${escapeHtml(clip.end)}" onchange="updateClip(${i}, 'end', this.value)" title="Fin (Out)">
+                    </div>
+                    <div class="clip-card-transition" title="Transición hacia el próximo clip seleccionado (solo aplica al exportar a Premiere, con pistas en 'mismo canal')">
+                        <span>🎬→</span>
+                        <select onchange="updateClip(${i}, 'transitionOut', this.value)">
+                            <option value="none" ${!clip.transitionOut || clip.transitionOut === 'none' ? 'selected' : ''}>Corte seco</option>
+                            <option value="dissolve" ${clip.transitionOut === 'dissolve' ? 'selected' : ''}>Disolvencia cruzada</option>
+                            <option value="dip_black" ${clip.transitionOut === 'dip_black' ? 'selected' : ''}>Fundido a negro</option>
+                            <option value="wipe" ${clip.transitionOut === 'wipe' ? 'selected' : ''}>Wipe</option>
+                        </select>
+                    </div>
+                </div>
+            </details>
+            <span id="capcutStatus_${i}" class="clip-card-capcut-status"></span>
         </div>
     `).join('');
+
+    fetchClipThumbnails(state.clipsList, 'clipSourceUrl', renderClipsList);
 }
 
 export function toggleClipFavorite(i) {
@@ -122,6 +132,12 @@ export function toggleClipSelection(i, checked) {
 
 export function updateClip(i, field, value) {
     state.clipsList[i][field] = value.trim();
+    if (field === 'start') {
+        // El thumbnail quedó desactualizado (era del timestamp viejo) - se
+        // vuelve a pedir para este clip puntual, sin tocar los demás.
+        state.clipsList[i].thumbnail = undefined;
+        fetchClipThumbnails(state.clipsList, 'clipSourceUrl', renderClipsList);
+    }
 }
 
 export function removeClip(i) {
@@ -131,6 +147,13 @@ export function removeClip(i) {
 
 export function selectAllClips(val) {
     state.clipsList.forEach(c => c.selected = val);
+    renderClipsList();
+}
+
+export function clearAllClips() {
+    if (state.clipsList.length === 0) return;
+    if (!confirm(`¿Vaciar los ${state.clipsList.length} clips de la lista? No se puede deshacer.`)) return;
+    state.clipsList = [];
     renderClipsList();
 }
 
@@ -221,6 +244,10 @@ export async function generateClipsWithAI() {
 
         state.clipsList = imported;
         renderClipsList();
+        // En pantallas angostas (columnas apiladas) el grid puede quedar
+        // fuera de vista - lo llevamos a la vista solo, sin que haya que
+        // buscarlo a mano.
+        document.getElementById('clipExporter')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         const engineLabel = data.engine === "groq" ? "Groq (respaldo, Gemini no estaba disponible)" : "Gemini";
         if (feedback) feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} generado${imported.length > 1 ? 's' : ''} e importado${imported.length > 1 ? 's' : ''} directo con ${engineLabel}, sin pasar por otra IA.`;
         telemetryLog('telemetry', `✓ ${imported.length} clip(s) generado(s) con ${engineLabel}.`, 'done');
@@ -350,9 +377,6 @@ export async function startClipExport() {
  * Clips con IA" (generateActiveClipsWithAI en app.js) llena la que esté activa.
  */
 export function switchClipEditorTab(tab) {
-    document.querySelectorAll('.clip-editor-tab-btn').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.tab === tab);
-    });
     document.getElementById('clipEditorTabSimple').classList.toggle('active', tab === 'simple');
     document.getElementById('clipEditorTabSocial').classList.toggle('active', tab === 'social');
 }

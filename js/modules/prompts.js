@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { updateVideoPanel } from './reelEditor.js';
 import { switchClipEditorTab } from './clips.js';
 import { fetchWithTimeout } from '../utils/helpers.js';
+import { getLastPromptKey, setLastPromptKey } from '../utils/storage.js';
 
 export async function loadPromptsLibrary() {
     try {
@@ -43,8 +44,19 @@ export function populatePromptSelect() {
     renderPromptModeBar(cats, byCat);
     renderPromptOtherSelect(cats, byCat);
 
-    // Arranca en el modo "audiovisual" (mismo default de siempre: "teaser").
-    selectPromptMode("audiovisual");
+    // Restaura el último enfoque usado (entre sesiones/recargas), para no
+    // tener que re-elegirlo cada vez - si no hay nada guardado o el enfoque
+    // guardado ya no existe (cambió prompts.json), cae al default de
+    // siempre ("audiovisual" → primero de la lista, típicamente "teaser").
+    const lastKey = getLastPromptKey();
+    const lastEnf = lastKey ? enfoques[lastKey] : null;
+    if (lastEnf && lastEnf.categoria === "libre") {
+        setPromptTopMode("assistant");
+    } else if (lastEnf) {
+        selectPromptMode(lastEnf.categoria, lastKey);
+    } else {
+        selectPromptMode("audiovisual");
+    }
 }
 
 function renderPromptModeBar(cats, byCat) {
@@ -124,6 +136,11 @@ export function selectPromptMode(catKey, preferredKey, syncTab = true) {
         });
     }
 
+    // Recordar el enfoque elegido para la próxima vez que se abra la app
+    // (ver populatePromptSelect) - no hace falta re-elegir el mismo enfoque/
+    // plataforma en cada sesión.
+    if (sel.value) setLastPromptKey(sel.value);
+
     // FIX: si el <select> ya arranca en el valor elegido, el evento onchange
     // NO se dispara solo. Lo llamamos a mano para que el panel de
     // personalización correspondiente (teaser, libre, etc.) se actualice.
@@ -140,6 +157,26 @@ export function onPromptTypeOtherChange() {
     // El enfoque elegido no pertenece a ninguno de los dos modos principales:
     // ningún botón queda marcado como activo.
     document.querySelectorAll(".prompt-mode-btn").forEach(b => b.classList.remove("active"));
+}
+
+/**
+ * Toggle "📋 Prompt / 💬 Assistant" (arriba del generador, ver mockup de
+ * rediseño): "Assistant" reutiliza el modo "libre" que ya existe (campo de
+ * texto grande, sin enfoque predefinido) en vez de armar un sistema de
+ * asistente conversacional aparte - un enfoque nuevo no aportaba nada que
+ * "Prompt libre" no hiciera ya. Solo cambia qué controles se ven arriba.
+ */
+export function setPromptTopMode(mode) {
+    document.querySelectorAll(".prompt-top-toggle-btn").forEach(b => b.classList.toggle("active", b.dataset.topmode === mode));
+    const isAssistant = mode === "assistant";
+    document.getElementById("promptModeBar").style.display = isAssistant ? "none" : "";
+    document.getElementById("promptControlBar").style.display = isAssistant ? "none" : "";
+    document.getElementById("promptOtherRow").style.display = isAssistant ? "none" : "";
+    if (isAssistant) {
+        selectPromptMode("libre", "libre");
+    } else {
+        selectPromptMode("audiovisual");
+    }
 }
 
 export function onPromptTypeChange() {

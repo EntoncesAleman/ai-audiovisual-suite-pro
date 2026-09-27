@@ -72,3 +72,21 @@ export function setUrlDraft(url) {
 export function clearUrlDraft() {
     localStorage.removeItem(URL_DRAFT_KEY);
 }
+
+// ============================================================
+// ÚLTIMO ENFOQUE USADO: para no tener que re-elegir el mismo enfoque/
+// formato de plataforma cada vez que se abre la app - ver prompts.js.
+// ============================================================
+const LAST_PROMPT_KEY = "last_prompt_key";
+
+export function getLastPromptKey() {
+    return localStorage.getItem(LAST_PROMPT_KEY) || "";
+}
+
+export function setLastPromptKey(key) {
+    if (key) {
+        localStorage.setItem(LAST_PROMPT_KEY, key);
+    } else {
+        localStorage.removeItem(LAST_PROMPT_KEY);
+    }
+}

@@ -155,13 +155,35 @@ export function parseAiTimestampsText(text, defaultDurationSeconds = 30) {
     } else {
         const inlinePattern = /Inicio:\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*[—–-]+\s*Fin:\s*(\d{1,2}:\d{2}(?::\d{2})?)/gi;
         const inlineMatches = [...text.matchAll(inlinePattern)];
-        for (let i = 0; i < inlineMatches.length; i++) {
-            imported.push({
-                start: inlineMatches[i][1],
-                end:   inlineMatches[i][2],
-                label: labels[i] || `Clip importado ${i + 1}`,
-                selected: true
-            });
+        if (inlineMatches.length > 0) {
+            for (let i = 0; i < inlineMatches.length; i++) {
+                imported.push({
+                    start: inlineMatches[i][1],
+                    end:   inlineMatches[i][2],
+                    label: labels[i] || `Clip importado ${i + 1}`,
+                    selected: true
+                });
+            }
+        } else {
+            // Fallback 3: rango plano "HH:MM - HH:MM" al inicio de línea,
+            // seguido del personaje y la frase en las 2 líneas siguientes -
+            // es el formato que devuelven los guiones de teaser/reel corto
+            // (buildTeaserPromptOriginal en prompts.js, y el enfoque
+            // "reel_15s"), muy distinto del "Inicio:/Fin:" de arriba. Sin
+            // esto, "Generar Clips con IA" nunca podía auto-importar nada
+            // con el enfoque por default de la app ("Estructurar Teaser").
+            const rangeBlockPattern = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(\d{1,2}:\d{2}(?::\d{2})?)[ \t]*\r?\n([^\n]*)\r?\n?([^\n]*)/gm;
+            const rangeMatches = [...text.matchAll(rangeBlockPattern)];
+            for (let i = 0; i < rangeMatches.length; i++) {
+                const [, start, end, line1, line2] = rangeMatches[i];
+                const speaker = (line1 || '').trim().slice(0, 30);
+                const quote = (line2 || '').replace(/^["“]|["”]$/g, '').trim().slice(0, 60);
+                const looksLikeSpeaker = speaker && !/^\d{1,2}:\d{2}/.test(speaker);
+                const label = looksLikeSpeaker
+                    ? (quote ? `${speaker}: ${quote}` : speaker)
+                    : (labels[i] || `Clip importado ${i + 1}`);
+                imported.push({ start, end, label, selected: true });
+            }
         }
     }
     return imported;

@@ -2,7 +2,7 @@ import { state } from '../state.js';
 import { BACKEND_URL, PLATFORM_DATA, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip } from '../utils/helpers.js';
-import { resolveExportSource } from '../api/api.js';
+import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { seekAndPlay } from './player.js';
 import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
@@ -96,35 +96,45 @@ export function renderReelClipsList() {
         return;
     }
     grid.innerHTML = state.reelClipsList.map((clip, i) => `
-        <div class="clip-card" style="border-left-color:${clip.color || 'var(--border-color)'};">
-            <div class="clip-card-thumb">
-                <button class="clip-card-play" onclick="playReelClip(${i})" title="Reproducir desde acá"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
+        <div class="clip-card" style="--clip-accent:${clip.color || 'var(--border-color)'};">
+            <div class="clip-card-media">
+                ${clip.thumbnail ? `<img class="clip-card-thumb-img" src="${clip.thumbnail}" alt="">` : '<div class="clip-card-thumb-placeholder"></div>'}
+                <label class="clip-card-select-overlay" title="Incluir en la exportación">
+                    <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleReelClip(${i}, this.checked)">
+                    <span class="clip-card-checkmark"></span>
+                </label>
+                <button class="clip-card-star-overlay ${clip.favorite ? 'active' : ''}" onclick="toggleReelClipFavorite(${i})" title="Marcar como favorito">★</button>
+                <button class="clip-card-play-overlay" onclick="playReelClip(${i})" title="Reproducir desde acá"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
+                <span class="clip-card-time-badge">${escapeHtml(clip.start)} → ${escapeHtml(clip.end)}</span>
             </div>
-            <div class="clip-card-body">
-                <div class="clip-card-top">
-                    <input type="checkbox" ${clip.selected ? "checked" : ""} onchange="toggleReelClip(${i}, this.checked)" title="Incluir en la exportación">
-                    <button class="clip-card-color-dot" style="background:${clip.color || 'transparent'};" onclick="cycleReelClipColor(${i})" title="Asignar color (para organizar)"></button>
-                    <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateReelClip(${i}, 'label', this.value)" placeholder="Descripción / Speaker">
-                    <button class="clip-card-star ${clip.favorite ? 'active' : ''}" onclick="toggleReelClipFavorite(${i})" title="Marcar como favorito">★</button>
-                    <button class="btn-clip-remove" onclick="removeReelClip(${i})" title="Quitar">×</button>
-                </div>
-                <div class="clip-card-times">
-                    <input type="text" value="${escapeHtml(clip.start)}" onchange="updateReelClip(${i}, 'start', this.value)" title="Inicio (In)">
-                    <span>→</span>
-                    <input type="text" value="${escapeHtml(clip.end)}" onchange="updateReelClip(${i}, 'end', this.value)" title="Fin (Out)">
-                </div>
-                <div class="clip-card-transition" title="Transición hacia el próximo clip seleccionado (solo aplica al exportar a Premiere, con pistas en 'mismo canal')">
-                    <span>🎬→</span>
-                    <select onchange="updateReelClip(${i}, 'transitionOut', this.value)">
-                        <option value="none" ${!clip.transitionOut || clip.transitionOut === 'none' ? 'selected' : ''}>Corte seco</option>
-                        <option value="dissolve" ${clip.transitionOut === 'dissolve' ? 'selected' : ''}>Disolvencia cruzada</option>
-                        <option value="dip_black" ${clip.transitionOut === 'dip_black' ? 'selected' : ''}>Fundido a negro</option>
-                        <option value="wipe" ${clip.transitionOut === 'wipe' ? 'selected' : ''}>Wipe</option>
-                    </select>
-                </div>
+            <div class="clip-card-footer">
+                <button class="clip-card-color-dot" style="background:${clip.color || 'transparent'};" onclick="cycleReelClipColor(${i})" title="Asignar color (para organizar)"></button>
+                <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateReelClip(${i}, 'label', this.value)" placeholder="Descripción / Speaker">
+                <button class="btn-clip-remove" onclick="removeReelClip(${i})" title="Quitar">×</button>
             </div>
+            <details class="clip-card-advanced">
+                <summary>Ajustar tiempos / transición</summary>
+                <div class="clip-card-advanced-body">
+                    <div class="clip-card-times">
+                        <input type="text" value="${escapeHtml(clip.start)}" onchange="updateReelClip(${i}, 'start', this.value)" title="Inicio (In)">
+                        <span>→</span>
+                        <input type="text" value="${escapeHtml(clip.end)}" onchange="updateReelClip(${i}, 'end', this.value)" title="Fin (Out)">
+                    </div>
+                    <div class="clip-card-transition" title="Transición hacia el próximo clip seleccionado (solo aplica al exportar a Premiere, con pistas en 'mismo canal')">
+                        <span>🎬→</span>
+                        <select onchange="updateReelClip(${i}, 'transitionOut', this.value)">
+                            <option value="none" ${!clip.transitionOut || clip.transitionOut === 'none' ? 'selected' : ''}>Corte seco</option>
+                            <option value="dissolve" ${clip.transitionOut === 'dissolve' ? 'selected' : ''}>Disolvencia cruzada</option>
+                            <option value="dip_black" ${clip.transitionOut === 'dip_black' ? 'selected' : ''}>Fundido a negro</option>
+                            <option value="wipe" ${clip.transitionOut === 'wipe' ? 'selected' : ''}>Wipe</option>
+                        </select>
+                    </div>
+                </div>
+            </details>
         </div>
     `).join("");
+
+    fetchClipThumbnails(state.reelClipsList, 'reelSourceUrl', renderReelClipsList);
 }
 
 export function toggleReelClip(i, checked) {
@@ -134,9 +144,23 @@ export function toggleReelClip(i, checked) {
     if (badge) badge.textContent = `${selected}/${state.reelClipsList.length} clips`;
 }
 
-export function updateReelClip(i, field, value) { state.reelClipsList[i][field] = value.trim(); }
+export function updateReelClip(i, field, value) {
+    state.reelClipsList[i][field] = value.trim();
+    if (field === 'start') {
+        state.reelClipsList[i].thumbnail = undefined;
+        fetchClipThumbnails(state.reelClipsList, 'reelSourceUrl', renderReelClipsList);
+    }
+}
 export function removeReelClip(i) { state.reelClipsList.splice(i, 1); renderReelClipsList(); }
 export function selectAllReelClips(val) { state.reelClipsList.forEach(c => c.selected = val); renderReelClipsList(); }
+
+export function clearAllReelClips() {
+    if (state.reelClipsList.length === 0) return;
+    if (!confirm(`¿Vaciar los ${state.reelClipsList.length} clips de la lista? No se puede deshacer.`)) return;
+    state.reelClipsList = [];
+    state.reelCarouselCaption = "";
+    renderReelClipsList();
+}
 export function toggleReelClipFavorite(i) { state.reelClipsList[i].favorite = !state.reelClipsList[i].favorite; renderReelClipsList(); }
 
 /** Color-coding puramente visual (no viaja a ningún export) - ver cycleClipColor en clips.js. */
@@ -225,6 +249,10 @@ export async function generateReelClipsWithAI() {
         state.reelClipsList = imported;
         state.reelCarouselCaption = ""; // clips nuevos: los copies viejos ya no aplican
         renderReelClipsList();
+        // En pantallas angostas (columnas apiladas) el grid puede quedar
+        // fuera de vista - lo llevamos a la vista solo, sin que haya que
+        // buscarlo a mano.
+        document.getElementById('videoEditorPanel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         const engineLabel = data.engine === "groq" ? "Groq (respaldo, Gemini no estaba disponible)" : "Gemini";
         if (feedback) feedback.textContent = `✅ ${imported.length} clip${imported.length > 1 ? 's' : ''} generado${imported.length > 1 ? 's' : ''} e importado${imported.length > 1 ? 's' : ''} directo con ${engineLabel}, sin pasar por otra IA.`;
         telemetryLog('telemetry', `✓ ${imported.length} clip(s) generado(s) con ${engineLabel}.`, 'done');

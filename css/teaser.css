@@ -2,18 +2,18 @@
    PANEL DE PERSONALIZACIÓN DEL TEASER
    ============================================ */
 .teaser-customizer {
-    background: linear-gradient(135deg, var(--bg-card-inner) 0%, #10233d 100%);
+    background: linear-gradient(135deg, var(--bg-card-inner) 0%, #E7EFFD 100%);
     border: 2px solid var(--accent-blue);
     border-radius: var(--radius);
     padding: 18px;
     margin: 14px 0;
     display: none;
-    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.2);
+    box-shadow: 0 4px 20px rgba(37, 99, 235, 0.12);
 }
 .teaser-customizer.active { display: block; }
 .teaser-customizer h4 {
     margin: 0 0 14px 0;
-    color: #93c5fd;
+    color: var(--accent-blue-hover);
     font-size: 15px;
     display: flex; align-items: center; gap: 8px;
 }
@@ -73,7 +73,7 @@
     cursor: pointer;
     font-size: 11px;
 }
-.btn-teaser-action:hover { background: #20242c; }
+.btn-teaser-action:hover { background: var(--bg-hover); }
 .btn-teaser-action.primary {
     background: var(--accent-blue);
     border-color: var(--accent-blue);

@@ -16,7 +16,7 @@
     padding: 9px 16px; border-radius: var(--radius); font-size: 13.5px; font-weight: 600;
     transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
 }
-.header-back-link:hover { background: #20242c; border-color: var(--border-subtle-color); color: var(--text-main); }
+.header-back-link:hover { background: var(--bg-hover); border-color: var(--border-subtle-color); color: var(--text-main); }
 
 .historial-toolbar {
     display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;
@@ -30,7 +30,7 @@
     border-radius: var(--radius); cursor: pointer;
     transition: background .15s var(--ease), border-color .15s var(--ease);
 }
-.session-item-full:hover { background: #20242c; border-color: var(--border-color); }
+.session-item-full:hover { background: var(--bg-hover); border-color: var(--border-color); }
 .session-item-full-main { display: flex; flex: 1; min-width: 0; }
 .session-item-full-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .session-item-full-title {

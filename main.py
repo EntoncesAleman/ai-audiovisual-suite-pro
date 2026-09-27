@@ -1245,21 +1245,28 @@ def _extract_retry_delay(e: Exception, default: int = 65) -> int:
     return default
 
 
-# Modelo dedicado de ASR con diarización real (AudioTranscriptionConfig),
-# a diferencia de GEMINI_MODELS que son LLMs de propósito general "actuando"
-# de transcriptor siguiendo las instrucciones de PROMPT_ESCANEO. En teoría
-# da mejor diarización que pedírsela a un LLM en el prompt.
-# Probado a mano el 2026-08-26 (recién anunciado ese mismo día): en la
-# mayoría de los intentos devuelve 503 "high demand"; cuando sí responde,
-# el texto viene incompleto/cortado antes de cubrir el audio entero. No es
-# confiable todavía - por eso _transcribe_with_gemini_dedicated() no
-# reintenta nada acá adentro, cualquier falla cae rápido al resto de
-# GEMINI_MODELS en vez de insistir.
+# Modelo dedicado de ASR (AudioTranscriptionConfig) - DESACTIVADO del
+# pipeline principal (ver _process_single_video_file), aunque la función de
+# abajo se deja definida por si alguien quiere retomarlo más adelante.
+# Motivo: pide diarization=True, pero _transcribe_with_gemini_dedicated()
+# descarta esa estructura al envolver el resultado (ver docstring de la
+# función) - un video de 50 min con varios hablantes quedaba mostrado como
+# un solo "Speaker 1" sin separación real, y con un único TIMESTAMP: 00:00
+# para todo el audio. Sumado a que ya estaba marcado como poco confiable
+# (probado a mano el 2026-08-26: mayoría 503 "high demand", texto cortado
+# cuando sí respondía), no vale la pena seguir intentándolo primero.
+# Para retomarlo en serio habría que parsear la diarización/timestamps
+# reales que devuelve el modelo (no investigado todavía) en vez de tirarlos.
 GEMINI_TRANSCRIBE_MODEL = os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
 
 
 def _transcribe_with_gemini_dedicated(uploaded_file) -> str:
     """
+    NO SE LLAMA desde el pipeline principal - ver comentario arriba de
+    GEMINI_TRANSCRIBE_MODEL. Queda definida por si se retoma más adelante,
+    parseando de verdad la diarización/timestamps que devuelve el modelo en
+    vez de aplastarlos en una sola entrada como hace ahora.
+
     Transcribe con el modelo dedicado GEMINI_TRANSCRIBE_MODEL en vez de
     pedirle a un LLM de propósito general que actúe de transcriptor. No
     sigue el formato TIMESTAMP/SPEAKER/DIALOGUE de PROMPT_ESCANEO (es ASR
@@ -1515,6 +1522,46 @@ def _normalize_engine(value: str) -> str:
     return value if value in ("auto", "gemini", "groq") else "auto"
 
 
+_SILENCE_MAX_VOLUME_THRESHOLD_DB = -50.0
+
+
+def _is_pure_silence(audio_path: str, threshold_db: float = _SILENCE_MAX_VOLUME_THRESHOLD_DB) -> bool:
+    """
+    Corre `ffmpeg -af volumedetect` (filtro nativo, ya es dependencia del
+    proyecto) sobre TODO el audio y devuelve True si el pico máximo de
+    volumen de todo el tramo está por debajo de `threshold_db` - es decir,
+    silencio digital puro o casi puro (sin señal de voz real, ni siquiera
+    baja). Habla real, aunque sea susurrada, deja picos muy por encima de
+    -50dB, así que este umbral no descarta diálogo genuino.
+
+    Pre-filtro recomendado por el QA Agent y el Market Research Agent
+    (ver HANDOFF.md, market-research-report.md tema 2): confirmado en vivo
+    que Gemini alucina una frase repetida cientos de veces cuando el audio
+    de entrada no tiene ninguna señal real - en vez de mandarle ese tramo a
+    un modelo generativo, se detecta acá (una sola pasada de ffmpeg, sin
+    costo de API) y se devuelve "sin diálogo" directo.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", audio_path, "-af", "volumedetect", "-vn", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=60,
+        )
+        match = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", result.stderr)
+        if not match:
+            return False  # no se pudo determinar - seguir el camino normal (Gemini/Groq)
+        return float(match.group(1)) <= threshold_db
+    except Exception:
+        return False  # ante cualquier error del pre-filtro, no bloquear el flujo normal
+
+
+_NO_DIALOGUE_TRANSCRIPT = (
+    "TIMESTAMP: 00:00\n"
+    "SPEAKER: (silencio)\n"
+    "DIALOGUE: [Sin diálogo detectado - tramo sin señal de audio real]"
+)
+
+
 def _process_single_video_file(video_path: str, engine: str = "auto") -> str:
     """
     Extrae el audio del archivo (drásticamente menos tokens que video) y lo
@@ -1533,6 +1580,14 @@ def _process_single_video_file(video_path: str, engine: str = "auto") -> str:
     path_to_upload = audio_path
     size_mb = round(os.path.getsize(audio_path) / (1024 * 1024), 2)
     print(f"   Audio extraído: {os.path.basename(audio_path)} ({size_mb} MB).")
+
+    if _is_pure_silence(audio_path):
+        print("   ⚠ Audio sin señal real (silencio digital) - se salta la transcripción, no se llama a ningún modelo.")
+        try:
+            os.remove(audio_path)
+        except Exception:
+            pass
+        return _NO_DIALOGUE_TRANSCRIPT
 
     try:
         if engine == "groq":
@@ -1556,12 +1611,16 @@ def _process_single_video_file(video_path: str, engine: str = "auto") -> str:
                 raise Exception(f"La indexación de {os.path.basename(path_to_upload)} falló en Google.")
 
             try:
-                try:
-                    text = _transcribe_with_gemini_dedicated(uploaded_file)
-                    print(f"   ✓ Transcripción obtenida vía {GEMINI_TRANSCRIBE_MODEL} (diarización real dedicada).")
-                except Exception as dedicated_error:
-                    print(f"   ⚠ {GEMINI_TRANSCRIBE_MODEL} no disponible/no usable ({dedicated_error}). Pasando a GEMINI_MODELS...")
-                    text = _call_gemini_with_retry(uploaded_file)
+                # _transcribe_with_gemini_dedicated (gemini-3.5-transcribe) YA
+                # NO se intenta acá: confirmado que aunque pide diarization=True,
+                # el wrapper de esa función descarta toda esa estructura y
+                # devuelve el audio ENTERO como un solo bloque "SPEAKER: Speaker 1"
+                # en "TIMESTAMP: 00:00" (ver la función) - un video de 50 minutos
+                # con varios hablantes quedaba mostrado como un único hablante sin
+                # separación real. GEMINI_MODELS con PROMPT_ESCANEO (abajo) sí
+                # devuelve múltiples SPEAKER/TIMESTAMP reales, que es lo que el
+                # resto de la app (Speech Map, generación de clips) necesita.
+                text = _call_gemini_with_retry(uploaded_file)
             except Exception as gemini_error:
                 if engine == "auto" and GROQ_API_KEY:
                     print(f"   ⚠ Gemini falló ({gemini_error}). Probando fallback con Groq Whisper...")
@@ -2047,6 +2106,129 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
 
 
 # ============================================================
+# VOICEOVER / DOBLAJE (Gemini TTS)
+# ============================================================
+
+# Modelos con TTS dedicado de Gemini - mismo SDK y cuenta que ya usa el
+# proyecto para transcripción/generación de texto, sin dependencia nueva.
+# El flash-preview es el default (probado en vivo, rápido); el pro-preview
+# queda como respaldo (mejor calidad, cuota más chica) si el primero falla.
+# Son modelos "preview": mismo cuidado que gemini-3.5-transcribe en HANDOFF.md
+# (probar con casos reales antes de prometerlos como 100% estables).
+GEMINI_TTS_MODELS = [
+    m.strip() for m in os.getenv(
+        "GEMINI_TTS_MODELS",
+        "gemini-2.5-flash-preview-tts,gemini-2.5-pro-preview-tts",
+    ).split(",") if m.strip()
+]
+
+# Voces prebuilt de Gemini confirmadas en vivo contra la API real (de las ~30
+# que documenta Google, esta es la muestra que efectivamente devolvió audio
+# en la prueba, no una lista copiada de la documentación sin probar).
+TTS_VOICES = {
+    "Kore": "Firme, informativa",
+    "Zephyr": "Brillante, enérgica",
+    "Aoede": "Fresca, natural",
+    "Fenrir": "Excitable, grave",
+}
+_DEFAULT_TTS_VOICE = "Kore"
+
+
+class TtsInput(BaseModel):
+    text: str
+    voice: str = _DEFAULT_TTS_VOICE
+
+
+@app.get("/tts-voices")
+def get_tts_voices():
+    """Voces disponibles para /generate-voiceover, para que el frontend arme el selector sin hardcodearlas."""
+    return {"voices": TTS_VOICES, "default": _DEFAULT_TTS_VOICE}
+
+
+def _pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2) -> bytes:
+    """Gemini TTS devuelve PCM crudo (sin header) - lo envolvemos en un WAV real para que sea reproducible/descargable."""
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(sample_width)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm_data)
+    return buf.getvalue()
+
+
+_TTS_SAMPLE_RATE_RE = re.compile(r"rate=(\d+)")
+
+
+@app.post("/generate-voiceover", dependencies=[Depends(require_api_key)])
+async def generate_voiceover(input_data: TtsInput):
+    """
+    Convierte un texto (guion, copy para redes, lo que sea) en un archivo de
+    audio .wav con Gemini TTS - para doblaje/voiceover de los clips exportados.
+    No se mezcla automáticamente con ningún video: devuelve el .wav suelto,
+    la persona lo importa a mano en Premiere/CapCut/donde edite.
+    """
+    text = (input_data.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="El texto no puede estar vacío.")
+    if len(text) > 5000:
+        raise HTTPException(status_code=400, detail="Texto demasiado largo (máx. 5000 caracteres).")
+    voice = input_data.voice if input_data.voice in TTS_VOICES else _DEFAULT_TTS_VOICE
+
+    await _heavy_ops_semaphore.acquire()
+    try:
+        mem_error = _memory_headroom_error()
+        if mem_error:
+            raise HTTPException(status_code=503, detail=mem_error)
+
+        last_error = None
+        for model in GEMINI_TTS_MODELS:
+            try:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model,
+                    contents=text,
+                    config=genai_types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=genai_types.SpeechConfig(
+                            voice_config=genai_types.VoiceConfig(
+                                prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=voice)
+                            )
+                        ),
+                    ),
+                )
+                content = response.candidates[0].content if response.candidates else None
+                part = content.parts[0] if content and content.parts else None
+                if not part or not part.inline_data or not part.inline_data.data:
+                    raise Exception(f"{model} no devolvió audio (respuesta vacía, posible filtro de seguridad o falla transitoria).")
+
+                rate_match = _TTS_SAMPLE_RATE_RE.search(part.inline_data.mime_type or "")
+                sample_rate = int(rate_match.group(1)) if rate_match else 24000
+                wav_bytes = _pcm_to_wav_bytes(part.inline_data.data, sample_rate=sample_rate)
+
+                export_id = deterministic_export_id(text, voice, model)
+                filename = f"voiceover_{export_id}.wav"
+                with open(EXPORT_DIR / filename, "wb") as f:
+                    f.write(wav_bytes)
+
+                return {"download_url": f"/exports/{filename}", "filename": filename, "model": model, "voice": voice}
+            except Exception as e:
+                last_error = e
+                print(f"   ⚠ TTS con {model} falló ({e}). Probando siguiente modelo...")
+                continue
+
+        raise HTTPException(status_code=502, detail=f"No se pudo generar el audio con ningún modelo de TTS. Último error: {last_error}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error generando el voiceover: {e}")
+    finally:
+        _heavy_ops_semaphore.release()
+
+
+# ============================================================
 # EXPORTACIÓN DE CLIPS (corte con ffmpeg a partir de timestamps)
 # ============================================================
 
@@ -2233,6 +2415,71 @@ def create_carousel_plate(frame_path: str, dialogue: str, speaker: str, output_p
         )
         if result.returncode != 0:
             shutil.copy(frame_path, output_path)
+
+
+class ThumbnailSpec(BaseModel):
+    start: str
+
+
+class ThumbnailRequest(BaseModel):
+    url: str = ""
+    video_path: str = ""
+    cache_key: str = ""
+    clips: list[ThumbnailSpec]
+
+
+@app.post("/generate-thumbnails", dependencies=[Depends(require_api_key)])
+async def generate_thumbnails(input_data: ThumbnailRequest):
+    """
+    Extrae un frame por clip (en su timestamp de inicio) del video YA
+    CACHEADO del análisis y lo devuelve como JPG chico en base64, para las
+    miniaturas reales del grid de clips. A propósito NO descarga el video si
+    todavía no está en cache (analizarlo primero ya lo cachea) - generar
+    thumbnails no debería pagar el costo de bajar el video entero de nuevo.
+    Alineado por índice con `clips` (no por timestamp, que podría repetirse).
+    """
+    import base64
+
+    effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
+    video_path = cache_video_path(effective_cache_key) if effective_cache_key else None
+    if not video_path and input_data.video_path and os.path.exists(input_data.video_path):
+        video_path = input_data.video_path
+    if not video_path:
+        raise HTTPException(status_code=404, detail="El video todavía no está en cache - analizalo (o exportá un clip) primero para poder generar miniaturas.")
+    if not input_data.clips:
+        return {"thumbnails": []}
+
+    await _heavy_ops_semaphore.acquire()
+    try:
+        mem_error = _memory_headroom_error()
+        if mem_error:
+            raise HTTPException(status_code=503, detail=mem_error)
+
+        thumbnails: list[str | None] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i, clip in enumerate(input_data.clips):
+                frame_path = os.path.join(tmpdir, f"thumb_{i}.jpg")
+                try:
+                    await asyncio.to_thread(extract_frame, video_path, clip.start, frame_path)
+                    await asyncio.to_thread(_downscale_thumbnail, frame_path)
+                    with open(frame_path, "rb") as f:
+                        thumbnails.append("data:image/jpeg;base64," + base64.b64encode(f.read()).decode())
+                except Exception as e:
+                    print(f"   ⚠ No se pudo extraer thumbnail del clip {i} ({clip.start}): {e}")
+                    thumbnails.append(None)
+        return {"thumbnails": thumbnails}
+    finally:
+        _heavy_ops_semaphore.release()
+
+
+def _downscale_thumbnail(image_path: str, max_width: int = 200):
+    """Achica el JPG in-place para que viajar en base64 no sea pesado (miniatura, no necesita resolución real)."""
+    from PIL import Image
+    img = Image.open(image_path)
+    if img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+    img.convert("RGB").save(image_path, "JPEG", quality=72)
 
 
 # ============================================================

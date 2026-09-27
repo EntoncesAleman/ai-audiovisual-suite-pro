@@ -2,11 +2,11 @@
    PANEL DE EXPORTACIÓN DE CLIPS
    ============================================ */
 .clip-exporter {
-    background: linear-gradient(135deg, #17251f 0%, var(--bg-card-inner) 100%);
+    background: linear-gradient(135deg, #EAFBF3 0%, var(--bg-card-inner) 100%);
     border: 2px solid var(--accent-green);
     border-radius: var(--radius); padding: 18px;
 }
-.clip-exporter h4 { margin: 0 0 14px 0; color: #6ee7b7; font-size: 15px; }
+.clip-exporter h4 { margin: 0 0 14px 0; color: var(--accent-green); font-size: 15px; }
 .clip-source-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .clip-source-row input { flex: 1; margin: 0; font-size: 13px; }
 .clip-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
@@ -31,9 +31,9 @@
 .btn-clip-download { display: none; background: var(--accent-green); color: white; border: none; padding: 10px 18px; border-radius: var(--radius); cursor: pointer; font-weight: bold; font-size: 13px; margin-top: 10px; }
 .btn-clip-download.active { display: inline-block; }
 .clip-empty { color: var(--text-muted); font-size: 13px; text-align: center; padding: 16px; }
-.clip-count-badge { background: #0d3b2c; color: #6ee7b7; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; margin-left: 8px; }
+.clip-count-badge { background: #D1FAE5; color: var(--accent-green); border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; margin-left: 8px; }
 
-.clip-exporter .progress-fill { background: linear-gradient(90deg, var(--accent-green), #6ee7b7); }
+.clip-exporter .progress-fill { background: linear-gradient(90deg, var(--accent-green), #34D399); }
 
 /* ============================================
    PESTAÑAS DEL "Editor y Exportador de Clips"
@@ -47,7 +47,7 @@
     cursor: pointer; transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
     font-family: inherit;
 }
-.clip-editor-tab-btn:hover { border-color: #3a4257; color: var(--text-main); }
-.clip-editor-tab-btn.active { background: #123043; border-color: var(--accent-blue); color: #93c5fd; }
+.clip-editor-tab-btn:hover { border-color: var(--border-hover-color); color: var(--text-main); }
+.clip-editor-tab-btn.active { background: #DBEAFE; border-color: var(--accent-blue); color: var(--accent-blue-hover); }
 .clip-editor-tab { display: none; }
 .clip-editor-tab.active { display: block; }
