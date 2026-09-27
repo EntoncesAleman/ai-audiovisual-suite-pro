@@ -22,6 +22,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
+COPY premiere_export.py .
+COPY capcut_export.py .
 COPY index.html .
 COPY login.html .
 COPY prompts.json .
