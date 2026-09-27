@@ -26,10 +26,12 @@ COPY premiere_export.py .
 COPY capcut_export.py .
 COPY index.html .
 COPY login.html .
+COPY historial.html .
 COPY prompts.json .
 COPY teaser_templates.json .
 COPY css ./css
 COPY js ./js
+COPY assets ./assets
 
 # Cloud Run inyecta $PORT (default 8080) y espera que el proceso escuche ahí.
 ENV PORT=8080
