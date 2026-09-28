@@ -241,6 +241,7 @@ export async function generateReelClipsWithAI() {
             if (feedback) feedback.textContent = "⚠ Gemini respondió pero no encontré timestamps en el formato esperado. Revisá la respuesta completa abajo (se pegó en el importador manual).";
             telemetryLog('telemetry', '⚠ Gemini respondió pero sin timestamps reconocibles.', 'error');
             document.getElementById('aiResponseInput').value = data.text;
+            document.getElementById('aiResponseInput')?.closest('details.clip-more-options')?.setAttribute('open', '');
             const body = document.getElementById('aiImportBody');
             if (body && !body.classList.contains('open')) toggleAiImport();
             return;
