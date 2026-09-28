@@ -197,7 +197,7 @@ export function onPromptTypeChange() {
 function buildExtraInstructionSuffix() {
     const extra = (document.getElementById("promptExtraInstruction")?.value || "").trim();
     if (!extra) return "";
-    return `\n\n---\nINSTRUCCIÓN ADICIONAL ESPECÍFICA para esta tanda (tiene prioridad sobre el resto de la consigna si hay conflicto):\n${extra}`;
+    return `\n\n---\nINSTRUCCIÓN ADICIONAL ESPECÍFICA para esta tanda - tiene prioridad ABSOLUTA sobre el resto de la consigna si hay conflicto, EN ESPECIAL sobre cualquier cantidad de clips o rango de duración mencionado más arriba (esos son solo un default, no una regla fija):\n${extra}`;
 }
 
 export function generateIAPrompt() {

@@ -738,13 +738,13 @@ MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "65536"))   # tope de sal
 GEMINI_MODELS = [
     m.strip() for m in os.getenv(
         "GEMINI_MODELS",
-        # gemini-2.0-flash, gemini-2.0-flash-lite y gemini-2.5-flash-lite
-        # fueron dados de baja por Google (404 NOT_FOUND permanente,
-        # "no longer available") - sacados de la lista default para no
-        # desperdiciar reintentos contra modelos que nunca van a responder.
-        # gemini-2.5-flash sigue vivo pero Google ya anunció su baja para
-        # el 16/10/2026 - si vuelve a dar 404 después de esa fecha, sacarlo
-        # de acá también.
+        # gemini-2.0-flash, gemini-2.0-flash-lite, gemini-2.5-flash-lite y
+        # gemini-2.5-flash fueron dados de baja por Google (404 NOT_FOUND
+        # permanente, "no longer available") - sacados de la lista default
+        # para no desperdiciar reintentos contra modelos que nunca van a
+        # responder. gemini-2.5-flash en particular estaba anunciado para
+        # el 16/10/2026 pero confirmado 404 en vivo ya el 28/09/2026 -
+        # dado de baja antes de lo anunciado.
         # gemini-3.7-flash (el más nuevo) NO va primero a propósito: probado
         # a mano el 2026-08-25 contra audio real, devuelve 0 candidatos +
         # 503 "high demand" de forma consistente - muy probablemente por ser
@@ -753,7 +753,7 @@ GEMINI_MODELS = [
         # no lo descarta solo: si queda primero, gasta los 3 intentos + el
         # fallback contra un modelo roto antes de rendirse. Se lo deja
         # último, probar de nuevo a ponerlo más arriba en unas semanas.
-        "gemini-2.5-flash,gemini-3.6-flash,gemini-3.5-flash,"
+        "gemini-3.6-flash,gemini-3.5-flash,"
         "gemini-3.1-flash-lite,gemini-3.7-flash"
     ).split(",") if m.strip()
 ]
