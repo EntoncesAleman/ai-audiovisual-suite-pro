@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { BACKEND_URL, PLATFORM_DATA, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
-import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip } from '../utils/helpers.js';
+import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip, getClipDialogueText } from '../utils/helpers.js';
 import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { seekAndPlay } from './player.js';
@@ -364,13 +364,22 @@ export async function generateReelCaptions() {
     if (feedback) feedback.textContent = "⏳ Generando el/los texto(s) con IA...";
     telemetryLog('telemetry', 'Generando copies para redes...', 'uploading');
 
+    // El diálogo real de cada clip/slide (no solo su label corto/truncado)
+    // para que el copy salga basado en lo que efectivamente se dice ahí, no
+    // genérico - ver getClipDialogueText en helpers.js.
     let prompt;
     if (isCarousel) {
-        const slides = selected.map((c, i) => `Slide ${i + 1}: ${c.label || "(sin descripción)"}`).join("\n");
-        prompt = `Actuá como Social Media Manager senior. Vas a publicar un carrusel en ${platformLabel} con estas slides, en este orden:\n${slides}\n\nEscribí UN SOLO caption para todo el post (nunca uno por slide - un carrusel es una sola publicación), en español, con un gancho fuerte en la primera línea que invite a deslizar, cuerpo breve, y una tanda de hashtags relevantes al final. Respondé solo con el texto final del caption, sin comillas ni explicaciones tuyas.`;
+        const slides = selected.map((c, i) => {
+            const dialogue = getClipDialogueText(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline);
+            return `Slide ${i + 1}${c.label ? ` — ${c.label}` : ""}: "${dialogue || '(sin diálogo detectado en este rango)'}"`;
+        }).join("\n");
+        prompt = `Actuá como Social Media Manager senior. Vas a publicar un carrusel en ${platformLabel} con estas slides, en este orden (con el diálogo real de cada una):\n${slides}\n\nEscribí UN SOLO caption para todo el post (nunca uno por slide - un carrusel es una sola publicación), en español, BASADO EN EL CONTENIDO REAL de las slides (no genérico), con un gancho fuerte en la primera línea que invite a deslizar, cuerpo breve, y una tanda de hashtags relevantes al final. Respondé solo con el texto final del caption, sin comillas ni explicaciones tuyas.`;
     } else {
-        const clipsList = selected.map((c, i) => `Clip ${i + 1} (${c.start} → ${c.end}): ${c.label || "(sin descripción)"}`).join("\n");
-        prompt = `Actuá como Social Media Manager senior. Estos clips se van a publicar como posts INDEPENDIENTES en ${platformLabel}. Para cada uno, escribí un caption corto en español (con hashtags relevantes al final) para poner debajo de esa publicación puntual:\n${clipsList}\n\nRespondé usando EXACTAMENTE este formato, uno por clip y en el mismo orden:\n### CLIP 1\n<caption con hashtags>\n### CLIP 2\n<caption con hashtags>\n(y así con todos, hasta CLIP ${selected.length}). No escribas nada antes de "### CLIP 1" ni comentarios finales.`;
+        const clipsList = selected.map((c, i) => {
+            const dialogue = getClipDialogueText(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline);
+            return `Clip ${i + 1} (${c.start} → ${c.end})${c.label ? ` — ${c.label}` : ""}:\nDiálogo real de este clip: "${dialogue || '(sin diálogo detectado en este rango)'}"`;
+        }).join("\n\n");
+        prompt = `Actuá como Social Media Manager senior. Estos clips se van a publicar como posts INDEPENDIENTES en ${platformLabel}. Para cada uno tenés el diálogo real que se dice en ese rango puntual - escribí un caption corto en español BASADO EN ESE DIÁLOGO ESPECÍFICO (no genérico, no intercambiable entre clips), con hashtags relevantes al final, para poner debajo de esa publicación:\n\n${clipsList}\n\nRespondé usando EXACTAMENTE este formato, uno por clip y en el mismo orden:\n### CLIP 1\n<caption con hashtags>\n### CLIP 2\n<caption con hashtags>\n(y así con todos, hasta CLIP ${selected.length}). No escribas nada antes de "### CLIP 1" ni comentarios finales.`;
     }
 
     try {

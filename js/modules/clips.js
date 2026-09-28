@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
-import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip } from '../utils/helpers.js';
+import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip, getClipDialogueText } from '../utils/helpers.js';
 import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { seekAndPlay } from './player.js';
@@ -319,8 +319,14 @@ export async function generateClipCaptions() {
     if (feedback) feedback.textContent = "⏳ Generando el/los texto(s) con IA...";
     telemetryLog('telemetry', 'Generando copies para redes...', 'uploading');
 
-    const clipsList = selected.map((c, i) => `Clip ${i + 1} (${c.start} → ${c.end}): ${c.label || "(sin descripción)"}`).join("\n");
-    const prompt = `Actuá como Social Media Manager senior. Estos clips se van a publicar como posts INDEPENDIENTES en redes sociales. Para cada uno, escribí un caption corto en español (con hashtags relevantes al final) para poner debajo de esa publicación puntual:\n${clipsList}\n\nRespondé usando EXACTAMENTE este formato, uno por clip y en el mismo orden:\n### CLIP 1\n<caption con hashtags>\n### CLIP 2\n<caption con hashtags>\n(y así con todos, hasta CLIP ${selected.length}). No escribas nada antes de "### CLIP 1" ni comentarios finales.`;
+    // El diálogo real de cada clip (no solo su label corto/truncado) para
+    // que el copy salga basado en lo que efectivamente se dice ahí, no
+    // genérico - ver getClipDialogueText en helpers.js.
+    const clipsList = selected.map((c, i) => {
+        const dialogue = getClipDialogueText(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline);
+        return `Clip ${i + 1} (${c.start} → ${c.end})${c.label ? ` — ${c.label}` : ""}:\nDiálogo real de este clip: "${dialogue || '(sin diálogo detectado en este rango)'}"`;
+    }).join("\n\n");
+    const prompt = `Actuá como Social Media Manager senior. Estos clips se van a publicar como posts INDEPENDIENTES en redes sociales. Para cada uno tenés el diálogo real que se dice en ese rango puntual - escribí un caption corto en español BASADO EN ESE DIÁLOGO ESPECÍFICO (no genérico, no intercambiable entre clips), con hashtags relevantes al final, para poner debajo de esa publicación:\n\n${clipsList}\n\nRespondé usando EXACTAMENTE este formato, uno por clip y en el mismo orden:\n### CLIP 1\n<caption con hashtags>\n### CLIP 2\n<caption con hashtags>\n(y así con todos, hasta CLIP ${selected.length}). No escribas nada antes de "### CLIP 1" ni comentarios finales.`;
 
     try {
         const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {

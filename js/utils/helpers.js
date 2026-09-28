@@ -141,7 +141,7 @@ export function parseAiTimestampsText(text, defaultDurationSeconds = 30) {
     const inicios = [...text.matchAll(inicioPattern)].map(m => m[1]);
     const fines   = [...text.matchAll(finPattern)].map(m => m[1]);
 
-    const labelPattern = /(?:🎯|⭕|▶|🖼|🎵|🐦)\s*(?:Opción|Clip|Slide|Story|Short)\s*#?\d+[^\n]*/gi;
+    const labelPattern = /(?:🎯|⭕|▶|🖼|🎵|🐦)\s*(?:Opción|Clip|Slide|Story|Short|Momento)\s*#?\d+[^\n]*/gi;
     const labels = [...text.matchAll(labelPattern)].map(m =>
         m[0].replace(/^[🎯⭕▶🖼🎵🐦]\s*/u, '').replace(/\s*—.*$/, '').trim()
     );
@@ -205,6 +205,36 @@ export function parseAiTimestampsText(text, defaultDurationSeconds = 30) {
         }
     }
     return imported;
+}
+
+/**
+ * Devuelve el diálogo REAL (con hablante) que cae dentro de la ventana de un
+ * clip, tal cual está en la transcripción - a diferencia de buildSubtitleCuesForClip
+ * (que corta en trocitos de ~5 palabras para subtítulos en pantalla), esto
+ * devuelve el texto completo y corrido, pensado para dárselo a la IA como
+ * contexto real al generar un copy/caption para ESE clip puntual (antes se le
+ * mandaba solo el label corto/truncado del clip, y los copies salían
+ * genéricos porque la IA no tenía con qué agarrarse).
+ */
+export function getClipDialogueText(clipStart, clipEnd, rawTranscript, maxChars = 800) {
+    const segments = parseTimelineToSegments(rawTranscript).filter(s => s.timestamp && s.text);
+    if (segments.length === 0) return "";
+
+    const withSeconds = segments
+        .map(s => ({ startSec: tsToSeconds(s.timestamp), speaker: s.speaker, text: s.text.trim() }))
+        .filter(s => s.text)
+        .sort((a, b) => a.startSec - b.startSec);
+
+    const lines = [];
+    for (let i = 0; i < withSeconds.length; i++) {
+        const segStart = withSeconds[i].startSec;
+        const segEnd = i + 1 < withSeconds.length ? withSeconds[i + 1].startSec : segStart + 8;
+        if (segEnd <= clipStart || segStart >= clipEnd) continue;
+        const speaker = withSeconds[i].speaker ? `${withSeconds[i].speaker}: ` : "";
+        lines.push(`${speaker}${withSeconds[i].text}`);
+    }
+    const joined = lines.join(" ");
+    return joined.length > maxChars ? joined.slice(0, maxChars) + "…" : joined;
 }
 
 /**
