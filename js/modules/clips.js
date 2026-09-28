@@ -225,7 +225,10 @@ export async function generateClipsWithAI() {
         const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: promptText })
+            // Groq primero acá (pedido explícito): Gemini venía ignorando la
+            // cantidad de clips pedida. El resto de los usos de este mismo
+            // endpoint (copies, chat del Assistant) siguen con Gemini primero.
+            body: JSON.stringify({ prompt: promptText, engine_preference: 'groq' })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);

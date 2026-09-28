@@ -2105,6 +2105,9 @@ def get_teaser_templates():
 
 class GenerateWithAiInput(BaseModel):
     prompt: str
+    # "gemini" (default, usado por captions/chat) o "groq" (usado por
+    # Generate Clips - ver comentario en el endpoint más abajo).
+    engine_preference: str = "gemini"
 
 
 class AssistantChatMessage(BaseModel):
@@ -2191,13 +2194,25 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
     y pegar la respuesta de vuelta - el resultado se importa directo al
     exportador de clips sin salir de la app.
 
-    Si Gemini agota TODA su lista de modelos (ver _call_gemini_text), cae a
-    Groq (GROQ_TEXT_MODEL) como último recurso antes de fallar del todo - la
-    respuesta indica en "engine" cuál de los dos resolvió el pedido, para
-    que el frontend lo pueda mostrar.
+    Por default prueba Gemini primero y cae a Groq (GROQ_TEXT_MODEL) si
+    agota TODA su lista de modelos (ver _call_gemini_text). Generate Clips
+    manda engine_preference="groq" para invertir el orden (pedido explícito:
+    Gemini viene ignorando la cantidad de clips pedida y generando cientos
+    de clips de segundos en vez de la cantidad pedida - mientras se afina
+    el prompt, arrancar por Groq da resultados más predecibles para ese
+    caso puntual). La respuesta indica en "engine" cuál de los dos resolvió
+    el pedido, para que el frontend lo pueda mostrar.
     """
     if not input_data.prompt or len(input_data.prompt.strip()) < 10:
         raise HTTPException(status_code=400, detail="El prompt está vacío.")
+
+    if input_data.engine_preference == "groq" and GROQ_API_KEY:
+        first_name, first_fn = "groq", (lambda: _call_groq_text(input_data.prompt))
+        second_name, second_fn = "gemini", (lambda: _call_gemini_text(input_data.prompt))
+    else:
+        first_name, first_fn = "gemini", (lambda: _call_gemini_text(input_data.prompt))
+        second_name, second_fn = "groq", (lambda: _call_groq_text(input_data.prompt))
+    second_available = GROQ_API_KEY if second_name == "groq" else True
 
     await _heavy_ops_semaphore.acquire()
     try:
@@ -2205,22 +2220,18 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
         if mem_error:
             raise HTTPException(status_code=503, detail=mem_error)
         try:
-            text = await asyncio.to_thread(_call_gemini_text, input_data.prompt)
-            return {"text": text, "engine": "gemini"}
-        except Exception as gemini_error:
-            if GROQ_API_KEY:
-                print(f"   ⚠ Gemini agotó todos sus modelos ({gemini_error}). Probando con Groq ({GROQ_TEXT_MODEL})...")
+            text = await asyncio.to_thread(first_fn)
+            return {"text": text, "engine": first_name}
+        except Exception as first_error:
+            if second_available:
+                print(f"   ⚠ {first_name} falló ({first_error}). Probando con {second_name}...")
                 try:
-                    text = await asyncio.to_thread(_call_groq_text, input_data.prompt)
-                    return {"text": text, "engine": "groq"}
-                except Exception as groq_error:
-                    print(f"   ⚠ Groq también falló: {groq_error}")
-                    # Mensaje explícito de los DOS intentos (Gemini y Groq) -
-                    # antes acá se relanzaba solo gemini_error y no había forma
-                    # de saber desde el frontend si Groq ni siquiera llegó a
-                    # intentarse o si también falló.
-                    raise Exception(f"Gemini falló ({gemini_error}) y Groq también falló ({groq_error}).")
-            raise Exception(f"Gemini falló y GROQ_API_KEY no está configurada en el servidor, así que no hay red de contención: {gemini_error}")
+                    text = await asyncio.to_thread(second_fn)
+                    return {"text": text, "engine": second_name}
+                except Exception as second_error:
+                    print(f"   ⚠ {second_name} también falló: {second_error}")
+                    raise Exception(f"{first_name} falló ({first_error}) y {second_name} también falló ({second_error}).")
+            raise Exception(f"{first_name} falló y no hay red de contención configurada (GROQ_API_KEY ausente): {first_error}")
     except HTTPException:
         raise
     except Exception as e:
