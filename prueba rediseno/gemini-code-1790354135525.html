@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AV Suite Pro</title>
+    <link rel="stylesheet" href="css/main.css">
+    <!-- Iconos minimalistas (ejemplo Lucide o SF Symbols) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="ios-theme">
+
+    <header class="app-header blur-background">
+        <div class="app-brand">
+            <div class="app-logo">
+                <i data-lucide="waves"></i>
+            </div>
+            <span class="app-brand-name">AV Suite Pro</span>
+        </div>
+        <nav class="header-nav">
+            <button class="nav-btn"><i data-lucide="history"></i> Historial</button>
+            <button class="nav-btn"><i data-lucide="user"></i> Cuenta</button>
+            <button class="nav-btn"><i data-lucide="settings"></i> Ajustes</button>
+        </nav>
+    </header>
+
+    <main class="app-workspace">
+        
+        <!-- COLUMNA IZQUIERDA: FLUJO DE ENTRADA Y EDICIÓN DE TEXTO -->
+        <section class="panel-column sidebar-panel">
+            
+            <!-- Cargar / Importar -->
+            <div class="card ios-card">
+                <div class="card-header">
+                    <h3>Origen de Video</h3>
+                </div>
+                <div class="dropzone ios-dropzone" id="localFileLabel">
+                    <input type="file" id="localFile" accept="video/*,audio/*">
+                    <i data-lucide="upload-cloud" class="dropzone-icon"></i>
+                    <span>Arrastra o selecciona tu archivo</span>
+                </div>
+                <div class="input-group">
+                    <input type="text" id="streamUrl" placeholder="O pega un enlace de YouTube / Drive">
+                    <button class="btn-primary" onclick="startAnalysis()">Analizar</button>
+                </div>
+            </div>
+
+            <!-- Generador e Instrucciones IA -->
+            <div class="card ios-card">
+                <div class="card-header">
+                    <h3>Asistente de IA</h3>
+                </div>
+                <div class="prompt-mode-bar" id="promptModeBar"></div>
+                <div class="input-stack">
+                    <select id="promptType"></select>
+                    <input type="text" id="promptExtraInstruction" placeholder="Instrucción adicional (ej. partes graciosas)...">
+                    <button class="btn-action-accent" id="btnGenerateActiveClips">
+                        <i data-lucide="sparkles"></i> Generar Clips
+                    </button>
+                </div>
+            </div>
+
+            <!-- Transcripción e Interacción -->
+            <div class="card ios-card flex-grow">
+                <div class="card-header-actions">
+                    <h3>Transcripción</h3>
+                    <div class="segmented-control">
+                        <button class="segmented-btn active">Diálogo</button>
+                        <button class="segmented-btn">Timestamps</button>
+                        <button class="segmented-btn">Hablantes</button>
+                    </div>
+                </div>
+                <div class="transcript-container" id="transcriptList">
+                    <!-- Contenido dinámico de la transcripción -->
+                </div>
+            </div>
+
+        </section>
+
+        <!-- COLUMNA DERECHA: REPRODUCTOR Y CLIPS EDITADOS -->
+        <section class="panel-column main-panel">
+            
+            <!-- Visor Principal con Selector de Formato Integrado -->
+            <div class="card ios-card player-card">
+                <div class="player-container">
+                    <video id="previewVideo" class="main-video-player" playsinline></video>
+                    
+                    <!-- Barra flotante de relación de aspecto sobre el reproductor -->
+                    <div class="format-floating-bar">
+                        <button class="format-pill active" onclick="selectStudioFormat('simple')">Original</button>
+                        <button class="format-pill" onclick="selectStudioFormat('tiktok_30s')"><i data-lucide="smartphone"></i> 9:16</button>
+                        <button class="format-pill" onclick="selectStudioFormat('twitter_x_clip')"><i data-lucide="tv"></i> 16:9</button>
+                        <button class="format-pill" onclick="selectStudioFormat('ig_carrusel_clips')"><i data-lucide="square"></i> 1:1</button>
+                    </div>
+                </div>
+
+                <div class="player-controls">
+                    <button class="btn-icon" id="playerPlayBtn"><i data-lucide="play"></i></button>
+                    <input type="range" class="ios-slider" id="playerSeek" min="0" max="0" value="0">
+                    <span class="time-display" id="playerTime">00:00 / 00:00</span>
+                </div>
+            </div>
+
+            <!-- Resultados: Lista de Clips Generados -->
+            <div class="card ios-card">
+                <div class="card-header-actions">
+                    <h3>Clips Encontrados <span class="badge" id="clipCountBadge">0</span></h3>
+                    <button class="btn-secondary" onclick="selectAllClips(true)">Seleccionar todos</button>
+                </div>
+                
+                <div class="clip-card-grid" id="clipsCardGrid">
+                    <!-- Mosaico limpio de clips generados -->
+                </div>
+
+                <div class="export-bar">
+                    <button class="btn-primary-lg" onclick="startClipExport()">
+                        <i data-lucide="download"></i> Exportar Clips (.mp4)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Panel Plegable para Opciones Avanzadas (Premiere / Doblaje / Log) -->
+            <details class="advanced-tools-accordion">
+                <summary><i data-lucide="sliders"></i> Herramientas Avanzadas y Exportación XML</summary>
+                <div class="accordion-content">
+                    <!-- Aquí se concentran los módulos de Premiere Export, Voiceover y Telemetría -->
+                </div>
+            </details>
+
+        </section>
+
+    </main>
+
+    <script>
+        // Inicializar iconos de Lucide
+        lucide.createIcons();
+    </script>
+</body>
+</html>
