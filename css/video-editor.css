@@ -2,11 +2,9 @@
    PANEL DE EDITOR DE VIDEO PARA REDES
    ============================================ */
 .video-editor-panel {
-    background: linear-gradient(135deg, #F2EEFC 0%, var(--bg-card-inner) 100%);
-    border: 2px solid var(--accent-purple);
-    border-radius: var(--radius); padding: 18px;
+    border-radius: var(--radius); padding: 4px 0 0;
 }
-.video-editor-panel h4 { margin: 0 0 14px 0; color: #5B3FBF; font-size: 15px; }
+.video-editor-panel h4 { margin: 0 0 14px 0; color: var(--text-main); font-size: 15px; }
 
 /* Atajos rápidos de formato por relación de aspecto - eligen un enfoque
    de plataforma representativo (ver selectFormatShortcut en app.js). */

@@ -2,6 +2,8 @@ import { state } from '../state.js';
 import { escapeHtml } from '../utils/dom.js';
 import { parseTimelineToSegments, tsToSeconds, estimateDurationSeconds } from '../utils/helpers.js';
 import { seekAndPlay } from './player.js';
+import { generateIAPrompt } from './prompts.js';
+import { getSessions, setSessions } from '../utils/storage.js';
 
 // Paleta fija por orden de primera aparición del hablante - se recicla si
 // hay más de 4 (poco común, pero no debe romperse).
@@ -60,7 +62,7 @@ function renderSpeechMap(segments) {
 
     if (legend) {
         legend.innerHTML = Object.entries(speakerColorMap).map(([sp, color]) => `
-            <span class="speech-map-legend-item"><span class="speech-map-legend-dot" style="background:${color}"></span>${escapeHtml(sp)}</span>
+            <span class="speech-map-legend-item" onclick="renameSpeaker('${escapeHtml(sp)}', event)" title="Click para renombrar"><span class="speech-map-legend-dot" style="background:${color}"></span>${escapeHtml(sp)} ✏️</span>
         `).join('');
     }
 }
@@ -101,7 +103,7 @@ function renderTranscriptList(segments) {
         }
         list.innerHTML = order.map(sp => `
             <div class="transcript-speaker-group">
-                <div class="transcript-speaker-group-title"><span class="transcript-badge-dot" style="background:${colorForSpeaker(sp)}"></span>${escapeHtml(sp)} <span class="transcript-speaker-count">(${groups[sp].length})</span></div>
+                <div class="transcript-speaker-group-title" onclick="renameSpeaker('${escapeHtml(sp)}', event)" title="Click para renombrar"><span class="transcript-badge-dot" style="background:${colorForSpeaker(sp)}"></span>${escapeHtml(sp)} ✏️ <span class="transcript-speaker-count">(${groups[sp].length})</span></div>
                 ${groups[sp].map(s => transcriptLine(s)).join('')}
             </div>
         `).join('');
@@ -115,11 +117,12 @@ function renderTranscriptList(segments) {
 }
 
 function transcriptLine(s) {
+    const speaker = s.speaker || 'Sin identificar';
     return `
         <div class="transcript-line" onclick="seekTranscriptTo('${escapeHtml(s.timestamp)}')">
-            <span class="transcript-line-badge" style="border-color:${colorForSpeaker(s.speaker)};">
+            <span class="transcript-line-badge" style="border-color:${colorForSpeaker(s.speaker)};" onclick="renameSpeaker('${escapeHtml(speaker)}', event)" title="Click para renombrar este speaker">
                 <span class="transcript-badge-dot" style="background:${colorForSpeaker(s.speaker)};"></span>
-                ${escapeHtml(s.speaker || 'Sin identificar')} <span class="transcript-line-time">${escapeHtml(s.timestamp)}</span>
+                ${escapeHtml(speaker)} <span class="transcript-line-time">${escapeHtml(s.timestamp)}</span>
             </span>
             <span class="transcript-line-text">${escapeHtml(s.text)}</span>
         </div>
@@ -130,5 +133,40 @@ export function seekTranscriptTo(timestamp) {
     seekAndPlay(timestamp);
 }
 
+/**
+ * La IA nunca inventa nombres reales (ver PROMPT_ESCANEO en main.py) - solo
+ * pone "Speaker 1", "Speaker 2", etc. Esto deja renombrarlos a mano, una vez
+ * identificados de oído, desde cualquiera de los 3 lugares donde aparecen
+ * (línea de diálogo, vista "Speakers", leyenda del Speech Map). Reemplaza
+ * TODAS las apariciones de esa etiqueta en el transcript crudo (no solo la
+ * que se clickeó), así el cambio se refleja en todos lados a la vez -
+ * incluido el prompt que se le manda a la IA para generar clips.
+ */
+export function renameSpeaker(oldLabel, event) {
+    if (event) event.stopPropagation();
+    if (!state.originalTimeline) return;
+    const newLabel = prompt(`Renombrar "${oldLabel}" a:`, oldLabel);
+    if (!newLabel || !newLabel.trim() || newLabel.trim() === oldLabel) return;
+
+    const escaped = oldLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(SPEAKER:\\s*)${escaped}(\\s*)$`, 'gm');
+    state.originalTimeline = state.originalTimeline.replace(pattern, `$1${newLabel.trim()}$2`);
+
+    // Mismo patrón de persistencia que toggleEdit (ver timeline.js): si la
+    // sesión ya se guardó, el cambio sobrevive a recargar/reabrir del historial.
+    if (state.currentSessionId) {
+        let sessions = getSessions();
+        const idx = sessions.findIndex(s => s.id === state.currentSessionId);
+        if (idx !== -1) {
+            sessions[idx].data.raw_timeline = state.originalTimeline;
+            setSessions(sessions);
+            state.currentData = sessions[idx].data;
+        }
+    }
+    generateIAPrompt();
+    renderInteractiveTranscript();
+}
+
 window.seekTranscriptTo = seekTranscriptTo;
 window.switchTranscriptView = switchTranscriptView;
+window.renameSpeaker = renameSpeaker;

@@ -33,179 +33,128 @@
     </header>
 
     <!-- ============================================
-         DASHBOARD: contenedor principal, 2 columnas
-         (izquierda "Workspace & Edit" = ingreso, estado
-         del sistema, generador de IA y transcripción;
-         derecha "Preview & Export" = reproductor, clips,
-         formato de exportación y herramientas avanzadas)
+         DASHBOARD: hero de 2 columnas igual a la imagen de
+         referencia ("prueba rediseno/") - izquierda "Workspace
+         & Edit" (fuente + asistente de IA lado a lado, transcripción
+         abajo), derecha "Preview & Export" (reproductor, formato,
+         clips y export). Todo lo secundario (telemetría, opciones
+         avanzadas de cada control) va DEBAJO de este bloque, no
+         compite visualmente con la vista principal.
          ============================================ -->
     <main class="dashboard">
 
-                <!-- ==================== COLUMNA IZQUIERDA ==================== -->
+                <!-- ==================== COLUMNA IZQUIERDA: WORKSPACE & EDIT ==================== -->
                 <div class="col col-left">
 
-                    <h2 class="col-header">Workspace &amp; Edit</h2>
+                    <h1 class="col-header">Workspace &amp; Edit</h1>
 
-                    <div class="card ingreso-card">
-                        <div class="card-menu">
-                            <button class="btn-card-menu" onclick="toggleCardMenu(this)" title="Más opciones">⋮</button>
-                            <div class="card-menu-dropdown">
-                                <button onclick="startNewSession()"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Nueva sesión / Limpiar pantalla</button>
-                            </div>
-                        </div>
-                        <h3>INPUT MEDIA &amp; ANALYSIS</h3>
+                    <div class="workspace-row">
 
-                        <label class="dropzone" for="localFile" id="localFileLabel">
-                            <input type="file" id="localFile" accept=".mp4,.avi,.mov,.mkv,.webm,.flv,.mp3,.wav,.ogg,.m4a,.flac,.aac">
-                            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-                            <span class="dropzone-text" id="dropzoneText">Upload / Drag Media</span>
-                            <span class="dropzone-hint">Arrastrá el archivo acá</span>
-                        </label>
-
-                        <div class="or-divider"><span>o</span></div>
-
-                        <label>Stream URL</label>
-                        <input type="text" id="streamUrl" placeholder="Pega el enlace de YouTube o Drive aquí...">
-
-                        <label>Engine Select</label>
-                        <select id="transcriptEngine">
-                            <option value="auto" selected>Auto (Gemini + Groq de respaldo)</option>
-                            <option value="gemini">Only Gemini (diarización real)</option>
-                            <option value="groq">Only Groq (rápido, sin diarización real)</option>
-                        </select>
-
-                        <button class="btn-start-analysis" onclick="startAnalysis()">START ANALYSIS</button>
-                    </div>
-
-                    <div id="loading">
-                        <div class="loading-stage" id="loadingStage">⏳ Procesando...</div>
-                        <div class="loading-detail" id="loadingDetail">Iniciando análisis...</div>
-                        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-                        <button class="btn-stop-analysis" onclick="stopCurrentAnalysis()"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg> Detener</button>
-                    </div>
-
-                    <div class="card telemetry-card">
-                        <div class="card-menu">
-                            <button class="btn-card-menu" onclick="toggleCardMenu(this)" title="Más opciones">⋮</button>
-                            <div class="card-menu-dropdown">
-                                <button onclick="clearTelemetryLog()"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg> Limpiar log</button>
-                            </div>
-                        </div>
-                        <h3>SYSTEM TELEMETRY</h3>
-
-                        <div class="telemetry-donut-row">
-                            <div class="telemetry-donut" id="telemetryDonut" data-state="idle">
-                                <div class="telemetry-donut-hole"></div>
-                            </div>
-                            <div class="telemetry-status-radios">
-                                <div class="status-radio active" id="statusRadioIdle"><span class="radio-dot"></span>IDLE</div>
-                                <div class="status-radio" id="statusRadioScanning"><span class="radio-dot"></span>SCANNING</div>
-                            </div>
-                        </div>
-
-                        <table class="telemetry-metrics-table">
-                            <tbody>
-                                <tr><td>Engine</td><td id="metricEngine">—</td></tr>
-                                <tr><td>Input</td><td id="metricInput">—</td></tr>
-                                <tr><td>Duration</td><td id="metricDuration">—</td></tr>
-                                <tr><td>Diarization</td><td id="metricDiarization">—</td></tr>
-                            </tbody>
-                        </table>
-
-                        <!-- Panel fijo: siempre visible, tamaño estable, sin importar
-                             qué se esté haciendo. Acumula el log de toda la sesión
-                             (análisis + exportaciones). -->
-                        <div class="telemetry-panel" id="telemetry">
-                            <div class="telemetry-header">
-                                <span class="telemetry-title">&gt;_ LOG</span>
-                                <span class="telemetry-badge state-idle" id="telemetryBadge">○ EN ESPERA</span>
-                            </div>
-                            <div class="telemetry-log" id="telemetryLog"></div>
-                        </div>
-                    </div>
-
-                </div>
-
-                <!-- ==================== COLUMNA DEL MEDIO ==================== -->
-                <div class="col col-middle">
-
-                    <h2 class="col-header">Core Data &amp; Content Generation</h2>
-
-                    <!-- ============================================
-                         PROMPT GENERATOR & DRAMATURGY: enfoque + IA. Vive en
-                         su propia columna (no en la izquierda, que es solo
-                         ingreso + estado del sistema) al lado de la
-                         transcripción - los clips que genera aparecen en la
-                         columna de al lado (derecha), visibles sin scrollear.
-                         El botón de generar va ARRIBA de los campos del
-                         teaser (que son varios) para que quede siempre
-                         a mano sin tener que scrollear el formulario.
-                         ============================================ -->
-                    <div class="card generator-card">
-                        <div class="card-menu">
-                            <button class="btn-card-menu" onclick="toggleCardMenu(this)" title="Más opciones">⋮</button>
-                            <div class="card-menu-dropdown">
-                                <button onclick="selectAllClips(false); selectAllReelClips(false);"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Deseleccionar todos los clips</button>
-                            </div>
-                        </div>
-                        <h3>PROMPT GENERATOR &amp; DRAMATURGY</h3>
-
-                        <!-- Prompt (enfoques predefinidos) vs Assistant (nuestro
-                             modo "libre" de siempre, con otro nombre) - ver
-                             setPromptTopMode en prompts.js. -->
-                        <div class="prompt-top-toggle">
-                            <button type="button" class="format-bar-btn prompt-top-toggle-btn active" data-topmode="prompt" onclick="setPromptTopMode('prompt')">📋 Prompt</button>
-                            <button type="button" class="format-bar-btn prompt-top-toggle-btn" data-topmode="assistant" onclick="setPromptTopMode('assistant')">💬 Assistant</button>
-                        </div>
-
-                        <!-- MODO: los dos enfoques de uso constante (uno por pestaña del
-                             Clipper, ver switchClipEditorTab) son botones en vez de quedar
-                             mezclados en el desplegable - se rellena en populatePromptSelect. -->
-                        <div class="prompt-mode-bar" id="promptModeBar"></div>
-
-                        <!-- BARRA DE CONTROL: enfoque + instrucción libre siempre visible -->
-                        <div class="studio-control-bar" id="promptControlBar">
-                            <div class="studio-control-col">
-                                <label>Enfoque</label>
-                                <select id="promptType" onchange="onPromptTypeChange()" disabled>
-                                    <option value="">Cargando enfoques…</option>
-                                </select>
-                            </div>
-                            <div class="studio-control-col">
-                                <label>Prompt Libre / Instrucción Personalizada</label>
-                                <input type="text" id="promptExtraInstruction" oninput="generateIAPrompt()" placeholder='Añadí un pedido específico (ej: "Buscá solo las partes donde se hable de precios")...'>
-                            </div>
-                        </div>
-
-                        <!-- Enfoques que no dependen de ninguna pestaña de clips (editorial,
-                             análisis, estudios, creativo, libre): un click más lejos para no
-                             competir en jerarquía visual con los dos botones de arriba. -->
-                        <div class="prompt-other-row" id="promptOtherRow">
-                            <select id="promptTypeOther" onchange="onPromptTypeOtherChange()">
-                                <option value="">Más enfoques (editorial, análisis, estudio, creativo, libre)…</option>
-                            </select>
-                        </div>
-
-                        <button class="btn-generate-ai-main" id="btnGenerateActiveClips" onclick="generateActiveClipsWithAI()">⚡ GENERAR CLIPS CON IA</button>
-                        <p class="generate-hint">Lee la transcripción completa según el enfoque + instrucción de arriba y arma los clips ya con timestamps, directo abajo, en "Clips Inteligentes" →</p>
-                        <!-- Texto interno del prompt ya resuelto (lo lee generateClipsWithAI/generateReelClipsWithAI): no hace falta mostrarlo ni copiarlo a mano. -->
-                        <div id="promptOutput" style="display:none;">Carga un análisis para generar el prompt dinámico...</div>
-
-                        <!-- Panel de prompt libre / Assistant (solo visible para 'libre') -->
-                                <div class="teaser-customizer" id="promptLibreCustomizer">
-                                    <h4>✍️ Escribí tu propio pedido</h4>
-                                    <div class="teaser-field">
-                                        <div class="teaser-field-label">Qué querés que haga la IA con este material</div>
-                                        <textarea id="promptLibreText" placeholder="Ej: Armame 5 preguntas de trivia basadas en este episodio, con la respuesta correcta y el timestamp donde se dice..." rows="5" oninput="generateIAPrompt()"></textarea>
-                                    </div>
+                        <!-- ---------- VIDEO SOURCE ---------- -->
+                        <div class="card video-source-card">
+                            <div class="card-menu">
+                                <button class="btn-card-menu" onclick="toggleCardMenu(this)" title="Más opciones">⋮</button>
+                                <div class="card-menu-dropdown">
+                                    <button onclick="startNewSession()"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Nueva sesión / Limpiar pantalla</button>
                                 </div>
+                            </div>
+                            <h3>VIDEO SOURCE</h3>
+
+                            <label class="dropzone" for="localFile" id="localFileLabel">
+                                <input type="file" id="localFile" accept=".mp4,.avi,.mov,.mkv,.webm,.flv,.mp3,.wav,.ogg,.m4a,.flac,.aac">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                                <span class="dropzone-text" id="dropzoneText">Upload / Drag Media</span>
+                                <span class="dropzone-hint">Arrastrá el archivo acá</span>
+                            </label>
+
+                            <div class="or-divider"><span>o</span></div>
+
+                            <label>Stream URL</label>
+                            <input type="text" id="streamUrl" placeholder="Pega el enlace de YouTube o Drive aquí...">
+
+                            <details class="video-source-more">
+                                <summary>Motor de transcripción</summary>
+                                <select id="transcriptEngine">
+                                    <option value="auto" selected>Auto (Gemini + Groq de respaldo)</option>
+                                    <option value="gemini">Only Gemini (diarización real)</option>
+                                    <option value="groq">Only Groq (rápido, sin diarización real)</option>
+                                </select>
+                            </details>
+
+                            <button class="btn-start-analysis" onclick="startAnalysis()">START ANALYSIS</button>
+
+                            <div id="loading">
+                                <div class="loading-stage" id="loadingStage">⏳ Procesando...</div>
+                                <div class="loading-detail" id="loadingDetail">Iniciando análisis...</div>
+                                <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                                <button class="btn-stop-analysis" onclick="stopCurrentAnalysis()"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg> Detener</button>
+                            </div>
+                        </div>
+
+                        <!-- ---------- AI ASSISTANT (Prompt Generator) ---------- -->
+                        <div class="card ai-assistant-card">
+                            <h3>AI ASSISTANT</h3>
+
+                            <!-- Prompt (enfoques predefinidos) vs Assistant (nuestro
+                                 modo "libre" de siempre, con otro nombre) - ver
+                                 setPromptTopMode en prompts.js. -->
+                            <div class="prompt-top-toggle">
+                                <button type="button" class="format-bar-btn prompt-top-toggle-btn active" data-topmode="prompt" onclick="setPromptTopMode('prompt')">📋 Prompt</button>
+                                <button type="button" class="format-bar-btn prompt-top-toggle-btn" data-topmode="assistant" onclick="setPromptTopMode('assistant')">💬 Assistant</button>
+                            </div>
+
+                            <!-- MODO: los dos enfoques de uso constante (uno por pestaña del
+                                 Clipper, ver switchClipEditorTab) son botones en vez de quedar
+                                 mezclados en el desplegable - se rellena en populatePromptSelect. -->
+                            <div class="prompt-mode-bar" id="promptModeBar"></div>
+
+                            <label>Prompt Libre / Instrucción Personalizada</label>
+                            <input type="text" id="promptExtraInstruction" oninput="generateIAPrompt()" placeholder='Añadí un pedido específico (ej: "Buscá solo las partes donde se hable de precios")...'>
+
+                            <!-- Enfoque + "más enfoques" quedan plegados: no compiten con el
+                                 flujo principal (elegir modo arriba y escribir el pedido) -
+                                 se abre solo si hace falta otro enfoque puntual. -->
+                            <details class="prompt-other-row" id="promptOtherRow">
+                                <summary>Elegir otro enfoque…</summary>
+                                <div class="studio-control-col">
+                                    <label>Enfoque</label>
+                                    <select id="promptType" onchange="onPromptTypeChange()" disabled>
+                                        <option value="">Cargando enfoques…</option>
+                                    </select>
+                                </div>
+                                <div class="studio-control-col">
+                                    <label>Más enfoques</label>
+                                    <select id="promptTypeOther" onchange="onPromptTypeOtherChange()">
+                                        <option value="">Editorial, análisis, estudio, creativo, libre…</option>
+                                    </select>
+                                </div>
+                            </details>
+                            <!-- Compat: el resto del código espera este id siempre en el DOM
+                                 aunque la barra ya no se muestre por separado (ver prompts.js). -->
+                            <div class="studio-control-bar" id="promptControlBar" style="display:none;"></div>
+
+                            <button class="btn-generate-ai-main" id="btnGenerateActiveClips" onclick="generateActiveClipsWithAI()">⚡ Generate Clips</button>
+                            <p class="generate-hint">Lee la transcripción completa según el enfoque + instrucción de arriba y arma los clips ya con timestamps, directo en "Preview &amp; Export" →</p>
+                            <!-- Texto interno del prompt ya resuelto (lo lee generateClipsWithAI/generateReelClipsWithAI): no hace falta mostrarlo ni copiarlo a mano. -->
+                            <div id="promptOutput" style="display:none;">Carga un análisis para generar el prompt dinámico...</div>
+
+                            <!-- Panel de prompt libre / Assistant (solo visible para 'libre') -->
+                            <div class="teaser-customizer" id="promptLibreCustomizer">
+                                <h4>✍️ Escribí tu propio pedido</h4>
+                                <div class="teaser-field">
+                                    <div class="teaser-field-label">Qué querés que haga la IA con este material</div>
+                                    <textarea id="promptLibreText" placeholder="Ej: Armame 5 preguntas de trivia basadas en este episodio, con la respuesta correcta y el timestamp donde se dice..." rows="5" oninput="generateIAPrompt()"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
 
                     <!-- ============================================
                          INTERACTIVE TRANSCRIPT & SPEECH MAP: mapa de
                          hablantes clickeable + lista con tabs Dialogue/
                          Timestamps/Speakers. Clickear una barra o línea
-                         busca ese tiempo en el mini-player de abajo.
+                         busca ese tiempo en el mini-player de la derecha.
                          ============================================ -->
                     <div class="card transcript-card">
                         <div class="card-menu">
@@ -258,16 +207,16 @@
 
                 </div>
 
-                <!-- ==================== COLUMNA DERECHA ==================== -->
+                <!-- ==================== COLUMNA DERECHA: PREVIEW & EXPORT ==================== -->
                 <div class="col col-right">
 
-                    <h2 class="col-header">Clipper &amp; Exporter</h2>
+                    <h1 class="col-header">Preview &amp; Export</h1>
 
                     <!-- ============================================
-                         VIDEO CLIP EDITOR: mini-player arriba + lista de
-                         clips inteligentes (con thumbnails) debajo - al lado
-                         de la columna del medio, así un clip recién generado
-                         por IA queda a la vista sin tener que scrollear.
+                         VIDEO CLIP EDITOR: mini-player + tira de formato
+                         (que además funciona como selector de pestaña
+                         Simple/Redes, ver selectStudioFormat) + grid de
+                         clips inteligentes con thumbnails + export.
                          ============================================ -->
                     <div class="card player-clips-card">
                         <div class="card-menu">
@@ -276,7 +225,6 @@
                                 <button onclick="selectAllClips(false); selectAllReelClips(false);"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Deseleccionar todos los clips</button>
                             </div>
                         </div>
-                        <h3>VIDEO CLIP EDITOR</h3>
 
                         <div class="export-preview-frame">
                             <video id="previewVideo" class="export-preview-video" playsinline></video>
@@ -285,6 +233,18 @@
                                 <span>Acá vas a ver el clip cuando lo exportes (o subí un archivo local abajo para previsualizar antes)</span>
                             </div>
                         </div>
+
+                        <!-- FORMATO: tira compacta debajo del player, como en la referencia.
+                             Elegir un formato social cambia automáticamente la pestaña de
+                             clips de abajo (ver selectStudioFormat en app.js). -->
+                        <div class="format-bar" id="formatBar">
+                            <button class="format-bar-btn active" data-format="simple" onclick="selectStudioFormat('simple')">Original</button>
+                            <button class="format-bar-btn" data-format="tiktok_30s" onclick="selectStudioFormat('tiktok_30s')" title="TikTok · 9:16 · 1080×1920"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/></svg> TikTok 9:16</button>
+                            <button class="format-bar-btn" data-format="twitter_x_clip" onclick="selectStudioFormat('twitter_x_clip')" title="YouTube · 16:9 · 1280×720"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/></svg> 16:9</button>
+                            <button class="format-bar-btn" data-format="ig_carrusel_clips" onclick="selectStudioFormat('ig_carrusel_clips')" title="Instagram · 1:1 · 1080×1080"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> 1:1</button>
+                            <button class="format-bar-btn" data-format="ig_feed_4x5" onclick="selectStudioFormat('ig_feed_4x5')" title="Reels · 4:5 · 1080×1350"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/></svg> 4:5</button>
+                        </div>
+
                         <div class="player-controls-bar" id="playerControls">
                             <button class="player-play-btn" id="playerPlayBtn" title="Reproducir / Pausar"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7Z"/></svg></button>
                             <input type="range" class="player-seek" id="playerSeek" min="0" max="0" value="0" step="1">
@@ -296,47 +256,21 @@
                         <div class="clip-editor-tab active" id="clipEditorTabSimple">
                             <div class="clip-exporter" id="clipExporter">
 
-                                <h4 class="icon-heading">Clips Inteligentes <span class="clip-count-badge" id="clipCountBadge">0 clips</span></h4>
-
-                                <div class="clip-source-row">
-                                    <input type="text" id="clipSourceUrl" placeholder="URL del video fuente (YouTube / Drive)..." style="flex:1">
-                                </div>
-                                <div class="clip-source-row clip-source-row-hint">
-                                    <span>o si lo subiste como archivo local:</span>
-                                    <input type="file" id="clipSourceFile" accept="video/*,audio/*">
-                                </div>
-                                <p class="clip-source-warning">⚠ El video se necesita de nuevo para cortar los clips (se descarga de la URL, o se vuelve a subir el archivo local).</p>
+                                <h4 class="icon-heading">Generated Clips <span class="clip-count-badge" id="clipCountBadge">0 clips</span></h4>
 
                                 <div class="clip-controls">
-                                    <label>Duración por clip (seg):</label>
-                                    <input type="number" id="clipDefaultDuration" value="30" min="5" max="600">
                                     <button class="btn-mini" onclick="parseClipsFromTimeline()" style="background:#DBEAFE;border-color:#2563EB;color:#1D4ED8;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4"/><path d="M9 12h6M9 16h6"/></svg> Extraer timestamps</button>
                                     <button class="btn-mini" onclick="selectAllClips(true)"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg> Todos</button>
                                     <button class="btn-mini" onclick="selectAllClips(false)"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Ninguno</button>
                                     <button class="btn-mini btn-mini-danger" onclick="clearAllClips()" title="Vaciar la lista de clips"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg> Vaciar</button>
                                 </div>
 
-                                <button class="btn-ai-fallback-toggle" onclick="toggleClipAiImport()" id="btnClipAiImport">Ver / pegar respuesta de Gemini manualmente</button>
-                                <div class="ai-import-body" id="clipAiImportBody">
-                                    <textarea id="clipAiResponseInput" placeholder="Pegá acá la respuesta de la IA (formato ⏱ Inicio: MM:SS / ⏱ Fin: MM:SS)..." rows="6"></textarea>
-                                    <button class="btn-mini" onclick="importClipAiTimestamps()" style="background:#E8E7FB;border-color:#6366F1;color:#4338CA;width:100%;margin-top:6px;padding:8px 0;font-size:13px;">Importar timestamps →</button>
-                                    <div id="clipAiImportFeedback" style="font-size:12px;margin-top:6px;color:#4338CA;min-height:18px;"></div>
-                                </div>
-
                                 <div class="clip-card-grid" id="clipsCardGrid">
-                                    <div class="clip-empty">Usá "⚡ Generar Clips con IA" o "Extraer timestamps".</div>
-                                </div>
-
-                                <div class="clip-add-row">
-                                    <input type="text" class="ts-input" id="newClipStart" placeholder="00:00">
-                                    <span style="color:var(--text-muted);font-size:12px;">→</span>
-                                    <input type="text" class="ts-input" id="newClipEnd" placeholder="00:30">
-                                    <input type="text" class="label-input" id="newClipLabel" placeholder="Descripción (opcional)">
-                                    <button class="btn-mini" onclick="addClipManual()"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>
+                                    <div class="clip-empty">Usá "⚡ Generate Clips" o "Extraer timestamps".</div>
                                 </div>
 
                                 <div class="export-action-row">
-                                    <button class="btn-export-selection" onclick="startClipExport()">🎬 Exportar Selección (.mp4)</button>
+                                    <button class="btn-export-selection" onclick="startClipExport()">🎬 Export Selection (.mp4)</button>
                                     <button class="btn-export-all" onclick="exportAllClips()">📥 Descargar ZIP (Todos)</button>
                                     <a id="clipDownloadBtn" class="btn-clip-download" href="#" download><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> Descargar</a>
                                 </div>
@@ -346,6 +280,38 @@
                                     <div class="progress-bar"><div class="progress-fill" id="clipExportProgressFill"></div></div>
                                     <span class="export-progress-pct" id="clipExportProgressPct">0%</span>
                                 </div>
+
+                                <!-- Fuente del video (solo hace falta tocar esto si el cache
+                                     del server se perdió) + pegar timestamps a mano / agregar
+                                     un clip suelto: casos puntuales, plegados por default. -->
+                                <details class="clip-more-options">
+                                    <summary>Más opciones (fuente del video, agregar clip a mano, pegar de la IA)</summary>
+                                    <div class="clip-source-row">
+                                        <input type="text" id="clipSourceUrl" placeholder="URL del video fuente (YouTube / Drive)..." style="flex:1">
+                                    </div>
+                                    <div class="clip-source-row clip-source-row-hint">
+                                        <span>o si lo subiste como archivo local:</span>
+                                        <input type="file" id="clipSourceFile" accept="video/*,audio/*">
+                                    </div>
+                                    <p class="clip-source-warning">⚠ El video se necesita de nuevo para cortar los clips (se descarga de la URL, o se vuelve a subir el archivo local).</p>
+                                    <label>Duración por clip al extraer timestamps (seg):</label>
+                                    <input type="number" id="clipDefaultDuration" value="30" min="5" max="600">
+
+                                    <button class="btn-ai-fallback-toggle" onclick="toggleClipAiImport()" id="btnClipAiImport">Ver / pegar respuesta de Gemini manualmente</button>
+                                    <div class="ai-import-body" id="clipAiImportBody">
+                                        <textarea id="clipAiResponseInput" placeholder="Pegá acá la respuesta de la IA (formato ⏱ Inicio: MM:SS / ⏱ Fin: MM:SS)..." rows="6"></textarea>
+                                        <button class="btn-mini" onclick="importClipAiTimestamps()" style="background:#E8E7FB;border-color:#6366F1;color:#4338CA;width:100%;margin-top:6px;padding:8px 0;font-size:13px;">Importar timestamps →</button>
+                                        <div id="clipAiImportFeedback" style="font-size:12px;margin-top:6px;color:#4338CA;min-height:18px;"></div>
+                                    </div>
+
+                                    <div class="clip-add-row">
+                                        <input type="text" class="ts-input" id="newClipStart" placeholder="00:00">
+                                        <span style="color:var(--text-muted);font-size:12px;">→</span>
+                                        <input type="text" class="ts-input" id="newClipEnd" placeholder="00:30">
+                                        <input type="text" class="label-input" id="newClipLabel" placeholder="Descripción (opcional)">
+                                        <button class="btn-mini" onclick="addClipManual()"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>
+                                    </div>
+                                </details>
                             </div>
                         </div>
 
@@ -353,7 +319,7 @@
                         <div class="clip-editor-tab" id="clipEditorTabSocial">
                             <div class="video-editor-panel" id="videoEditorPanel">
 
-                                <h4 class="icon-heading">Clips Inteligentes <span class="clip-count-badge" id="reelCountBadge" style="background:#E0E7FF;color:#4338CA;">0 clips</span></h4>
+                                <h4 class="icon-heading">Generated Clips <span class="clip-count-badge" id="reelCountBadge" style="background:#E0E7FF;color:#4338CA;">0 clips</span></h4>
 
                                 <div class="platform-info-bar">
                                     <span class="platform-badge" id="platformBadge">—</span>
@@ -362,19 +328,6 @@
                                     <span class="platform-detail">Duración máx: <strong id="platformDur">—</strong></span>
                                 </div>
 
-                                <div class="clip-source-row">
-                                    <input type="text" id="reelSourceUrl" placeholder="URL del video fuente (YouTube / Drive)..." style="flex:1">
-                                </div>
-                                <div class="clip-source-row clip-source-row-hint">
-                                    <span>o si lo subiste como archivo local:</span>
-                                    <input type="file" id="reelSourceFile" accept="video/*,audio/*">
-                                </div>
-
-                                <label class="checkbox-row" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);margin:0 0 10px 0;">
-                                    <input type="checkbox" id="reelOriginalSize">
-                                    Exportar en tamaño original (sin recortar/escalar al formato de la plataforma)
-                                </label>
-
                                 <div class="clip-controls">
                                     <button class="btn-mini" onclick="parseClipsForReel()" style="background:#E8E7FB;border-color:#6366F1;color:#4338CA;"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4"/><path d="M9 12h6M9 16h6"/></svg> Extraer timestamps</button>
                                     <button class="btn-mini" onclick="selectAllReelClips(true)"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/></svg> Todos</button>
@@ -382,23 +335,8 @@
                                     <button class="btn-mini btn-mini-danger" onclick="clearAllReelClips()" title="Vaciar la lista de clips"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg> Vaciar</button>
                                 </div>
 
-                                <button class="btn-ai-fallback-toggle" onclick="toggleAiImport()" id="btnAiImport">Ver / pegar respuesta de Gemini manualmente</button>
-                                <div class="ai-import-body" id="aiImportBody">
-                                    <textarea id="aiResponseInput" placeholder="Pegá acá la respuesta de la IA (formato ⏱ Inicio: MM:SS / ⏱ Fin: MM:SS)..." rows="6"></textarea>
-                                    <button class="btn-mini" onclick="importAiTimestamps()" style="background:#E8E7FB;border-color:#6366F1;color:#4338CA;width:100%;margin-top:6px;padding:8px 0;font-size:13px;">Importar timestamps →</button>
-                                    <div id="aiImportFeedback" style="font-size:12px;margin-top:6px;color:#4338CA;min-height:18px;"></div>
-                                </div>
-
                                 <div class="clip-card-grid" id="reelCardGrid">
-                                    <div class="clip-empty">Elegí un formato abajo y usá "⚡ Generar Clips con IA".</div>
-                                </div>
-
-                                <div class="clip-add-row">
-                                    <input type="text" class="ts-input" id="newReelStart" placeholder="00:00">
-                                    <span style="color:var(--text-muted);font-size:12px;">→</span>
-                                    <input type="text" class="ts-input" id="newReelEnd" placeholder="00:30">
-                                    <input type="text" class="label-input" id="newReelLabel" placeholder="Speaker: descripción del momento">
-                                    <button class="btn-mini" onclick="addReelClipManual()"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>
+                                    <div class="clip-empty">Elegí un formato arriba y usá "⚡ Generate Clips".</div>
                                 </div>
 
                                 <!-- COPIES: texto para poner debajo de cada publicación. Se genera
@@ -412,7 +350,7 @@
                                 </div>
 
                                 <div class="export-action-row">
-                                    <button class="btn-export-selection" id="btnExportReel" onclick="startReelExport()">🎬 Exportar Selección (.mp4)</button>
+                                    <button class="btn-export-selection" id="btnExportReel" onclick="startReelExport()">🎬 Export Selection (.mp4)</button>
                                     <button class="btn-export-all" onclick="exportAllReelClips()">📥 Descargar ZIP (Todos)</button>
                                     <a id="reelDownloadBtn" class="btn-reel-download" href="#" download><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg> Descargar</a>
                                 </div>
@@ -422,75 +360,91 @@
                                     <div class="progress-bar"><div class="progress-fill" id="reelExportProgressFill"></div></div>
                                     <span class="export-progress-pct" id="reelExportProgressPct">0%</span>
                                 </div>
+
+                                <!-- Fuente del video + pegar timestamps a mano / agregar un clip
+                                     suelto: casos puntuales, plegados por default. -->
+                                <details class="clip-more-options">
+                                    <summary>Más opciones (fuente del video, agregar clip a mano, pegar de la IA)</summary>
+                                    <div class="clip-source-row">
+                                        <input type="text" id="reelSourceUrl" placeholder="URL del video fuente (YouTube / Drive)..." style="flex:1">
+                                    </div>
+                                    <div class="clip-source-row clip-source-row-hint">
+                                        <span>o si lo subiste como archivo local:</span>
+                                        <input type="file" id="reelSourceFile" accept="video/*,audio/*">
+                                    </div>
+                                    <label class="checkbox-row" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);margin:10px 0;">
+                                        <input type="checkbox" id="reelOriginalSize">
+                                        Exportar en tamaño original (sin recortar/escalar al formato de la plataforma)
+                                    </label>
+
+                                    <button class="btn-ai-fallback-toggle" onclick="toggleAiImport()" id="btnAiImport">Ver / pegar respuesta de Gemini manualmente</button>
+                                    <div class="ai-import-body" id="aiImportBody">
+                                        <textarea id="aiResponseInput" placeholder="Pegá acá la respuesta de la IA (formato ⏱ Inicio: MM:SS / ⏱ Fin: MM:SS)..." rows="6"></textarea>
+                                        <button class="btn-mini" onclick="importAiTimestamps()" style="background:#E8E7FB;border-color:#6366F1;color:#4338CA;width:100%;margin-top:6px;padding:8px 0;font-size:13px;">Importar timestamps →</button>
+                                        <div id="aiImportFeedback" style="font-size:12px;margin-top:6px;color:#4338CA;min-height:18px;"></div>
+                                    </div>
+
+                                    <div class="clip-add-row">
+                                        <input type="text" class="ts-input" id="newReelStart" placeholder="00:00">
+                                        <span style="color:var(--text-muted);font-size:12px;">→</span>
+                                        <input type="text" class="ts-input" id="newReelEnd" placeholder="00:30">
+                                        <input type="text" class="label-input" id="newReelLabel" placeholder="Speaker: descripción del momento">
+                                        <button class="btn-mini" onclick="addReelClipManual()"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>
+                                    </div>
+                                </details>
                             </div>
                         </div>
 
                     </div>
 
                     <!-- ============================================
-                         FORMAT & EXPORT: selector de plataforma, el
-                         cual decide qué pestaña de clips se ve arriba.
-                         ============================================ -->
-                    <div class="card format-export-card">
-                        <div class="card-menu">
-                            <button class="btn-card-menu" onclick="toggleCardMenu(this)" title="Más opciones">⋮</button>
-                            <div class="card-menu-dropdown">
-                                <button onclick="selectStudioFormat('simple')"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg> Volver a formato Original</button>
-                            </div>
-                        </div>
-                        <h3>FORMAT &amp; EXPORT</h3>
-
-                        <div class="format-export-body">
-                            <div class="format-bar" id="formatBar">
-                                <button class="format-bar-btn active" data-format="simple" onclick="selectStudioFormat('simple')">Original</button>
-                                <button class="format-bar-btn" data-format="tiktok_30s" onclick="selectStudioFormat('tiktok_30s')" title="TikTok · 9:16 · 1080×1920"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/></svg> TikTok Reel 9:16</button>
-                                <button class="format-bar-btn" data-format="twitter_x_clip" onclick="selectStudioFormat('twitter_x_clip')" title="YouTube · 16:9 · 1280×720"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/></svg> YouTube 16:9</button>
-                                <button class="format-bar-btn" data-format="ig_carrusel_clips" onclick="selectStudioFormat('ig_carrusel_clips')" title="Instagram · 1:1 · 1080×1080"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Instagram 1:1</button>
-                                <button class="format-bar-btn" data-format="ig_feed_4x5" onclick="selectStudioFormat('ig_feed_4x5')" title="Reels · 4:5 · 1080×1350"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/></svg> Reels 4:5</button>
-                            </div>
-                            <label class="subtitle-toggle-row" title="Quemar subtítulos generados desde la transcripción en el video exportado">
-                                <span class="switch-toggle"><input type="checkbox" id="subtitlesHardcoded" onchange="toggleSubtitleStylePanel()"><span class="switch-slider"></span></span>
-                                Subtítulos Incrustados (Hardcoded)
-                            </label>
-
-                            <div class="subtitle-style-panel" id="subtitleStylePanel">
-                                <div class="subtitle-style-preview" id="subtitlePreview">Así se ve tu subtítulo</div>
-                                <div class="subtitle-style-row">
-                                    <span>Tipografía</span>
-                                    <select id="subtitleFont" onchange="updateSubtitlePreview()">
-                                        <option value="anton">Anton (Impacto)</option>
-                                        <option value="bebas">Bebas Neue (Condensada)</option>
-                                        <option value="poppins">Poppins Bold (Moderna)</option>
-                                        <option value="archivo">Archivo Black (Geométrica)</option>
-                                        <option value="luckiest">Luckiest Guy (Divertida)</option>
-                                    </select>
-                                </div>
-                                <div class="subtitle-style-row">
-                                    <span>Color de texto</span>
-                                    <input type="color" id="subtitleColor" value="#ffffff" onchange="updateSubtitlePreview()">
-                                </div>
-                                <div class="subtitle-style-row">
-                                    <span>Color de borde</span>
-                                    <input type="color" id="subtitleBorderColor" value="#000000" onchange="updateSubtitlePreview()">
-                                </div>
-                                <div class="subtitle-style-row">
-                                    <span>Grosor de borde</span>
-                                    <input type="range" id="subtitleBorderWidth" min="0" max="8" value="3" oninput="updateSubtitlePreview()">
-                                    <span class="subtitle-style-value" id="subtitleBorderWidthValue">3</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ============================================
-                         HERRAMIENTAS AVANZADAS: Exportar a Premiere +
-                         Voiceover, plegadas por default (no compiten en
-                         jerarquía visual con el flujo principal de arriba).
+                         HERRAMIENTAS AVANZADAS: subtítulos incrustados,
+                         Exportar a Premiere y Voiceover, plegadas por
+                         default (no compiten en jerarquía visual con el
+                         flujo principal de arriba).
                          ============================================ -->
                     <details class="advanced-tools-accordion">
-                        <summary class="icon-heading"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Herramientas Avanzadas (Premiere / Voiceover)</summary>
+                        <summary class="icon-heading"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Advanced Tools (Subtítulos / Premiere / Voiceover)</summary>
 
                         <div class="advanced-tools-content">
+
+                            <!-- ============================================
+                                 SUBTÍTULOS INCRUSTADOS: quemados en el .mp4 exportado.
+                                 ============================================ -->
+                            <div class="card">
+                                <h3>SUBTÍTULOS INCRUSTADOS</h3>
+                                <label class="subtitle-toggle-row" title="Quemar subtítulos generados desde la transcripción en el video exportado">
+                                    <span class="switch-toggle"><input type="checkbox" id="subtitlesHardcoded" onchange="toggleSubtitleStylePanel()"><span class="switch-slider"></span></span>
+                                    Subtítulos Incrustados (Hardcoded)
+                                </label>
+
+                                <div class="subtitle-style-panel" id="subtitleStylePanel">
+                                    <div class="subtitle-style-preview" id="subtitlePreview">Así se ve tu subtítulo</div>
+                                    <div class="subtitle-style-row">
+                                        <span>Tipografía</span>
+                                        <select id="subtitleFont" onchange="updateSubtitlePreview()">
+                                            <option value="anton">Anton (Impacto)</option>
+                                            <option value="bebas">Bebas Neue (Condensada)</option>
+                                            <option value="poppins">Poppins Bold (Moderna)</option>
+                                            <option value="archivo">Archivo Black (Geométrica)</option>
+                                            <option value="luckiest">Luckiest Guy (Divertida)</option>
+                                        </select>
+                                    </div>
+                                    <div class="subtitle-style-row">
+                                        <span>Color de texto</span>
+                                        <input type="color" id="subtitleColor" value="#ffffff" onchange="updateSubtitlePreview()">
+                                    </div>
+                                    <div class="subtitle-style-row">
+                                        <span>Color de borde</span>
+                                        <input type="color" id="subtitleBorderColor" value="#000000" onchange="updateSubtitlePreview()">
+                                    </div>
+                                    <div class="subtitle-style-row">
+                                        <span>Grosor de borde</span>
+                                        <input type="range" id="subtitleBorderWidth" min="0" max="8" value="3" oninput="updateSubtitlePreview()">
+                                        <span class="subtitle-style-value" id="subtitleBorderWidthValue">3</span>
+                                    </div>
+                                </div>
+                            </div>
 
                             <!-- ============================================
                                  EXPORTAR A PREMIERE - ver js/modules/premiereExport.js.
@@ -629,6 +583,53 @@
                 </div>
 
     </main>
+
+    <!-- ============================================
+         SYSTEM TELEMETRY: debajo del hero principal, a todo
+         el ancho - es información de estado/debug, no compite
+         con la vista de la imagen de referencia de arriba.
+         ============================================ -->
+    <section class="below-hero">
+        <div class="card telemetry-card">
+            <div class="card-menu">
+                <button class="btn-card-menu" onclick="toggleCardMenu(this)" title="Más opciones">⋮</button>
+                <div class="card-menu-dropdown">
+                    <button onclick="clearTelemetryLog()"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg> Limpiar log</button>
+                </div>
+            </div>
+            <h3>SYSTEM TELEMETRY</h3>
+
+            <div class="telemetry-donut-row">
+                <div class="telemetry-donut" id="telemetryDonut" data-state="idle">
+                    <div class="telemetry-donut-hole"></div>
+                </div>
+                <div class="telemetry-status-radios">
+                    <div class="status-radio active" id="statusRadioIdle"><span class="radio-dot"></span>IDLE</div>
+                    <div class="status-radio" id="statusRadioScanning"><span class="radio-dot"></span>SCANNING</div>
+                </div>
+            </div>
+
+            <table class="telemetry-metrics-table">
+                <tbody>
+                    <tr><td>Engine</td><td id="metricEngine">—</td></tr>
+                    <tr><td>Input</td><td id="metricInput">—</td></tr>
+                    <tr><td>Duration</td><td id="metricDuration">—</td></tr>
+                    <tr><td>Diarization</td><td id="metricDiarization">—</td></tr>
+                </tbody>
+            </table>
+
+            <!-- Panel fijo: siempre visible, tamaño estable, sin importar
+                 qué se esté haciendo. Acumula el log de toda la sesión
+                 (análisis + exportaciones). -->
+            <div class="telemetry-panel" id="telemetry">
+                <div class="telemetry-header">
+                    <span class="telemetry-title">&gt;_ LOG</span>
+                    <span class="telemetry-badge state-idle" id="telemetryBadge">○ EN ESPERA</span>
+                </div>
+                <div class="telemetry-log" id="telemetryLog"></div>
+            </div>
+        </div>
+    </section>
 
     <!-- ============================================
          OVERLAY: VISTA LECTURA PANTALLA COMPLETA

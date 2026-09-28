@@ -2,11 +2,9 @@
    PANEL DE EXPORTACIÓN DE CLIPS
    ============================================ */
 .clip-exporter {
-    background: linear-gradient(135deg, #EAFBF3 0%, var(--bg-card-inner) 100%);
-    border: 2px solid var(--accent-green);
-    border-radius: var(--radius); padding: 18px;
+    border-radius: var(--radius); padding: 4px 0 0;
 }
-.clip-exporter h4 { margin: 0 0 14px 0; color: var(--accent-green); font-size: 15px; }
+.clip-exporter h4 { margin: 0 0 14px 0; color: var(--text-main); font-size: 15px; }
 .clip-source-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .clip-source-row input { flex: 1; margin: 0; font-size: 13px; }
 .clip-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }

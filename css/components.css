@@ -29,6 +29,38 @@
 .advanced-tools-accordion[open] summary::after { transform: rotate(180deg); }
 .advanced-tools-content { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 16px; }
 
+/* Mismo patrón "shelf" liviano que .advanced-tools-accordion, para los
+   controles secundarios que quedan plegados dentro de una card (fuente de
+   video, agregar clip a mano, elegir otro enfoque, motor de transcripción):
+   no compiten con el flujo principal, quedan a un click de distancia. */
+.video-source-more, .clip-more-options, details.prompt-other-row {
+    border: var(--border-subtle);
+    border-radius: var(--radius-sm, 10px);
+    background: var(--bg-card-inner);
+    margin: 14px 0;
+    padding: 0;
+}
+.video-source-more summary, .clip-more-options summary, details.prompt-other-row summary {
+    cursor: pointer; padding: 10px 14px; font-size: 12.5px; font-weight: 700;
+    color: var(--text-sub); list-style: none;
+    transition: color .15s var(--ease);
+}
+.video-source-more summary::-webkit-details-marker,
+.clip-more-options summary::-webkit-details-marker,
+details.prompt-other-row summary::-webkit-details-marker { display: none; }
+.video-source-more summary:hover, .clip-more-options summary:hover, details.prompt-other-row summary:hover { color: var(--text-main); }
+.video-source-more summary::after, .clip-more-options summary::after, details.prompt-other-row summary::after {
+    content: "▾"; float: right; color: var(--text-muted);
+    transition: transform .15s var(--ease);
+}
+.video-source-more[open] summary::after, .clip-more-options[open] summary::after, details.prompt-other-row[open] summary::after { transform: rotate(180deg); }
+.video-source-more > select, .video-source-more > *:not(summary) { margin: 0 14px 14px; }
+.clip-more-options > *:not(summary) { margin-left: 14px; margin-right: 14px; }
+.clip-more-options > *:first-of-type { margin-top: 4px; }
+.clip-more-options > *:last-child { margin-bottom: 14px; }
+details.prompt-other-row > *:not(summary) { margin: 0 14px 14px; }
+details.prompt-other-row .studio-control-col + .studio-control-col { margin-top: -6px; }
+
 .btn-del { background: none; border: none; color: var(--accent-coral); cursor: pointer; font-size: 15px; opacity: .6; transition: opacity .15s var(--ease); }
 .btn-del:hover { opacity: 1; }
 

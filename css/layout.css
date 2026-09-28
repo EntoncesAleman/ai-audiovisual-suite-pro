@@ -34,19 +34,17 @@
 .nav-link-disabled:hover { color: var(--text-sub); }
 
 /* ============================================
-   DASHBOARD: contenedor principal, 3 columnas.
-   Izquierda = ingreso y estado del sistema. Centro =
-   generador de IA + transcripción. Derecha = player +
-   clips (con thumbnails) + formato de exportación +
-   herramientas avanzadas (Premiere/Voiceover). Prompts
-   y clips quedan uno al lado del otro (no apilados en
-   la misma columna) para que un clip recién generado
-   quede a la vista sin tener que scrollear a buscarlo.
+   DASHBOARD: hero de 2 columnas igual a la imagen de
+   referencia. Izquierda "Workspace & Edit" (fuente +
+   asistente de IA lado a lado, transcripción abajo).
+   Derecha "Preview & Export" (player + formato + clips
+   + export + herramientas avanzadas plegadas). Todo lo
+   secundario (telemetría) va debajo, ver .below-hero.
    ============================================ */
 .dashboard {
     display: grid;
-    grid-template-columns: 320px 1fr 1fr;
-    gap: 20px;
+    grid-template-columns: minmax(360px, 1fr) minmax(420px, 1.35fr);
+    gap: 28px;
     padding: 16px;
     background: var(--bg-app);
     align-items: start;
@@ -55,7 +53,16 @@
     box-sizing: border-box;
 }
 .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.col-header { color: var(--text-main); font-size: 15px; font-weight: 600; margin: 0; }
+.col-header { color: var(--text-main); font-size: 26px; font-weight: 800; margin: 0 0 4px; letter-spacing: -0.01em; }
+
+/* Fuente + Asistente de IA lado a lado dentro de "Workspace & Edit",
+   como en la imagen de referencia - se apilan solos en pantallas angostas. */
+.workspace-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+@media (max-width: 720px) { .workspace-row { grid-template-columns: 1fr; } }
+
+/* Sección debajo del hero principal (System Telemetry): a todo el ancho,
+   no compite visualmente con la vista de la imagen de referencia. */
+.below-hero { max-width: 1900px; margin: 0 auto; padding: 0 16px 40px; box-sizing: border-box; }
 
 /* Las columnas de los costados suelen terminar más cortas que la del medio
    (transcripción larga) - sticky evita que queden "flotando" con un hueco
@@ -98,21 +105,17 @@
 
 .sidebar-tools { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
 
-@media (max-width: 1750px) {
-    .dashboard { grid-template-columns: 300px 1fr 1fr; }
-}
-
 @media (max-width: 1350px) {
-    /* Deja de entrar cómodo en 3 columnas - el medio (prompts+metraje) y la
-       derecha (clips+export) pasan a apilarse, la izquierda sigue aparte. */
-    .dashboard { grid-template-columns: 280px 1fr; }
-    .col-right { grid-column: 2; position: static; }
+    /* Deja de entrar cómodo en 2 columnas anchas - se apilan, cada una
+       ocupa todo el ancho. */
+    .dashboard { grid-template-columns: 1fr; }
+    .col-left, .col-right { position: static; }
 }
 
 @media (max-width: 860px) {
     .main-content { padding: 24px 16px 60px; }
     .app-header { padding: 14px 16px; }
-    .dashboard { grid-template-columns: 1fr; padding: 12px; }
-    .col-left, .col-right { position: static; grid-column: auto; }
+    .dashboard { padding: 12px; }
+    .col-header { font-size: 21px; }
     .telemetry-log { height: 200px; }
 }

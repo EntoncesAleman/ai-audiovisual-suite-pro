@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { getSessions, setSessions, clearUrlDraft } from '../utils/storage.js';
-import { renderClipsList, generateClipsWithAI } from './clips.js';
-import { renderReelClipsList, updateVideoPanel, generateReelClipsWithAI } from './reelEditor.js';
+import { renderClipsList } from './clips.js';
+import { renderReelClipsList, updateVideoPanel } from './reelEditor.js';
 import { generateIAPrompt } from './prompts.js';
 import { toggleEdit } from './timeline.js';
 import { renderInteractiveTranscript } from './transcriptPanel.js';
@@ -31,29 +31,6 @@ export function saveSession(data) {
     }
     state.currentSessionId = newSession.id;
     loadSessionData(data);
-    autoGenerateClipsWithAI();
-}
-
-/**
- * Apenas termina un análisis NUEVO (no al reabrir una sesión vieja desde el
- * historial - ver loadSessionById, que no llama a esto), genera los clips
- * con IA solo, con el enfoque/plataforma que haya quedado elegido - saca el
- * click de "Generar Clips con IA" para el caso más común (pedido explícito
- * de Tomás). Excepción: modo Assistant sin texto propio todavía (el prompt
- * resultante no pide nada concreto) - ahí no tiene sentido gastar una
- * llamada a la IA para nada, se deja para cuando la persona escriba su pedido.
- */
-function autoGenerateClipsWithAI() {
-    const promptType = document.getElementById('promptType')?.value;
-    if (promptType === 'libre' && !(document.getElementById('promptLibreText')?.value || '').trim()) {
-        return;
-    }
-    const isSocial = document.getElementById('clipEditorTabSocial')?.classList.contains('active');
-    if (isSocial) {
-        generateReelClipsWithAI();
-    } else {
-        generateClipsWithAI();
-    }
 }
 
 export function loadSessionById(id) {

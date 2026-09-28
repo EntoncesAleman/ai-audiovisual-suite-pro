@@ -2,6 +2,7 @@ import { BACKEND_URL } from '../config.js';
 import { state } from '../state.js';
 import { authHeaders } from '../utils/storage.js';
 import { telemetryLog } from '../utils/dom.js';
+import { hasPreviewSource, loadRemoteSourcePreview } from '../modules/player.js';
 
 /**
  * Resuelve de dónde sale el video fuente para exportar. Orden de prioridad:
@@ -63,21 +64,34 @@ export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
  */
 export async function fetchClipThumbnails(clipsList, sourceUrlInputId, onUpdate) {
     const pending = clipsList.filter(c => c.thumbnail === undefined);
-    if (pending.length === 0) return;
-
     const cacheKey = state.currentData?.cache_key || "";
     const urlInput = document.getElementById(sourceUrlInputId);
     const url = (urlInput?.value || "").trim() || state.currentData?.source_url || "";
+
+    if (pending.length === 0) {
+        // Igual intentamos cargar el mini-player si todavía no tiene fuente
+        // (por ej. clips que ya tenían thumbnail de una sesión guardada).
+        loadPreviewFromSourceIfNeeded(cacheKey, url);
+        return;
+    }
+
     if (!cacheKey && !url) {
         pending.forEach(c => { c.thumbnail = null; });
         return;
     }
 
+    // Fuerza la descarga/cache del video (a diferencia de /generate-thumbnails,
+    // que a propósito no lo hace) para que tanto las miniaturas como el
+    // mini-player funcionen con fuentes de YouTube/Drive, no solo con
+    // archivo local. Best-effort: si falla, seguimos igual con
+    // /generate-thumbnails por si el video ya estaba cacheado de otra forma.
+    const effectiveCacheKey = await loadPreviewFromSourceIfNeeded(cacheKey, url);
+
     try {
         const res = await fetch(`${BACKEND_URL}/generate-thumbnails`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cache_key: cacheKey, url, clips: pending.map(c => ({ start: c.start })) }),
+            body: JSON.stringify({ cache_key: effectiveCacheKey || cacheKey, url, clips: pending.map(c => ({ start: c.start })) }),
         });
         if (!res.ok) {
             pending.forEach(c => { c.thumbnail = null; });
@@ -89,4 +103,33 @@ export async function fetchClipThumbnails(clipsList, sourceUrlInputId, onUpdate)
         pending.forEach(c => { c.thumbnail = null; });
     }
     if (onUpdate) onUpdate();
+}
+
+/**
+ * Si el mini-player todavía no tiene ningún video cargado, fuerza el cacheo
+ * del video fuente (por cache_key o url) en el backend y lo trae como blob
+ * para poder reproducirlo/saltar a cualquier punto ANTES de exportar -
+ * mismo resultado que ya existía para archivos locales. Devuelve el
+ * cache_key efectivo (útil para /generate-thumbnails) o "" si no se pudo.
+ * Silencioso ante cualquier error: el flujo de siempre (recién ver el
+ * preview al exportar) sigue funcionando igual como fallback.
+ */
+async function loadPreviewFromSourceIfNeeded(cacheKey, url) {
+    if (hasPreviewSource() || (!cacheKey && !url)) return cacheKey;
+    try {
+        const ensureRes = await fetch(`${BACKEND_URL}/ensure-cached-video`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cache_key: cacheKey, url }),
+        });
+        if (!ensureRes.ok) return cacheKey;
+        const { cache_key: effectiveCacheKey } = await ensureRes.json();
+        if (!effectiveCacheKey) return cacheKey;
+        const videoRes = await fetch(`${BACKEND_URL}/cached-video/${effectiveCacheKey}`, { headers: authHeaders() });
+        if (!videoRes.ok) return effectiveCacheKey;
+        loadRemoteSourcePreview(await videoRes.blob());
+        return effectiveCacheKey;
+    } catch (e) {
+        return cacheKey;
+    }
 }

@@ -1044,12 +1044,18 @@ def shift_timestamps_in_transcript(text: str, offset_seconds: int) -> str:
 
 
 PROMPT_ESCANEO = (
-    "You are receiving an AUDIO FILE (MP3) from a RADIO PROGRAM. Your task is to transcribe ALL human speech "
-    "from the first second to the very last second — do NOT stop early.\n\n"
-    "IMPORTANT — MUSICAL BREAKS: This radio program contains musical breaks of several minutes at various points "
+    "You are receiving an AUDIO FILE (MP3). It may be a radio program, a podcast, an interview, or any other "
+    "spoken content. Your task is to transcribe ALL human speech from the first second to the very last second "
+    "— do NOT stop early, and do NOT skip ahead.\n\n"
+    "CRITICAL — NEVER SKIP THE BEGINNING: Start transcribing from 00:00. Never jump ahead several minutes into "
+    "the file assuming the start is silence or music — check the actual audio. Quiet, unclear, cross-talking, or "
+    "hard-to-hear speech is still speech: transcribe your best guess of it instead of skipping it. Only skip a "
+    "segment if you are completely certain it contains ZERO human speech (pure instrumental music, a jingle, or "
+    "true silence) — if in doubt, transcribe it instead of skipping.\n\n"
+    "IMPORTANT — MUSICAL BREAKS: Some programs contain musical breaks of several minutes at various points "
     "(not just at the start). Whenever you encounter music, jingles, instrumental segments, or any non-speech audio "
-    "— whether at the beginning, middle, or end of the file — skip them COMPLETELY and silently. "
-    "Jump directly to the next moment where a human voice speaks and continue transcribing from there. "
+    "— whether at the beginning, middle, or end of the file — skip ONLY that exact segment, and resume transcribing "
+    "at the very next moment where a human voice speaks (do not overshoot past the point speech actually resumes). "
     "NEVER produce any output entry for a music segment. "
     "NEVER fill a music gap by repeating a word or short phrase (such as 'no, no, no' or "
     "'que venga, que venga, que venga' or any filler). "
@@ -1067,9 +1073,10 @@ PROMPT_ESCANEO = (
     "- Transition music between blocks\n"
     "Continue transcribing ALL speech until you reach the absolute end of the audio file.\n\n"
     "CRITICAL RULE FOR SPEAKERS: Assign a unique numbered label to each distinct voice you identify. "
-    "Use 'Speaker 1', 'Speaker 2', 'Speaker 3', etc. If you can identify their actual name from the conversation, "
-    "use it instead (e.g., 'Speaker 1 (Juan)'). Maintain the same label consistently throughout the entire transcription. "
-    "Never use a generic 'Speaker' label for multiple people.\n\n"
+    "Use ONLY 'Speaker 1', 'Speaker 2', 'Speaker 3', etc. — NEVER guess, infer, or attach a real name in "
+    "parentheses (e.g. never write 'Speaker 1 (Juan)'), even if a name is mentioned somewhere in the audio. "
+    "Real names get added later by a human reviewing the transcript, not by you. "
+    "Maintain the same numbered label consistently for the same voice throughout the entire transcription.\n\n"
     "Provide the output strictly as plain text using the following format for each event found (do not use markdown blocks or JSON):\n"
     "TIMESTAMP: [Give the exact timestamp, e.g., 04:12]\n"
     "SPEAKER: [Numbered speaker label, e.g., Speaker 1, Speaker 2, or Speaker 1 (Name)]\n"
@@ -2470,6 +2477,60 @@ async def generate_thumbnails(input_data: ThumbnailRequest):
         return {"thumbnails": thumbnails}
     finally:
         _heavy_ops_semaphore.release()
+
+
+class EnsureCachedVideoRequest(BaseModel):
+    url: str = ""
+    cache_key: str = ""
+
+
+@app.post("/ensure-cached-video", dependencies=[Depends(require_api_key)])
+async def ensure_cached_video(input_data: EnsureCachedVideoRequest):
+    """
+    A diferencia de /generate-thumbnails (que a propósito NO descarga si no
+    hay cache), este SÍ fuerza la descarga del video completo de una URL para
+    dejarlo cacheado - necesario para que el mini-player y las miniaturas
+    funcionen con fuentes de YouTube/Drive igual que ya funcionan con un
+    archivo local (que queda cacheado solo al analizarlo). Pensado para
+    llamarse una sola vez por sesión, cuando ya hay clips para mostrar -
+    no en cada render del grid.
+    """
+    if not input_data.url and not input_data.cache_key:
+        raise HTTPException(status_code=400, detail="Falta url o cache_key.")
+    effective_cache_key = input_data.cache_key or url_hash(input_data.url)
+    if cache_video_path(effective_cache_key):
+        return {"cache_key": effective_cache_key, "cached": True}
+    if not input_data.url:
+        raise HTTPException(status_code=404, detail="No hay video cacheado y no se dio una URL para descargarlo.")
+
+    await _heavy_ops_semaphore.acquire()
+    try:
+        mem_error = _memory_headroom_error()
+        if mem_error:
+            raise HTTPException(status_code=503, detail=mem_error)
+        video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
+        try:
+            cache_video_store(effective_cache_key, video_path)
+        finally:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+        return {"cache_key": effective_cache_key, "cached": True}
+    finally:
+        _heavy_ops_semaphore.release()
+
+
+@app.get("/cached-video/{cache_key}", dependencies=[Depends(require_api_key)])
+def get_cached_video(cache_key: str):
+    """
+    Sirve el video cacheado para el mini-player. Requiere el header de auth
+    (como cualquier endpoint protegido), así que el frontend lo pide con
+    fetch() + authHeaders() y arma un blob: URL - un <video src="..."> plano
+    no serviría porque el navegador no manda headers custom en esa request.
+    """
+    video_path = cache_video_path(cache_key)
+    if not video_path:
+        raise HTTPException(status_code=404, detail="Video no cacheado.")
+    return FileResponse(video_path)
 
 
 def _downscale_thumbnail(image_path: str, max_width: int = 200):

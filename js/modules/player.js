@@ -97,3 +97,19 @@ export function loadLocalSourcePreview(file) {
     e.video.classList.add('has-src');
     if (placeholder) placeholder.style.display = 'none';
 }
+
+/**
+ * Mismo resultado que loadLocalSourcePreview pero para un video que vino de
+ * una URL (YouTube/Drive): el backend ya lo descargó/cacheó (ver
+ * ensureCachedVideo en api.js) y acá se recibe como blob ya bajado -
+ * requirió fetch() con el header de auth, un <video src> plano no puede
+ * pedirlo porque el navegador no manda headers custom en esa request.
+ */
+export function loadRemoteSourcePreview(blob) {
+    const e = getEls();
+    if (!e || !blob) return;
+    const placeholder = document.getElementById('previewVideoPlaceholder');
+    e.video.src = URL.createObjectURL(blob);
+    e.video.classList.add('has-src');
+    if (placeholder) placeholder.style.display = 'none';
+}
