@@ -60,6 +60,14 @@
 .workspace-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 @media (max-width: 720px) { .workspace-row { grid-template-columns: 1fr; } }
 
+/* Celular (player) en su propia columna angosta + clips a la derecha en
+   una columna más ancha, dentro de "Preview & Export" - igual que en la
+   imagen de referencia. Se apilan solos en pantallas angostas. */
+.preview-row { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; gap: 20px; align-items: start; }
+@media (max-width: 860px) {
+    .preview-row { grid-template-columns: 1fr; }
+}
+
 /* Sección debajo del hero principal (System Telemetry): a todo el ancho,
    no compite visualmente con la vista de la imagen de referencia. */
 .below-hero { max-width: 1900px; margin: 0 auto; padding: 0 16px 40px; box-sizing: border-box; }

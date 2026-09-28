@@ -117,7 +117,22 @@ function setActiveFormatBtn(format) {
     });
 }
 
+/**
+ * El celular (mini-player) cambia de forma según el formato de salida
+ * elegido (9:16 vertical para TikTok/Original, 16:9 horizontal para
+ * YouTube, 1:1 para Instagram, 4:5 para Reels) - cada botón del format-bar
+ * trae su ratio en data-ratio (ver index.html).
+ */
+function applyPreviewAspectRatio(format) {
+    const btn = document.querySelector(`.format-bar-btn[data-format="${format}"]`);
+    const frame = document.querySelector('.export-preview-frame');
+    if (btn && frame && btn.dataset.ratio) {
+        frame.style.aspectRatio = btn.dataset.ratio;
+    }
+}
+
 function selectStudioFormat(format) {
+    applyPreviewAspectRatio(format);
     if (format === 'simple') {
         // El enfoque ya no se elige a mano (ver ai-assistant-card en
         // index.html) - volver a "Original" repuebla el select oculto con

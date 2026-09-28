@@ -1301,7 +1301,7 @@ def _transcribe_with_gemini_dedicated(uploaded_file) -> str:
     return f"TIMESTAMP: 00:00\nSPEAKER: Speaker 1\nDIALOGUE: {text.strip()}\n---"
 
 
-def _call_gemini_with_retry(uploaded_file, max_cycles: int = 2):
+def _call_gemini_with_retry(uploaded_file, max_cycles: int = 3):
     """
     Llama a Gemini recorriendo GEMINI_MODELS en orden. Ante CUALQUIER
     falla del modelo actual (excepción de cualquier tipo - no solo
@@ -1395,7 +1395,7 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 2):
     )
 
 
-def _call_gemini_text(prompt: str, max_cycles: int = 2) -> str:
+def _call_gemini_text(prompt: str, max_cycles: int = 3) -> str:
     """
     Llama a Gemini con un prompt de solo texto (sin archivo adjunto) - se usa
     para el "prompt libre": en vez de que la persona copie el prompt a
