@@ -1301,7 +1301,7 @@ def _transcribe_with_gemini_dedicated(uploaded_file) -> str:
     return f"TIMESTAMP: 00:00\nSPEAKER: Speaker 1\nDIALOGUE: {text.strip()}\n---"
 
 
-def _call_gemini_with_retry(uploaded_file, max_cycles: int = 3):
+def _call_gemini_with_retry(uploaded_file, max_cycles: int = 4):
     """
     Llama a Gemini recorriendo GEMINI_MODELS en orden. Ante CUALQUIER
     falla del modelo actual (excepción de cualquier tipo - no solo
@@ -1326,6 +1326,13 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 3):
     last_error = None
 
     for cycle in range(1, max_cycles + 1):
+        if cycle > 1:
+            # Pausa entre vueltas completas (ver mismo razonamiento en
+            # _call_gemini_text): si TODOS los modelos dieron 503 en la
+            # vuelta anterior, un respiro le da tiempo a la sobrecarga de
+            # Google de bajar antes de volver a probarlos.
+            print(f"   ⚠ Ninguno de los {len(GEMINI_MODELS)} modelos respondió en el ciclo {cycle - 1}. Pausa de 10s antes de la vuelta {cycle}/{max_cycles}...")
+            time.sleep(10)
         models_this_cycle = [m for m in GEMINI_MODELS if m not in _exhausted_models]
         if not models_this_cycle:
             raise Exception(
@@ -1395,7 +1402,7 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 3):
     )
 
 
-def _call_gemini_text(prompt: str, max_cycles: int = 3) -> str:
+def _call_gemini_text(prompt: str, max_cycles: int = 4) -> str:
     """
     Llama a Gemini con un prompt de solo texto (sin archivo adjunto) - se usa
     para el "prompt libre": en vez de que la persona copie el prompt a
@@ -1408,6 +1415,14 @@ def _call_gemini_text(prompt: str, max_cycles: int = 3) -> str:
     last_error = None
 
     for cycle in range(1, max_cycles + 1):
+        if cycle > 1:
+            # Pausa entre vueltas completas (no entre modelos individuales):
+            # si TODOS los modelos dieron 503 "alta demanda" en la vuelta
+            # anterior, probarlos nuevamente de inmediato pega contra la
+            # misma sobrecarga - un respiro le da tiempo a Google de bajarla
+            # antes de la próxima vuelta.
+            print(f"   ⚠ Ninguno de los {len(GEMINI_MODELS)} modelos respondió en el ciclo {cycle - 1}. Pausa de 10s antes de la vuelta {cycle}/{max_cycles}...")
+            time.sleep(10)
         models_this_cycle = [m for m in GEMINI_MODELS if m not in _exhausted_models]
         if not models_this_cycle:
             raise Exception(
@@ -2137,8 +2152,8 @@ async def assistant_chat(input_data: AssistantChatInput):
                     return {"reply": reply, "engine": "groq"}
                 except Exception as groq_error:
                     print(f"   ⚠ Groq también falló: {groq_error}")
-                    raise gemini_error
-            raise
+                    raise Exception(f"Gemini falló ({gemini_error}) y Groq también falló ({groq_error}).")
+            raise Exception(f"Gemini falló y GROQ_API_KEY no está configurada en el servidor, así que no hay red de contención: {gemini_error}")
     except HTTPException:
         raise
     except Exception as e:
@@ -2180,12 +2195,16 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
                     return {"text": text, "engine": "groq"}
                 except Exception as groq_error:
                     print(f"   ⚠ Groq también falló: {groq_error}")
-                    raise gemini_error
-            raise
+                    # Mensaje explícito de los DOS intentos (Gemini y Groq) -
+                    # antes acá se relanzaba solo gemini_error y no había forma
+                    # de saber desde el frontend si Groq ni siquiera llegó a
+                    # intentarse o si también falló.
+                    raise Exception(f"Gemini falló ({gemini_error}) y Groq también falló ({groq_error}).")
+            raise Exception(f"Gemini falló y GROQ_API_KEY no está configurada en el servidor, así que no hay red de contención: {gemini_error}")
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini no pudo generar una respuesta: {e}")
+        raise HTTPException(status_code=502, detail=f"No se pudo generar una respuesta: {e}")
     finally:
         _heavy_ops_semaphore.release()
 

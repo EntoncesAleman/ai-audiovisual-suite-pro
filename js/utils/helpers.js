@@ -174,15 +174,33 @@ export function parseAiTimestampsText(text, defaultDurationSeconds = 30) {
             // con el enfoque por default de la app ("Estructurar Teaser").
             const rangeBlockPattern = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(\d{1,2}:\d{2}(?::\d{2})?)[ \t]*\r?\n([^\n]*)\r?\n?([^\n]*)/gm;
             const rangeMatches = [...text.matchAll(rangeBlockPattern)];
-            for (let i = 0; i < rangeMatches.length; i++) {
-                const [, start, end, line1, line2] = rangeMatches[i];
-                const speaker = (line1 || '').trim().slice(0, 30);
-                const quote = (line2 || '').replace(/^["“]|["”]$/g, '').trim().slice(0, 60);
-                const looksLikeSpeaker = speaker && !/^\d{1,2}:\d{2}/.test(speaker);
-                const label = looksLikeSpeaker
-                    ? (quote ? `${speaker}: ${quote}` : speaker)
-                    : (labels[i] || `Clip importado ${i + 1}`);
-                imported.push({ start, end, label, selected: true });
+            if (rangeMatches.length > 0) {
+                for (let i = 0; i < rangeMatches.length; i++) {
+                    const [, start, end, line1, line2] = rangeMatches[i];
+                    const speaker = (line1 || '').trim().slice(0, 30);
+                    const quote = (line2 || '').replace(/^["“]|["”]$/g, '').trim().slice(0, 60);
+                    const looksLikeSpeaker = speaker && !/^\d{1,2}:\d{2}/.test(speaker);
+                    const label = looksLikeSpeaker
+                        ? (quote ? `${speaker}: ${quote}` : speaker)
+                        : (labels[i] || `Clip importado ${i + 1}`);
+                    imported.push({ start, end, label, selected: true });
+                }
+            } else {
+                // Fallback 4: rango + hablante + cita, los TRES en la MISMA línea
+                // (ej: '00:00 - 00:08 KIKI: "¿Vos crees...?"') - visto en vivo
+                // cuando la IA agrupa varias citas bajo un mismo "clip" temático
+                // en el modo Assistant/libre en vez de usar el bloque ⏱ Inicio/
+                // ⏱ Fin de a un momento por vez (ver FREE_PROMPT_TIMESTAMP_
+                // INSTRUCTIONS en prompts.js, reforzado para que no pase, pero
+                // esto queda de red de seguridad si igual lo hace).
+                const inlineQuotePattern = /^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(\d{1,2}:\d{2}(?::\d{2})?)\s+([^:\n]{1,40}):\s*"?([^"\n]*)"?/gm;
+                const inlineQuoteMatches = [...text.matchAll(inlineQuotePattern)];
+                for (let i = 0; i < inlineQuoteMatches.length; i++) {
+                    const [, start, end, speakerRaw, quoteRaw] = inlineQuoteMatches[i];
+                    const speaker = speakerRaw.trim().slice(0, 30);
+                    const quote = quoteRaw.trim().slice(0, 60);
+                    imported.push({ start, end, label: quote ? `${speaker}: ${quote}` : speaker, selected: true });
+                }
             }
         }
     }
