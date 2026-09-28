@@ -1,12 +1,13 @@
 import { BACKEND_URL } from './config.js';
+import { state } from './state.js';
 import { getUrlDraft, setUrlDraft } from './utils/storage.js';
 import { startNewSession, loadSessionById } from './modules/sessions.js';
 import { analyzeUrlStream, analyzeLocalFile, stopCurrentAnalysis, startAnalysis } from './api/analysis.js';
 import { loadPromptsLibrary, onPromptTypeChange, onPromptTypeOtherChange, generateIAPrompt, selectPromptMode, setPromptTopMode } from './modules/prompts.js';
 import { searchTimeline, toggleEdit, downloadTimeline } from './modules/timeline.js';
 import { openReader, closeReader, renderReader, changeReaderFontSize } from './modules/reader.js';
-import { parseClipsFromTimeline, selectAllClips, clearAllClips, addClipManual, startClipExport, toggleClipAiImport, importClipAiTimestamps, generateClipsWithAI, switchClipEditorTab, exportAllClips } from './modules/clips.js';
-import { parseClipsForReel, toggleAiImport, selectAllReelClips, clearAllReelClips, importAiTimestamps, generateReelClipsWithAI, addReelClipManual, startReelExport, exportAllReelClips, generateReelCaptions } from './modules/reelEditor.js';
+import { parseClipsFromTimeline, selectAllClips, clearAllClips, addClipManual, startClipExport, toggleClipAiImport, importClipAiTimestamps, generateClipsWithAI, switchClipEditorTab, exportAllClips, renderClipsList } from './modules/clips.js';
+import { parseClipsForReel, toggleAiImport, selectAllReelClips, clearAllReelClips, importAiTimestamps, generateReelClipsWithAI, addReelClipManual, startReelExport, exportAllReelClips, generateReelCaptions, renderReelClipsList } from './modules/reelEditor.js';
 import { initPlayer, loadLocalSourcePreview } from './modules/player.js';
 import { initSpeechMapSync, renderInteractiveTranscript } from './modules/transcriptPanel.js';
 import { initAuthGuard } from './modules/auth.js';
@@ -118,21 +119,48 @@ function setActiveFormatBtn(format) {
 }
 
 /**
- * El celular (mini-player) cambia de forma según el formato de salida
- * elegido (9:16 vertical para TikTok/Original, 16:9 horizontal para
- * YouTube, 1:1 para Instagram, 4:5 para Reels) - cada botón del format-bar
- * trae su ratio en data-ratio (ver index.html).
+ * El MARCO del celular siempre es un celular (fijo en 9:16, ver CSS) - lo
+ * que cambia según el formato de salida elegido es la proporción del VIDEO
+ * de adentro (.export-preview-content), con barras tipo letterbox si el
+ * formato no es 9:16 - igual que se ve un video real dentro de la pantalla
+ * de un celular. Cada botón del format-bar trae su ratio en data-ratio.
  */
 function applyPreviewAspectRatio(format) {
     const btn = document.querySelector(`.format-bar-btn[data-format="${format}"]`);
-    const frame = document.querySelector('.export-preview-frame');
-    if (btn && frame && btn.dataset.ratio) {
-        frame.style.aspectRatio = btn.dataset.ratio;
+    const content = document.getElementById('previewContent');
+    if (btn && content && btn.dataset.ratio) {
+        content.style.aspectRatio = btn.dataset.ratio;
+    }
+}
+
+/**
+ * Los clips no dependen del formato elegido - el mismo corte (mismo start/
+ * end/label) tiene que poder exportarse como Original, TikTok, 16:9, etc.
+ * sin tener que rehacerlo. clipsList (pestaña Original) y reelClipsList
+ * (pestañas de redes) son dos arrays separados por cómo se exportan cada
+ * uno (recorte/escala distinto por plataforma) - acá se clona UNA VEZ de
+ * cualquiera de los dos hacia el que esté vacío al cambiar de formato, así
+ * no hace falta generar/pegar los timestamps de nuevo para cada formato.
+ * Si el destino ya tiene clips propios (generados o editados ahí), no se
+ * pisan.
+ */
+function syncClipsAcrossFormats(target) {
+    if (target === 'simple') {
+        if (state.clipsList.length === 0 && state.reelClipsList.length > 0) {
+            state.clipsList = state.reelClipsList.map(({ start, end, label, selected, favorite, color, transitionOut }) =>
+                ({ start, end, label, selected, favorite, color, transitionOut }));
+            renderClipsList();
+        }
+    } else if (state.reelClipsList.length === 0 && state.clipsList.length > 0) {
+        state.reelClipsList = state.clipsList.map(({ start, end, label, selected, favorite, color, transitionOut }) =>
+            ({ start, end, label, selected, favorite, color, transitionOut }));
+        renderReelClipsList();
     }
 }
 
 function selectStudioFormat(format) {
     applyPreviewAspectRatio(format);
+    syncClipsAcrossFormats(format);
     if (format === 'simple') {
         // El enfoque ya no se elige a mano (ver ai-assistant-card en
         // index.html) - volver a "Original" repuebla el select oculto con

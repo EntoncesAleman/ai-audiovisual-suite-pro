@@ -117,10 +117,12 @@ details.prompt-other-row .studio-control-col + .studio-control-col { margin-top:
     margin-bottom: 8px;
 }
 /* Marco tipo celular (como en la imagen de referencia): bisel oscuro
-   redondeado, centrado, relación de aspecto vertical - el player en sí
-   siempre termina siendo un clip 9:16/4:5 para redes, así que mostrarlo
-   como pantalla de celular en vez de una caja panorámica es más fiel a
-   cómo se va a ver el resultado final. */
+   redondeado, centrado, SIEMPRE 9:16 fijo - es el dispositivo, no cambia de
+   forma. Lo que sí cambia según el formato de salida elegido es el VIDEO de
+   adentro (.export-preview-content, ver applyPreviewAspectRatio en app.js):
+   ocupa toda la pantalla si es 9:16, o queda con barras tipo letterbox
+   arriba/abajo (16:9) o a los costados (1:1/4:5) - como se ve un video real
+   dentro de la pantalla de un celular. */
 .export-preview-frame {
     position: relative;
     width: min(100%, 300px);
@@ -140,12 +142,29 @@ details.prompt-other-row .studio-control-col + .studio-control-col { margin-top:
     background: rgba(255,255,255,.16);
     z-index: 2;
 }
+.export-preview-screen {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: #000;
+}
+/* Caja del video: aspect-ratio la fija applyPreviewAspectRatio() en JS según
+   el formato activo. max-width/max-height 100% + margin auto hacen que se
+   achique manteniendo esa proporción dentro de la pantalla del celular
+   (mismo efecto que object-fit:contain, pero también sirve para el
+   placeholder que no es una imagen). */
+.export-preview-content {
+    position: relative;
+    max-width: 100%; max-height: 100%;
+    aspect-ratio: 9 / 16;
+    margin: auto;
+}
 .export-preview-video { width: 100%; height: 100%; object-fit: cover; display: none; }
 .export-preview-video.has-src { display: block; }
 .export-preview-placeholder {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 8px; height: 100%; padding: 24px; color: rgba(255,255,255,.55);
+    gap: 8px; width: 100%; height: 100%; padding: 24px; color: rgba(255,255,255,.55);
     background: repeating-linear-gradient(135deg, #17171C, #17171C 10px, #1E1E24 10px, #1E1E24 20px);
+    box-sizing: border-box;
 }
 .export-preview-placeholder svg { opacity: .7; }
 .export-preview-placeholder span { font-size: 12px; max-width: 200px; text-align: center; }

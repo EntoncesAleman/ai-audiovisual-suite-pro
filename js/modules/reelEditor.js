@@ -290,20 +290,22 @@ export function addReelClipManual() {
 /** Repinta el panel de copies según los clips seleccionados / el copy de carrusel guardados en state. */
 export function renderReelCaptions() {
     const body = document.getElementById("reelCaptionsBody");
+    const editBtn = document.getElementById("btnEditReelCaptions");
     if (!body) return;
     const pdata = state.currentPlatformKey ? PLATFORM_DATA[state.currentPlatformKey] : null;
     const isCarousel = !!pdata?.isCarousel;
 
     if (isCarousel) {
-        if (!state.reelCarouselCaption) { body.style.display = "none"; body.innerHTML = ""; return; }
+        if (!state.reelCarouselCaption) { body.style.display = "none"; body.innerHTML = ""; if (editBtn) editBtn.style.display = "none"; return; }
         body.style.display = "flex";
         body.innerHTML = `
             <div class="reel-caption-card">
-                <div class="reel-caption-label">Caption único para todo el post del carrusel (+ hashtags)</div>
+                <div class="reel-caption-label">Caption único para todo el post del carrusel (+ hashtags) - un carrusel de Instagram es UNA sola publicación con varias slides, no admite un caption distinto por slide</div>
                 <textarea class="reel-caption-textarea" rows="5" oninput="updateReelCarouselCaption(this.value)">${escapeHtml(state.reelCarouselCaption)}</textarea>
             </div>
             <button class="btn-download-captions" onclick="downloadReelCaptions()">📥 Descargar texto (.txt)</button>
         `;
+        if (editBtn) editBtn.style.display = "";
         return;
     }
 
@@ -317,9 +319,17 @@ export function renderReelCaptions() {
             </div>
         `).join("");
 
-    if (!cardsHtml) { body.style.display = "none"; body.innerHTML = ""; return; }
+    if (!cardsHtml) { body.style.display = "none"; body.innerHTML = ""; if (editBtn) editBtn.style.display = "none"; return; }
     body.style.display = "flex";
     body.innerHTML = cardsHtml + `<button class="btn-download-captions" onclick="downloadReelCaptions()">📥 Descargar textos (.txt)</button>`;
+    if (editBtn) editBtn.style.display = "";
+}
+
+/** "✏️ Editar copies": plegar/desplegar el panel de copies ya generados sin tener que volver a pedírselos a la IA. */
+export function toggleReelCaptionsEditor() {
+    const body = document.getElementById("reelCaptionsBody");
+    if (!body || !body.innerHTML.trim()) return;
+    body.style.display = body.style.display === "none" ? "flex" : "none";
 }
 
 export function updateReelClipCaption(i, value) { state.reelClipsList[i].caption = value; }
@@ -540,3 +550,4 @@ window.playReelClip = playReelClip;
 window.updateReelClipCaption = updateReelClipCaption;
 window.updateReelCarouselCaption = updateReelCarouselCaption;
 window.downloadReelCaptions = downloadReelCaptions;
+window.toggleReelCaptionsEditor = toggleReelCaptionsEditor;

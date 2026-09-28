@@ -234,16 +234,26 @@
 
                         <!-- ---------- CELULAR (player) ---------- -->
                         <div class="card player-only-card">
+                            <!-- El MARCO del celular (.export-preview-frame) siempre es un
+                                 celular, fijo en 9:16 - lo que cambia con el formato elegido
+                                 es la proporción del VIDEO de adentro (.export-preview-content,
+                                 ver applyPreviewAspectRatio en app.js), con barras tipo
+                                 letterbox arriba/abajo o a los costados si no es 9:16, como
+                                 se ve un video real dentro de la pantalla de un celular. -->
                             <div class="export-preview-frame">
-                                <video id="previewVideo" class="export-preview-video" playsinline></video>
-                                <div class="export-preview-placeholder" id="previewVideoPlaceholder">
-                                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 8 6 4-6 4V8Z"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>
-                                    <span>Acá vas a ver el clip cuando lo exportes (o subí un archivo local abajo para previsualizar antes)</span>
+                                <div class="export-preview-screen">
+                                    <div class="export-preview-content" id="previewContent">
+                                        <video id="previewVideo" class="export-preview-video" playsinline></video>
+                                        <div class="export-preview-placeholder" id="previewVideoPlaceholder">
+                                            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 8 6 4-6 4V8Z"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>
+                                            <span>Acá vas a ver el clip cuando lo exportes (o subí un archivo local abajo para previsualizar antes)</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
-                            <!-- FORMATO: elegirlo cambia el aspect-ratio del celular de
-                                 arriba (ver applyPreviewAspectRatio en app.js) y de paso
+                            <!-- FORMATO: elegirlo cambia la proporción del video adentro del
+                                 celular (ver applyPreviewAspectRatio en app.js) y de paso
                                  la pestaña de clips de al lado (ver selectStudioFormat). -->
                             <div class="format-bar" id="formatBar">
                                 <button class="format-bar-btn active" data-format="simple" data-ratio="9/16" onclick="selectStudioFormat('simple')">Original</button>
@@ -363,6 +373,7 @@
                                      de gastar una llamada a la IA en escribir el copy. Ver reelEditor.js. -->
                                 <div class="reel-captions-section">
                                     <button class="btn-mini" onclick="generateReelCaptions()" id="btnGenerateReelCaptions" style="background:#E8E7FB;border-color:#6366F1;color:#4338CA;">📝 Generar copies (texto para la publicación)</button>
+                                    <button class="btn-mini" onclick="toggleReelCaptionsEditor()" id="btnEditReelCaptions" style="display:none;">✏️ Editar copies</button>
                                     <div class="reel-captions-feedback" id="reelCaptionsFeedback"></div>
                                     <div class="reel-captions-body" id="reelCaptionsBody" style="display:none;"></div>
                                 </div>
