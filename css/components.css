@@ -116,15 +116,39 @@ details.prompt-other-row .studio-control-col + .studio-control-col { margin-top:
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     margin-bottom: 8px;
 }
-.export-preview-frame { position: relative; border-radius: 8px; overflow: hidden; background: #000; border: var(--border); }
-.export-preview-video { width: 100%; max-height: 320px; display: none; }
+/* Marco tipo celular (como en la imagen de referencia): bisel oscuro
+   redondeado, centrado, relación de aspecto vertical - el player en sí
+   siempre termina siendo un clip 9:16/4:5 para redes, así que mostrarlo
+   como pantalla de celular en vez de una caja panorámica es más fiel a
+   cómo se va a ver el resultado final. */
+.export-preview-frame {
+    position: relative;
+    width: min(100%, 300px);
+    aspect-ratio: 9 / 16;
+    margin: 0 auto;
+    border-radius: 32px;
+    overflow: hidden;
+    background: #0B0B0F;
+    border: 7px solid #1C1C22;
+    box-shadow: 0 12px 28px rgba(0,0,0,.18), inset 0 0 0 1px rgba(255,255,255,.04);
+}
+/* "Notch" arriba, como el altavoz de un celular - puro detalle visual. */
+.export-preview-frame::before {
+    content: "";
+    position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+    width: 56px; height: 5px; border-radius: 3px;
+    background: rgba(255,255,255,.16);
+    z-index: 2;
+}
+.export-preview-video { width: 100%; height: 100%; object-fit: cover; display: none; }
 .export-preview-video.has-src { display: block; }
 .export-preview-placeholder {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 8px; height: 160px; color: var(--text-muted);
-    background: repeating-linear-gradient(135deg, #EEF1F5, #EEF1F5 10px, #E6E9EF 10px, #E6E9EF 20px);
+    gap: 8px; height: 100%; padding: 24px; color: rgba(255,255,255,.55);
+    background: repeating-linear-gradient(135deg, #17171C, #17171C 10px, #1E1E24 10px, #1E1E24 20px);
 }
-.export-preview-placeholder span { font-size: 12px; max-width: 220px; text-align: center; }
+.export-preview-placeholder svg { opacity: .7; }
+.export-preview-placeholder span { font-size: 12px; max-width: 200px; text-align: center; }
 .export-preview-video.has-src ~ .export-preview-placeholder { display: none; }
 
 .export-action-row { display: flex; align-items: stretch; gap: 10px; margin-top: 14px; }

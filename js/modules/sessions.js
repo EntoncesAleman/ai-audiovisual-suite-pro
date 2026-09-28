@@ -7,6 +7,7 @@ import { toggleEdit } from './timeline.js';
 import { renderInteractiveTranscript } from './transcriptPanel.js';
 import { setTelemetryMetrics, resetExportPreview } from '../utils/dom.js';
 import { estimateDurationSeconds, secondsToTs, collapseRepeatedRuns } from '../utils/helpers.js';
+import { clearAssistantChat } from './assistantChat.js';
 
 // El listado/administración del historial (borrar, exportar JSON, importar,
 // borrar caché del servidor) vive en historial.html/historial.js, una
@@ -51,6 +52,7 @@ export function loadSessionData(data) {
     // arreglan solas la próxima vez que se cargan, sin reanalizar el video.
     state.originalTimeline = collapseRepeatedRuns(data.raw_timeline || "No hay líneas de tiempo registradas.");
     document.getElementById('resTimeline').innerText = state.originalTimeline;
+    clearAssistantChat(); // conversación del modo Assistant es por-material, no debe arrastrarse entre sesiones
     document.getElementById('cacheBadge').innerHTML = data.from_cache ? '<span class="cache-badge">⚡ DESDE CACHE</span>' : '';
     document.getElementById('timelineSearch').value = "";
     document.getElementById('searchInfo').textContent = "";

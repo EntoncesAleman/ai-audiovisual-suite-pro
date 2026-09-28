@@ -119,6 +119,12 @@ function setActiveFormatBtn(format) {
 
 function selectStudioFormat(format) {
     if (format === 'simple') {
+        // El enfoque ya no se elige a mano (ver ai-assistant-card en
+        // index.html) - volver a "Original" repuebla el select oculto con
+        // la categoría "audiovisual" para que Generate Clips tenga un
+        // enfoque razonable por default, igual que antes hacía el botón
+        // "Montaje Audiovisual" que ya no está en la UI.
+        selectPromptMode('audiovisual');
         switchClipEditorTab('simple');
         setActiveFormatBtn('simple');
         return;

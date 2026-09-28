@@ -26,6 +26,11 @@ export const state = {
     promptsByCategory: {},
     TEASER_TEMPLATES: null,  // plantillas de curva dramática
 
+    // Historial del chat del modo Assistant (ver js/modules/assistantChat.js)
+    // - array de {role: "user"|"assistant", content}. Se reinicia al cargar
+    // un análisis nuevo/sesión distinta (ver sessions.js).
+    assistantChatHistory: [],
+
     // Controller del análisis en curso, para poder frenarlo con el botón "Detener".
     currentAbortController: null,
     // true si el último streamingFetch se cortó por el watchdog de stall

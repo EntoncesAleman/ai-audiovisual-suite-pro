@@ -103,35 +103,26 @@
                                 <button type="button" class="format-bar-btn prompt-top-toggle-btn" data-topmode="assistant" onclick="setPromptTopMode('assistant')">💬 Assistant</button>
                             </div>
 
-                            <!-- MODO: los dos enfoques de uso constante (uno por pestaña del
-                                 Clipper, ver switchClipEditorTab) son botones en vez de quedar
-                                 mezclados en el desplegable - se rellena en populatePromptSelect. -->
-                            <div class="prompt-mode-bar" id="promptModeBar"></div>
-
                             <label>Prompt Libre / Instrucción Personalizada</label>
                             <input type="text" id="promptExtraInstruction" oninput="generateIAPrompt()" placeholder='Añadí un pedido específico (ej: "Buscá solo las partes donde se hable de precios")...'>
 
-                            <!-- Enfoque + "más enfoques" quedan plegados: no compiten con el
-                                 flujo principal (elegir modo arriba y escribir el pedido) -
-                                 se abre solo si hace falta otro enfoque puntual. -->
-                            <details class="prompt-other-row" id="promptOtherRow">
-                                <summary>Elegir otro enfoque…</summary>
-                                <div class="studio-control-col">
-                                    <label>Enfoque</label>
-                                    <select id="promptType" onchange="onPromptTypeChange()" disabled>
-                                        <option value="">Cargando enfoques…</option>
-                                    </select>
-                                </div>
-                                <div class="studio-control-col">
-                                    <label>Más enfoques</label>
-                                    <select id="promptTypeOther" onchange="onPromptTypeOtherChange()">
-                                        <option value="">Editorial, análisis, estudio, creativo, libre…</option>
-                                    </select>
-                                </div>
-                            </details>
-                            <!-- Compat: el resto del código espera este id siempre en el DOM
-                                 aunque la barra ya no se muestre por separado (ver prompts.js). -->
-                            <div class="studio-control-bar" id="promptControlBar" style="display:none;"></div>
+                            <!-- El enfoque ya no se elige a mano (ver imagen de referencia:
+                                 solo Prompt/Assistant) - se resuelve solo según el formato
+                                 activo en Preview & Export (Original vs TikTok/IG/etc, ver
+                                 selectStudioFormat en app.js). Estos controles siguen en el
+                                 DOM ocultos porque el resto del código (generateIAPrompt,
+                                 selectPromptMode) los sigue leyendo/completando igual. -->
+                            <div style="display:none;">
+                                <div class="prompt-mode-bar" id="promptModeBar"></div>
+                                <select id="promptType" onchange="onPromptTypeChange()" disabled>
+                                    <option value="">Cargando enfoques…</option>
+                                </select>
+                                <select id="promptTypeOther" onchange="onPromptTypeOtherChange()">
+                                    <option value="">Editorial, análisis, estudio, creativo, libre…</option>
+                                </select>
+                                <div class="studio-control-bar" id="promptControlBar"></div>
+                                <div class="prompt-other-row" id="promptOtherRow"></div>
+                            </div>
 
                             <button class="btn-generate-ai-main" id="btnGenerateActiveClips" onclick="generateActiveClipsWithAI()">⚡ Generate Clips</button>
                             <p class="generate-hint">Lee la transcripción completa según el enfoque + instrucción de arriba y arma los clips ya con timestamps, directo en "Preview &amp; Export" →</p>
@@ -140,7 +131,26 @@
 
                             <!-- Panel de prompt libre / Assistant (solo visible para 'libre') -->
                             <div class="teaser-customizer" id="promptLibreCustomizer">
-                                <h4>✍️ Escribí tu propio pedido</h4>
+
+                                <!-- CHAT: conversación de ida y vuelta sobre el material ya
+                                     transcripto (ver js/modules/assistantChat.js y /assistant-chat
+                                     en main.py) - preguntas, ideas, pedir que aclare algo, antes
+                                     de escribir el pedido final de abajo. -->
+                                <div class="assistant-chat">
+                                    <div class="assistant-chat-header">
+                                        <span>💬 Charlá con la IA</span>
+                                        <button type="button" class="btn-mini" onclick="clearAssistantChat()" title="Vaciar la conversación">Vaciar</button>
+                                    </div>
+                                    <div class="assistant-chat-messages" id="assistantChatMessages">
+                                        <div class="assistant-chat-empty">Preguntale algo sobre el material (ej: "¿de qué temas habla?", "dame 3 ideas de clips fuertes")...</div>
+                                    </div>
+                                    <div class="assistant-chat-input-row">
+                                        <textarea id="assistantChatInput" placeholder="Escribí y Enter para mandar..." rows="1" onkeydown="handleAssistantChatKeydown(event)"></textarea>
+                                        <button type="button" class="btn-mini assistant-chat-send" onclick="sendAssistantChatMessage()">Enviar</button>
+                                    </div>
+                                </div>
+
+                                <h4>✍️ Pedido final (lo que usa "Generate Clips")</h4>
                                 <div class="teaser-field">
                                     <div class="teaser-field-label">Qué querés que haga la IA con este material</div>
                                     <textarea id="promptLibreText" placeholder="Ej: Armame 5 preguntas de trivia basadas en este episodio, con la respuesta correcta y el timestamp donde se dice..." rows="5" oninput="generateIAPrompt()"></textarea>

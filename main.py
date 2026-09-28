@@ -1588,13 +1588,16 @@ def _process_single_video_file(video_path: str, engine: str = "auto") -> str:
     size_mb = round(os.path.getsize(audio_path) / (1024 * 1024), 2)
     print(f"   Audio extraído: {os.path.basename(audio_path)} ({size_mb} MB).")
 
-    if _is_pure_silence(audio_path):
-        print("   ⚠ Audio sin señal real (silencio digital) - se salta la transcripción, no se llama a ningún modelo.")
-        try:
-            os.remove(audio_path)
-        except Exception:
-            pass
-        return _NO_DIALOGUE_TRANSCRIPT
+    # _is_pure_silence() YA NO SE LLAMA ACÁ: confirmado en vivo (dos veces,
+    # con videos reales con diálogo real desde el minuto 0) que descartaba
+    # tramos enteros de 10 minutos con conversación real como "silencio" -
+    # la transcripción terminaba arrancando recién en el minuto 10, y
+    # después en el minuto 40, sin que hubiera silencio real ahí. El costo
+    # de este falso positivo (perder contenido real) es mucho peor que el
+    # problema que venía a evitar (alucinación de frases repetidas en
+    # tramos sin señal), que igual ya se mitiga después con
+    # _collapse_repeated_runs(). Queda la función definida por si se
+    # retoma con una heurística más estricta más adelante.
 
     try:
         if engine == "groq":
@@ -2067,6 +2070,81 @@ def get_teaser_templates():
 
 class GenerateWithAiInput(BaseModel):
     prompt: str
+
+
+class AssistantChatMessage(BaseModel):
+    role: str  # "user" | "assistant"
+    content: str
+
+
+class AssistantChatInput(BaseModel):
+    transcript: str
+    messages: list[AssistantChatMessage]
+
+
+@app.post("/assistant-chat", dependencies=[Depends(require_api_key)])
+async def assistant_chat(input_data: AssistantChatInput):
+    """
+    Chat de ida y vuelta del modo "Assistant" (ver ai-assistant-card en
+    index.html) - a diferencia de /generate-clip-suggestions (un prompt,
+    una respuesta final), acá se manda el historial completo de la
+    conversación en cada llamada (sin estado en el server, mismo patrón
+    simple que el resto de la app) para que la persona pueda ir y venir con
+    la IA sobre el material ya transcripto antes de pedirle los clips.
+    """
+    if not input_data.messages:
+        raise HTTPException(status_code=400, detail="Falta al menos un mensaje.")
+    if not input_data.transcript or len(input_data.transcript.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Todavía no hay transcripción para conversar sobre eso - analizá un video primero.")
+
+    system_context = (
+        "Sos un asistente conversacional que ayuda a un editor de video/redes sociales a decidir qué "
+        "hacer con un material ya transcripto (armar clips, resúmenes, ideas de contenido, lo que pida). "
+        "Tenés la transcripción completa abajo. Respondé en español, de forma breve y directa - esto es "
+        "un chat, no un ensayo.\n"
+        "Si en algún momento tu respuesta señala fragmentos puntuales del video (por pedido explícito o "
+        "porque tiene sentido para lo que se está charlando), marcá cada uno así:\n"
+        "⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento: \"cita textual de la transcripción\"\n"
+        "Usá SIEMPRE timestamps y citas reales tomados de la transcripción de abajo, nunca los inventes. "
+        "Si la charla no necesita marcar momentos puntuales, no uses ese formato.\n\n"
+        f"[TRANSCRIPCIÓN COMPLETA]:\n{input_data.transcript}"
+    )
+
+    gemini_contents = [
+        {"role": "user", "parts": [{"text": system_context}]},
+        {"role": "model", "parts": [{"text": "Dale, ya tengo la transcripción a mano. ¿Qué necesitás?"}]},
+    ]
+    for m in input_data.messages:
+        gemini_contents.append({"role": "user" if m.role == "user" else "model", "parts": [{"text": m.content}]})
+
+    await _heavy_ops_semaphore.acquire()
+    try:
+        mem_error = _memory_headroom_error()
+        if mem_error:
+            raise HTTPException(status_code=503, detail=mem_error)
+        try:
+            reply = await asyncio.to_thread(_call_gemini_text, gemini_contents)
+            return {"reply": reply, "engine": "gemini"}
+        except Exception as gemini_error:
+            if GROQ_API_KEY:
+                print(f"   ⚠ Gemini agotó todos sus modelos ({gemini_error}). Probando con Groq (Llama 3.3 70B)...")
+                try:
+                    # Groq no soporta el formato de historial de Gemini - se aplana
+                    # a un único prompt de texto con la conversación completa.
+                    flat_history = "\n".join(f"{'Usuario' if m.role == 'user' else 'Asistente'}: {m.content}" for m in input_data.messages)
+                    flat_prompt = f"{system_context}\n\n[CONVERSACIÓN HASTA ACÁ]:\n{flat_history}\n\nAsistente:"
+                    reply = await asyncio.to_thread(_call_groq_text, flat_prompt)
+                    return {"reply": reply, "engine": "groq"}
+                except Exception as groq_error:
+                    print(f"   ⚠ Groq también falló: {groq_error}")
+                    raise gemini_error
+            raise
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"El asistente no pudo responder: {e}")
+    finally:
+        _heavy_ops_semaphore.release()
 
 
 @app.post("/generate-clip-suggestions", dependencies=[Depends(require_api_key)])
