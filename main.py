@@ -202,7 +202,13 @@ def require_superadmin(x_api_key: str | None = Header(default=None)):
 # en vez de fallar por completo. Si no está seteada, este fallback simplemente se salta.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3")
-GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
+# "llama-3.3-70b-versatile" (el default viejo) fue dado de baja por Groq -
+# confirmado en vivo el 2026-09-28: /chat/completions devolvía 404
+# "model_not_found" (no un problema de URL/base_url, la URL siempre fue
+# correcta). Verificado contra GET /openai/v1/models que este es un modelo
+# real y activo hoy - si Groq lo da de baja en el futuro, revisar esa
+# lista antes de asumir cuál poner.
+GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
 
 # URL del servicio bgutil-ytdlp-pot-provider (deploy separado en Render con la imagen
 # brainicism/bgutil-ytdlp-pot-provider). Genera los PO Tokens que YouTube exige para
@@ -1467,6 +1473,20 @@ def _seconds_to_mmss(seconds: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def _raise_for_groq_status(response):
+    """
+    response.raise_for_status() solo (requests) tira un mensaje genérico
+    tipo "404 Client Error: Not Found for url: ..." sin el cuerpo real del
+    error - así fue como el modelo de Groq dado de baja (404
+    "model_not_found") se vio en el log idéntico a un problema de URL/
+    endpoint, hasta que se confirmó a mano contra la API cuál era la causa
+    real. Esto incluye el cuerpo de la respuesta en el mensaje para que la
+    próxima vez se vea de una.
+    """
+    if response.status_code >= 400:
+        raise Exception(f"Groq HTTP {response.status_code}: {response.text[:500]}")
+
+
 def _transcribe_with_groq_whisper(audio_path: str) -> str:
     """
     Último recurso cuando se agotó la cuota diaria de TODOS los modelos Gemini.
@@ -1483,7 +1503,7 @@ def _transcribe_with_groq_whisper(audio_path: str) -> str:
             data={"model": GROQ_WHISPER_MODEL, "response_format": "verbose_json"},
             timeout=120,
         )
-    response.raise_for_status()
+    _raise_for_groq_status(response)
     data = response.json()
 
     segments = data.get("segments") or []
@@ -1515,7 +1535,7 @@ def _call_groq_text(prompt: str) -> str:
     _call_gemini_text). Mismo espíritu que _transcribe_with_groq_whisper
     (Groq como red de contención, no como motor principal) pero para
     generación de texto: usa la API de chat completions de Groq
-    (compatible con OpenAI) con Llama 3.3 70B en vez de un modelo Gemini.
+    (compatible con OpenAI), modelo GROQ_TEXT_MODEL, en vez de un modelo Gemini.
     """
     if not GROQ_API_KEY:
         raise Exception("GROQ_API_KEY no está configurada en el servidor.")
@@ -1529,12 +1549,12 @@ def _call_groq_text(prompt: str) -> str:
         },
         timeout=120,
     )
-    response.raise_for_status()
+    _raise_for_groq_status(response)
     data = response.json()
     choices = data.get("choices") or []
     text = (choices[0].get("message", {}).get("content") or "").strip() if choices else ""
     if not text:
-        raise Exception("Groq (Llama 3.3 70B) no devolvió texto.")
+        raise Exception(f"Groq ({GROQ_TEXT_MODEL}) no devolvió texto.")
     return text
 
 
@@ -2142,7 +2162,7 @@ async def assistant_chat(input_data: AssistantChatInput):
             return {"reply": reply, "engine": "gemini"}
         except Exception as gemini_error:
             if GROQ_API_KEY:
-                print(f"   ⚠ Gemini agotó todos sus modelos ({gemini_error}). Probando con Groq (Llama 3.3 70B)...")
+                print(f"   ⚠ Gemini agotó todos sus modelos ({gemini_error}). Probando con Groq ({GROQ_TEXT_MODEL})...")
                 try:
                     # Groq no soporta el formato de historial de Gemini - se aplana
                     # a un único prompt de texto con la conversación completa.
@@ -2172,7 +2192,7 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
     exportador de clips sin salir de la app.
 
     Si Gemini agota TODA su lista de modelos (ver _call_gemini_text), cae a
-    Groq (Llama 3.3 70B) como último recurso antes de fallar del todo - la
+    Groq (GROQ_TEXT_MODEL) como último recurso antes de fallar del todo - la
     respuesta indica en "engine" cuál de los dos resolvió el pedido, para
     que el frontend lo pueda mostrar.
     """
@@ -2189,7 +2209,7 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
             return {"text": text, "engine": "gemini"}
         except Exception as gemini_error:
             if GROQ_API_KEY:
-                print(f"   ⚠ Gemini agotó todos sus modelos ({gemini_error}). Probando con Groq (Llama 3.3 70B)...")
+                print(f"   ⚠ Gemini agotó todos sus modelos ({gemini_error}). Probando con Groq ({GROQ_TEXT_MODEL})...")
                 try:
                     text = await asyncio.to_thread(_call_groq_text, input_data.prompt)
                     return {"text": text, "engine": "groq"}
