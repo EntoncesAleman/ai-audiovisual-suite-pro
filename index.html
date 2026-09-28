@@ -297,6 +297,15 @@
                                     <div class="clip-empty">Usá "⚡ Generate Clips" o "Extraer timestamps".</div>
                                 </div>
 
+                                <!-- COPIES: texto para poner debajo de cada publicación. Se genera
+                                     con IA a pedido (botón aparte, después de confirmar los clips). -->
+                                <div class="reel-captions-section">
+                                    <button class="btn-mini" onclick="generateClipCaptions()" id="btnGenerateClipCaptions" style="background:#E8E7FB;border-color:#6366F1;color:#4338CA;">📝 Generar copies (texto para la publicación)</button>
+                                    <button class="btn-mini" onclick="toggleClipCaptionsEditor()" id="btnEditClipCaptions" style="display:none;">✏️ Editar copies</button>
+                                    <div class="reel-captions-feedback" id="clipCaptionsFeedback"></div>
+                                    <div class="reel-captions-body" id="clipCaptionsBody" style="display:none;"></div>
+                                </div>
+
                                 <div class="export-action-row">
                                     <button class="btn-export-selection" onclick="startClipExport()">🎬 Export Selection (.mp4)</button>
                                     <button class="btn-export-all" onclick="exportAllClips()">📥 Descargar ZIP (Todos)</button>

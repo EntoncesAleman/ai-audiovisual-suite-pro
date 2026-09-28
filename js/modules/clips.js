@@ -52,6 +52,7 @@ export function renderClipsList() {
     const badge = document.getElementById('clipCountBadge');
     const selected = state.clipsList.filter(c => c.selected).length;
     badge.textContent = `${selected}/${state.clipsList.length} clips`;
+    renderClipCaptions();
 
     if (state.clipsList.length === 0) {
         grid.innerHTML = '<div class="clip-empty">Usá "⚡ Generar Clips con IA" (arriba) o "Extraer timestamps del análisis".</div>';
@@ -236,13 +237,18 @@ export async function generateClipsWithAI() {
         const dur = parseInt(document.getElementById('clipDefaultDuration').value) || 30;
         const imported = parseAiTimestampsText(data.text, dur);
 
+        // La respuesta cruda de la IA (con los timestamps, tal cual la
+        // devolvió) siempre queda pegada y visible acá abajo - haya
+        // funcionado el parseo automático o no - para poder revisarla o
+        // copiarla a mano en vez de solo confiar en los clips ya armados.
+        document.getElementById('clipAiResponseInput').value = data.text;
+        document.getElementById('clipAiResponseInput')?.closest('details.clip-more-options')?.setAttribute('open', '');
+        const body = document.getElementById('clipAiImportBody');
+        if (body && !body.classList.contains('open')) toggleClipAiImport();
+
         if (imported.length === 0) {
             if (feedback) feedback.textContent = "⚠ Gemini respondió pero no encontré timestamps en el formato esperado. Revisá la respuesta completa abajo (se pegó en el importador manual).";
             telemetryLog('telemetry', '⚠ Gemini respondió pero sin timestamps reconocibles.', 'error');
-            document.getElementById('clipAiResponseInput').value = data.text;
-            document.getElementById('clipAiResponseInput')?.closest('details.clip-more-options')?.setAttribute('open', '');
-            const body = document.getElementById('clipAiImportBody');
-            if (body && !body.classList.contains('open')) toggleClipAiImport();
             return;
         }
 
@@ -261,6 +267,107 @@ export async function generateClipsWithAI() {
     } finally {
         if (btn) { btn.disabled = false; if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml; }
     }
+}
+
+// ============================================================
+// COPIES (texto para poner debajo de cada publicación) - pestaña Original.
+// Mismo mecanismo que reelEditor.js (ver generateReelCaptions), pero acá no
+// hay concepto de "carrusel" (eso es específico de Instagram): siempre un
+// copy por clip, porque en la pestaña Original cada clip se trata como un
+// post independiente.
+// ============================================================
+
+/** Repinta el panel de copies según los clips seleccionados guardados en state. */
+export function renderClipCaptions() {
+    const body = document.getElementById("clipCaptionsBody");
+    const editBtn = document.getElementById("btnEditClipCaptions");
+    if (!body) return;
+
+    const cardsHtml = state.clipsList
+        .map((clip, i) => ({ clip, i }))
+        .filter(({ clip }) => clip.selected && clip.caption)
+        .map(({ clip, i }) => `
+            <div class="reel-caption-card">
+                <div class="reel-caption-label">${escapeHtml(clip.start)} → ${escapeHtml(clip.end)}${clip.label ? " — " + escapeHtml(clip.label) : ""}</div>
+                <textarea class="reel-caption-textarea" rows="3" oninput="updateClipCaption(${i}, this.value)">${escapeHtml(clip.caption)}</textarea>
+            </div>
+        `).join("");
+
+    if (!cardsHtml) { body.style.display = "none"; body.innerHTML = ""; if (editBtn) editBtn.style.display = "none"; return; }
+    body.style.display = "flex";
+    body.innerHTML = cardsHtml + `<button class="btn-download-captions" onclick="downloadClipCaptions()">📥 Descargar textos (.txt)</button>`;
+    if (editBtn) editBtn.style.display = "";
+}
+
+/** "✏️ Editar copies": plegar/desplegar el panel de copies ya generados sin tener que volver a pedírselos a la IA. */
+export function toggleClipCaptionsEditor() {
+    const body = document.getElementById("clipCaptionsBody");
+    if (!body || !body.innerHTML.trim()) return;
+    body.style.display = body.style.display === "none" ? "flex" : "none";
+}
+
+export function updateClipCaption(i, value) { state.clipsList[i].caption = value; }
+
+/** Le pide a la IA (mismo endpoint que "Generate Clips") un copy corto por cada clip seleccionado. */
+export async function generateClipCaptions() {
+    const selected = state.clipsList.filter(c => c.selected);
+    if (selected.length === 0) { alert("Seleccioná al menos un clip primero."); return; }
+
+    const feedback = document.getElementById("clipCaptionsFeedback");
+    const btn = document.getElementById("btnGenerateClipCaptions");
+    if (btn) { btn.disabled = true; btn.dataset.origHtml = btn.innerHTML; btn.textContent = "⏳ Escribiendo copies..."; }
+    if (feedback) feedback.textContent = "⏳ Generando el/los texto(s) con IA...";
+    telemetryLog('telemetry', 'Generando copies para redes...', 'uploading');
+
+    const clipsList = selected.map((c, i) => `Clip ${i + 1} (${c.start} → ${c.end}): ${c.label || "(sin descripción)"}`).join("\n");
+    const prompt = `Actuá como Social Media Manager senior. Estos clips se van a publicar como posts INDEPENDIENTES en redes sociales. Para cada uno, escribí un caption corto en español (con hashtags relevantes al final) para poner debajo de esa publicación puntual:\n${clipsList}\n\nRespondé usando EXACTAMENTE este formato, uno por clip y en el mismo orden:\n### CLIP 1\n<caption con hashtags>\n### CLIP 2\n<caption con hashtags>\n(y así con todos, hasta CLIP ${selected.length}). No escribas nada antes de "### CLIP 1" ni comentarios finales.`;
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+        const text = data.text || "";
+        const firstMarkerIdx = text.search(/###\s*CLIP\s*1\b/i);
+        const cleaned = firstMarkerIdx >= 0 ? text.slice(firstMarkerIdx) : text;
+        const parts = cleaned.split(/###\s*CLIP\s*\d+/i).map(s => s.trim()).filter(Boolean);
+        selected.forEach((clip, i) => { clip.caption = parts[i] || ""; });
+
+        renderClipCaptions();
+        const engineLabel = data.engine === "groq" ? "Groq (respaldo, Gemini no estaba disponible)" : "Gemini";
+        const missing = selected.some(c => !c.caption);
+        if (feedback) {
+            feedback.textContent = missing
+                ? `⚠ ${engineLabel} respondió pero no pude separar un copy para cada clip. Revisá el texto abajo y completá a mano lo que falte.`
+                : `✅ Copies generados con ${engineLabel}. Podés editarlos abajo antes de descargar/exportar.`;
+        }
+        telemetryLog('telemetry', missing ? '⚠ Copies generados con formato inesperado.' : '✓ Copies para redes generados.', missing ? 'error' : 'done');
+    } catch (e) {
+        if (feedback) feedback.textContent = "❌ Error generando los copies: " + e.message;
+        telemetryLog('telemetry', '❌ Error generando copies: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; if (btn.dataset.origHtml) btn.innerHTML = btn.dataset.origHtml; }
+    }
+}
+
+/** Descarga client-side (sin ir al backend): junta lo que haya en state y arma un .txt. */
+export function downloadClipCaptions() {
+    const text = state.clipsList
+        .filter(c => c.selected && c.caption)
+        .map((c, i) => `--- Post ${i + 1} (${c.start} → ${c.end}) ---\n${c.caption}`)
+        .join("\n\n");
+    if (!text.trim()) { alert("Todavía no generaste los copies (botón \"📝 Generar copies\")."); return; }
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "copies.txt";
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 /** Botón "📥 Descargar ZIP (Todos)": selecciona todos los clips y exporta de una. */
@@ -480,3 +587,7 @@ window.toggleClipFavorite = toggleClipFavorite;
 window.cycleClipColor = cycleClipColor;
 window.playClip = playClip;
 window.sendClipToCapCut = sendClipToCapCut;
+window.generateClipCaptions = generateClipCaptions;
+window.updateClipCaption = updateClipCaption;
+window.downloadClipCaptions = downloadClipCaptions;
+window.toggleClipCaptionsEditor = toggleClipCaptionsEditor;

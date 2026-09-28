@@ -240,13 +240,18 @@ export async function generateReelClipsWithAI() {
         const defDur = pdata ? (parseInt(pdata.dur) || 30) : 30;
         const imported = parseAiTimestampsText(data.text, defDur);
 
+        // La respuesta cruda de la IA (con los timestamps, tal cual la
+        // devolvió) siempre queda pegada y visible acá abajo - haya
+        // funcionado el parseo automático o no - para poder revisarla o
+        // copiarla a mano en vez de solo confiar en los clips ya armados.
+        document.getElementById('aiResponseInput').value = data.text;
+        document.getElementById('aiResponseInput')?.closest('details.clip-more-options')?.setAttribute('open', '');
+        const body = document.getElementById('aiImportBody');
+        if (body && !body.classList.contains('open')) toggleAiImport();
+
         if (imported.length === 0) {
             if (feedback) feedback.textContent = "⚠ Gemini respondió pero no encontré timestamps en el formato esperado. Revisá la respuesta completa abajo (se pegó en el importador manual).";
             telemetryLog('telemetry', '⚠ Gemini respondió pero sin timestamps reconocibles.', 'error');
-            document.getElementById('aiResponseInput').value = data.text;
-            document.getElementById('aiResponseInput')?.closest('details.clip-more-options')?.setAttribute('open', '');
-            const body = document.getElementById('aiImportBody');
-            if (body && !body.classList.contains('open')) toggleAiImport();
             return;
         }
 
