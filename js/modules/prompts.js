@@ -1,4 +1,4 @@
-import { BACKEND_URL, PROMPTS_FALLBACK } from '../config.js';
+import { BACKEND_URL, PROMPTS_FALLBACK, PLATFORM_DATA } from '../config.js';
 import { state } from '../state.js';
 import { updateVideoPanel } from './reelEditor.js';
 import { switchClipEditorTab } from './clips.js';
@@ -218,16 +218,19 @@ export function generateIAPrompt() {
 
     const type = document.getElementById('promptType').value;
 
-    // ─────────────────────────────────────────────────────
-    // Los DOS enfoques originales se mantienen EXACTAMENTE
-    // como estaban, construidos por código (no se tocan).
-    // ─────────────────────────────────────────────────────
-    if (type === 'teaser') {
-        output.innerText = buildTeaserPromptOriginal(timelineText) + buildExtraInstructionSuffix();
-        return;
-    }
     if (type === 'resumen') {
         output.innerText = buildResumenPromptOriginal(timelineText) + buildExtraInstructionSuffix();
+        return;
+    }
+    // "podcast" (guion largo de episodio) y "subtitulos_srt" (archivo SRT de
+    // todo el material) son "audiovisual" pero NO arman una lista de N clips
+    // - transforman el material ENTERO en un único resultado, así que siguen
+    // con su propia plantilla completa en vez de la ruta genérica de abajo.
+    if (type === 'podcast' || type === 'subtitulos_srt') {
+        const enfFull = state.PROMPTS_LIBRARY?.enfoques?.[type];
+        output.innerText = enfFull?.prompt_template
+            ? enfFull.prompt_template.replace("{{TIMELINE}}", timelineText) + buildExtraInstructionSuffix()
+            : "Enfoque no encontrado en la biblioteca.";
         return;
     }
     if (type === 'libre') {
@@ -237,8 +240,27 @@ export function generateIAPrompt() {
         return;
     }
 
-    // Resto: vienen de la biblioteca modular
     const enf = state.PROMPTS_LIBRARY?.enfoques?.[type];
+
+    // "audiovisual" y "video" (teaser, reels, TikTok, Instagram, etc.) ya NO
+    // usan una plantilla con cantidad/duración fija por enfoque - eso era lo
+    // que terminaba peleando con lo que pedía la persona (a veces cientos de
+    // clips de segundos, a veces clips que no duraban lo pedido, sin
+    // importar cuánto se reforzara el prompt). Ahora la cantidad, duración
+    // y estilo salen ENTERAMENTE de "Prompt Libre / Instrucción
+    // Personalizada" - ver buildGenericClipPrompt. Lo único que queda fijo
+    // es el formato de timestamps (FREE_PROMPT_TIMESTAMP_INSTRUCTIONS), que
+    // es lo que necesita el importador automático para funcionar.
+    if (enf && (enf.categoria === 'audiovisual' || enf.categoria === 'video')) {
+        const platformKey = enf.categoria === 'video' ? type : null;
+        output.innerText = buildGenericClipPrompt(timelineText, platformKey);
+        return;
+    }
+
+    // Resto (editorial/análisis/estudios/creativo): no arman "N clips de X
+    // segundos", son formatos de texto (notas, hilos, guías de estudio,
+    // etc.) sin el conflicto de cantidad/duración - siguen usando su
+    // plantilla propia tal cual.
     if (enf && enf.prompt_template) {
         output.innerText = enf.prompt_template.replace("{{TIMELINE}}", timelineText) + buildExtraInstructionSuffix();
     } else {
@@ -246,66 +268,30 @@ export function generateIAPrompt() {
     }
 }
 
-function buildTeaserPromptOriginal(timelineText) {
-    // Leer los valores actuales de los campos editables.
-    const enmarque = (document.getElementById("teaserEnmarque")?.value || "").trim();
-    const gancho = (document.getElementById("teaserGancho")?.value || "").trim();
-    const nudo = (document.getElementById("teaserNudo")?.value || "").trim();
-    const revelacion = (document.getElementById("teaserRevelacion")?.value || "").trim();
-    const cierre = (document.getElementById("teaserCierre")?.value || "").trim();
+/**
+ * Prompt genérico para cualquier enfoque de "audiovisual" o "video" (teaser,
+ * reels, TikTok, Instagram Feed/Carrusel, YouTube Short, X/Twitter clip):
+ * sin cantidad ni duración prefijada por el enfoque - todo eso lo define la
+ * persona en su propia instrucción. Si el enfoque es de una plataforma
+ * puntual (categoría "video"), se le suma el contexto técnico real de esa
+ * plataforma (ratio/resolución, NO una duración inventada por nosotros).
+ */
+function buildGenericClipPrompt(timelineText, platformKey) {
+    const userPrompt = (document.getElementById("promptExtraInstruction")?.value || "").trim();
+    const pdata = platformKey ? PLATFORM_DATA[platformKey] : null;
 
-    /**
-     * Helper: si el campo tiene contenido, lo usa como guía específica.
-     * Si está vacío, le pide a la IA que defina ese acto libremente
-     * según el material del episodio. Esta lógica permite que cada
-     * regeneración con campos vacíos genere variaciones distintas.
-     */
-    function actoInstruction(label, contenido, sugerenciaLibre) {
-        if (contenido) {
-            return contenido;
-        }
-        return `[LIBRE] Definí vos mismo qué frases del podcast irían acá. ${sugerenciaLibre} Cada vez que se genere este teaser, podés elegir un ángulo distinto si hay varios igualmente potentes.`;
-    }
-
-    let p = `Actuá como un editor cinematográfico, trailer maker y guionista publicitario senior. Basándote en esta transcripción completa de diálogos reales de todo el metraje:\n\n`;
+    let p = `Actuá como editor de video para redes sociales. Basándote en esta transcripción real de diálogos:\n\n`;
     p += `[TRANSCRIPCIÓN Y DIÁLOGOS DE TODO EL VIDEO]:\n${timelineText}\n\n`;
-    p += `TU OBJETIVO CRÍTICO:\n`;
-    p += `Diseñá un guion de TEASER PUBLICITARIO de exactamente 1 minuto y 10 segundos de duración. Tu misión absoluta es extraer, condensar e integrar LO MÁS RELEVANTE Y SUSTANCIAL de todo el podcast. Debe ser un destilado de los hitos y conceptos clave del episodio.\n\n`;
-
-    // Enmarque inicial (igual lógica: si está vacío se lo deja libre a la IA)
-    if (enmarque) {
-        p += `📍 ENMARQUE TEMÁTICO INICIAL DEL TEASER:\n`;
-        p += `${enmarque}\n`;
-        p += `Comenzá el teaser ubicando al espectador en este marco temático específico, ya sea con una frase del anfitrión o del experto que sitúe inmediatamente el eje de la conversación. Recién después de este enmarque inicial, entrá al gancho dramático.\n\n`;
-    } else {
-        p += `📍 ENMARQUE TEMÁTICO INICIAL DEL TEASER:\n`;
-        p += `[LIBRE] Identificá vos mismo cuál es el eje temático del episodio escuchando el material, y arrancá el teaser con una frase del anfitrión o del experto que ubique al espectador en ese tema en los primeros segundos.\n\n`;
+    if (pdata) {
+        p += `Estos clips son para: ${pdata.label} (formato ${pdata.ratio}, ${pdata.res}).\n\n`;
     }
-
-    p += `INSTRUCCIONES ESTRATÉGICAS DE MONTAJE (ALTA CONDENSACIÓN ANACRÓNICA):\n`;
-    p += `1. LIBERTAD CRONOLÓGICA TOTAL: Ignorá por completo el orden lineal en el que se grabó el podcast. Tenés permitido saltar del final al inicio, alternar las intervenciones y cruzar declaraciones de distintos bloques si eso ayuda a unificar las ideas más potentes en un relato compacto de 1:10 minutos.\n`;
-    p += `2. DESTILADO DE RELEVANCIA: Ignorá transiciones secundarias, saludos, anécdotas largas que no aporten al eje central o muletillas. Cada segundo del teaser debe tener valor sustancial para reflejar la médula espinal del podcast.\n`;
-    p += `3. CURVA DRAMÁTICA RE ESTRUCTURADA:\n`;
-
-    p += `   - EL GANCHO INICIAL (00:00 - 00:20): ${actoInstruction("gancho", gancho, "Lo ideal es buscar las frases con mayor carga emocional, dramática o intrigante del episodio para que el espectador no pueda dejar de escuchar.")}\n`;
-
-    p += `   - EL NUDO / LA FRUSTRACIÓN (00:20 - 00:45): ${actoInstruction("nudo", nudo, "Buscá las frases que muestren la complejidad, contradicción, frustración o tensión central del tema, donde quede claro por qué este episodio importa.")}\n`;
-
-    p += `   - LA REVELACIÓN PROFESIONAL (00:45 - 01:05): ${actoInstruction("revelacion", revelacion, "Buscá las declaraciones del experto o especialista del episodio que aporten claridad, ofrezcan respuestas certeras o derriben mitos, demostrando por qué este contenido es indispensable.")}\n`;
-
-    p += `   - EL CIERRE EMOCIONAL (01:05 - 01:10): ${actoInstruction("cierre", cierre, "Un remate corto y contundente del anfitrión que encapsule el aprendizaje, el mensaje principal o la emoción más fuerte del episodio.")}\n\n`;
-
-    p += `4. REGLA INQUEBRANTABLE: Usá única y estrictamente los dichos reales y literales expresados por los protagonistas. Queda terminantemente prohibido inventar, alterar o asumir información.\n\n`;
-    p += `4b. TOPE DE FRAGMENTOS: Un teaser de 1:10 armado con demasiados cortes cortitos queda picado y se nota editado. NO superes los 10-12 bloques de tiempo en total (uno por frase) en toda tu respuesta - priorizá frases más largas y sustanciales en vez de muchas frases cortas encadenadas. Si tenés que elegir entre más frases cortas o menos frases más completas, elegí siempre lo segundo.\n\n`;
-    p += `5. VARIACIÓN ENTRE TIRADAS: Si te piden generar este teaser varias veces, ofrecé versiones genuinamente distintas eligiendo frases alternativas del material o ajustando el ritmo emocional, en lugar de repetir el mismo guion.\n\n`;
-    p += `Presentá el resultado final comenzando directamente con el guion, formateado estrictamente bajo esta estructura de texto plano:\n\n`;
-    p += `00:00 - 00:05\n`;
-    p += `NOMBRE_DEL_PERSONAJE\n`;
-    p += `"Frase textual, sumamente relevante e impactante."\n\n`;
-    p += `00:05 - 00:10\n`;
-    p += `OTRO_PERSONAJE\n`;
-    p += `"Siguiente frase que continúe el hilo conductor narrativo..."\n\n`;
-    p += `Empezá directo con el tiempo del guion, sin introducciones ni comentarios finales tuyos.`;
+    if (userPrompt) {
+        p += `PEDIDO ESPECÍFICO (esto define TODO - cantidad de clips, duración de cada uno, tema, tono -, seguilo al pie de la letra):\n${userPrompt}\n\n`;
+    } else {
+        p += `[Todavía no se escribió ningún pedido específico en "Prompt Libre / Instrucción Personalizada". Elegí vos los momentos más relevantes del material con buen criterio editorial, sin asumir una cantidad ni duración fija.]\n\n`;
+    }
+    p += `Usá única y estrictamente los dichos reales y literales expresados en la transcripción. Prohibido inventar, alterar o asumir información que no esté ahí.`;
+    p += FREE_PROMPT_TIMESTAMP_INSTRUCTIONS;
     return p;
 }
 
@@ -322,7 +308,7 @@ function buildResumenPromptOriginal(timelineText) {
 // se puede pegar en "Importar respuesta de IA" (ver reelEditor.js) y
 // termina de importarse solo, sin que la persona tenga que copiar los
 // timestamps a mano uno por uno.
-const FREE_PROMPT_TIMESTAMP_INSTRUCTIONS = `\n\n---\nFORMATO PARA MARCAR MOMENTOS DEL VIDEO (usalo solo para los fragmentos que decidas incluir en tu respuesta a lo que se pidió arriba - esto NO es una instrucción para volver a listar o "tagear" todo el material de punta a punta):\nPor cada momento que incluyas, un bloque así, sin inventar ningún otro formato:\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento: "cita textual del momento"\n\nREGLA CRÍTICA DE CANTIDAD: si arriba te pidieron una cantidad específica de clips (ej: "6 clips"), tu respuesta debe tener EXACTAMENTE esa cantidad de CLIPS - nunca uno por cada línea de diálogo de la transcripción. Si te piden agrupar varias citas cortas DENTRO de un mismo clip más largo, cada cita agrupada lleva su propio bloque ⏱ Inicio/⏱ Fin, pero la cantidad de CLIPS resultante sigue siendo la pedida (ej: 6 clips pueden traer 2-3 bloques cada uno = 12-18 bloques en total, nunca cientos). Si no te pidieron una cantidad, usá tu criterio para elegir solo los momentos más relevantes, no todo el material.\n\nREGLA CRÍTICA DE DURACIÓN: si arriba te pidieron una duración o rango de duración (ej: "entre 60 y 90 segundos"), ESE es el tiempo real entre ⏱ Inicio y ⏱ Fin de cada CLIP - no la cantidad de texto ni la cantidad de bloques agrupados. Antes de responder, para cada clip RESTÁ Fin - Inicio en segundos y confirmá que cae dentro del rango pedido; si un clip te queda corto, extendé el Fin tomando más contexto real de la transcripción (nunca inventes tiempo) hasta que entre en rango - no entregues un clip fuera del rango pedido.\n\nNUNCA uses un formato alternativo como "### Clip 1", "00:00 - 00:08 Nombre: texto" en una sola línea, listas numeradas, ni ningún otro estilo propio - solo el bloque de arriba, repetido.\nUsá SIEMPRE timestamps reales tomados de la transcripción de arriba (nunca los inventes). Si tu respuesta no necesita marcar ningún momento puntual del video, no uses este formato en absoluto.\nRespondé en texto plano estricto, sin markdown (nada de **negrita**, bloques de código, ni encabezados #).`;
+const FREE_PROMPT_TIMESTAMP_INSTRUCTIONS = `\n\n---\nFORMATO PARA MARCAR MOMENTOS DEL VIDEO (usalo solo para los fragmentos que decidas incluir en tu respuesta a lo que se pidió arriba - esto NO es una instrucción para volver a listar o "tagear" todo el material de punta a punta):\nPor cada CLIP que incluyas, un bloque así, sin inventar ningún otro formato:\n⏱ Inicio: MM:SS\n⏱ Fin: MM:SS\n💬 Fragmento: "cita textual del momento"\n\nRELACIÓN 1 A 1 - ESTO ES LO MÁS IMPORTANTE: cada bloque ⏱ Inicio/⏱ Fin ES un clip completo por sí solo. NUNCA partas un mismo clip en varios bloques más chicos (ej: tres bloques de 8 segundos cada uno para armar "un clip de 24 segundos" está PROHIBIDO) - un clip de 60 segundos es UN SOLO bloque con ⏱ Inicio y ⏱ Fin separados por 60 segundos reales, tomando un tramo continuo (o casi continuo) de la transcripción. Si el diálogo real en un punto es corto, extendé el ⏱ Fin incluyendo el contexto real que sigue (nunca inventado) hasta llegar a la duración pedida - no lo resuelvas agregando más bloques.\n\nREGLA CRÍTICA DE CANTIDAD: si arriba te pidieron una cantidad específica de clips (ej: "6 clips"), tu respuesta debe tener EXACTAMENTE esa cantidad de BLOQUES ⏱ Inicio/⏱ Fin - ni uno más, ni uno menos (y por la regla de arriba, cada bloque ya es un clip completo, no un fragmento). Si no te pidieron una cantidad, usá tu criterio para elegir solo los momentos más relevantes, no todo el material.\n\nREGLA CRÍTICA DE DURACIÓN: si arriba te pidieron una duración o rango de duración (ej: "entre 60 y 90 segundos"), ESE es el tiempo real entre ⏱ Inicio y ⏱ Fin de CADA bloque. Antes de responder, para cada bloque RESTÁ Fin - Inicio en segundos y confirmá que cae dentro del rango pedido; si te queda corto, extendé el Fin tomando más contexto real de la transcripción (nunca inventes tiempo) hasta que entre en rango - no entregues un clip fuera del rango pedido.\n\nNUNCA uses un formato alternativo como "### Clip 1", "00:00 - 00:08 Nombre: texto" en una sola línea, listas numeradas, ni ningún otro estilo propio - solo el bloque de arriba, repetido.\nUsá SIEMPRE timestamps reales tomados de la transcripción de arriba (nunca los inventes). Si tu respuesta no necesita marcar ningún momento puntual del video, no uses este formato en absoluto.\nRespondé en texto plano estricto, sin markdown (nada de **negrita**, bloques de código, ni encabezados #).`;
 
 function buildLibrePrompt(timelineText) {
     const userPrompt = (document.getElementById("promptLibreText")?.value || "").trim();

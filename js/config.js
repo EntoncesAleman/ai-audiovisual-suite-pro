@@ -45,17 +45,23 @@ export const STAGE_PROGRESS = {
     scaling: { pct: 88, label: "🎞 Aplicando formato de plataforma" }
 };
 
+// "label" es lo único de acá que se le manda a la IA como contexto de
+// plataforma (ver buildGenericClipPrompt en prompts.js) - a propósito NO
+// tiene ninguna duración adentro, para no reintroducir la misma presión de
+// "tiene que durar X" que se sacó de los prompts. "dur" es solo para el
+// badge informativo en pantalla ("Duración máx") y el fallback de cálculo
+// del parser cuando la IA no da un Fin explícito - nunca se le manda a la IA.
 export const PLATFORM_DATA = {
-    "ig_reel_15s":        {label:"Instagram Reel 15s",   ratio:"9:16",  res:"1080×1920", dur:"15s",    isCarousel:false},
-    "ig_reel_30s":        {label:"Instagram Reel 30s",   ratio:"9:16",  res:"1080×1920", dur:"30s",    isCarousel:false},
-    "ig_reel_60s":        {label:"Instagram Reel 60s",   ratio:"9:16",  res:"1080×1920", dur:"60s",    isCarousel:false},
+    "ig_reel_15s":        {label:"Instagram Reel (corto)", ratio:"9:16",  res:"1080×1920", dur:"15s",    isCarousel:false},
+    "ig_reel_30s":        {label:"Instagram Reel (medio)", ratio:"9:16",  res:"1080×1920", dur:"30s",    isCarousel:false},
+    "ig_reel_60s":        {label:"Instagram Reel (largo)", ratio:"9:16",  res:"1080×1920", dur:"60s",    isCarousel:false},
     "ig_story_15s":       {label:"Instagram Story",      ratio:"9:16",  res:"1080×1920", dur:"15s",    isCarousel:false},
     "ig_feed_4x5":        {label:"Instagram Feed (4:5)", ratio:"4:5",   res:"1080×1350", dur:"60s",    isCarousel:false},
     "ig_carrusel_clips":  {label:"IG Carrusel (clips)",  ratio:"1:1",   res:"1080×1080", dur:"60s/c",  isCarousel:true,  isClipsCarousel:true},
     "ig_carrusel_placas": {label:"IG Carrusel (placas)", ratio:"1:1",   res:"1080×1080", dur:"imagen", isCarousel:true,  isPlatesCarousel:true},
-    "tiktok_15s":         {label:"TikTok 15s",           ratio:"9:16",  res:"1080×1920", dur:"15s",    isCarousel:false},
-    "tiktok_30s":         {label:"TikTok 30s",           ratio:"9:16",  res:"1080×1920", dur:"30s",    isCarousel:false},
-    "tiktok_60s":         {label:"TikTok 60s",           ratio:"9:16",  res:"1080×1920", dur:"60s",    isCarousel:false},
+    "tiktok_15s":         {label:"TikTok (corto)",       ratio:"9:16",  res:"1080×1920", dur:"15s",    isCarousel:false},
+    "tiktok_30s":         {label:"TikTok (medio)",       ratio:"9:16",  res:"1080×1920", dur:"30s",    isCarousel:false},
+    "tiktok_60s":         {label:"TikTok (largo)",       ratio:"9:16",  res:"1080×1920", dur:"60s",    isCarousel:false},
     "youtube_short":      {label:"YouTube Short",        ratio:"9:16",  res:"1080×1920", dur:"60s",    isCarousel:false},
     "twitter_x_clip":     {label:"Twitter/X clip",       ratio:"16:9",  res:"1280×720",  dur:"2:20",   isCarousel:false},
 };
