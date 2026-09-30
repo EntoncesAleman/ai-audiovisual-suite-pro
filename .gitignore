@@ -8,3 +8,4 @@ __pycache__/
 .DS_Store
 users_db.json
 access_requests.json
+exports_index.json

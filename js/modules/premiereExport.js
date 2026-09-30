@@ -4,6 +4,7 @@ import { setExportProgress, resetExportProgress, telemetryLog } from '../utils/d
 import { tsToSeconds, buildSubtitleCuesForClip } from '../utils/helpers.js';
 import { resolveExportSource } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
+import { isPro } from './auth.js';
 
 /**
  * Card standalone de "Exportar a Premiere" (debajo de "Metraje Escaneado
@@ -26,6 +27,7 @@ export function updatePremiereClipCount() {
 }
 
 export async function startPremiereExport() {
+    if (!isPro()) { alert('Exportar a Premiere (XML) es una función exclusiva del plan PRO. Pedile a un administrador que active tu cuenta en PRO.'); return; }
     const source = document.getElementById('premiereClipSource').value;
     const ctx = CLIP_SOURCES[source];
     if (!ctx) return;

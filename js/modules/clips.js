@@ -6,6 +6,7 @@ import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { seekAndPlay } from './player.js';
 import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
+import { checkBatchAllowed } from './auth.js';
 
 // ============================================================
 // EXPORTACIÓN DE CLIPS
@@ -378,6 +379,7 @@ export function downloadClipCaptions() {
 
 /** Botón "📥 Descargar ZIP (Todos)": selecciona todos los clips y exporta de una. */
 export async function exportAllClips() {
+    if (!checkBatchAllowed(state.clipsList.length)) return;
     selectAllClips(true);
     await startClipExport();
 }

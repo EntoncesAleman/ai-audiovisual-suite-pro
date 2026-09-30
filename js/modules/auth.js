@@ -9,10 +9,29 @@ import { fetchWithTimeout } from '../utils/helpers.js';
 // para index.html e historial.html, sin duplicar el markup).
 // ============================================================
 
-let currentUser = null; // { username, role } | null
+let currentUser = null; // { username, role, plan, unrestricted, daily_usage_seconds, limits } | null
 
 export function getCurrentUser() { return currentUser; }
 export function isSuperAdmin() { return currentUser?.role === 'SUPERADMIN'; }
+/** true si la cuenta puede usar funciones PRO (Voiceover, Premiere/XML, batch) - SUPERADMIN cuenta como PRO. */
+export function isPro() { return !currentUser || currentUser.unrestricted || currentUser.plan === 'PRO'; }
+export function planLimits() { return currentUser?.limits || {}; }
+
+/**
+ * Chequeo previo (UX) del tope de clips por exportación en lote para FREE
+ * (el backend es quien realmente lo hace cumplir, ver _check_batch_allowed
+ * en main.py - esto solo evita mandar el request para nada y mostrar un
+ * mensaje más claro que el error genérico del stream).
+ */
+export function checkBatchAllowed(clipCount) {
+    if (isPro()) return true;
+    const max = currentUser?.limits?.max_batch_clips || 3;
+    if (clipCount > max) {
+        alert(`El plan FREE permite exportar hasta ${max} clips por vez (pediste ${clipCount}). Pasate a PRO para exportar en lote sin este límite.`);
+        return false;
+    }
+    return true;
+}
 
 function escapeHtml(s) {
     return (s || "").replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -96,8 +115,8 @@ function injectAuthUI() {
                 </div>
                 <div class="admin-tab-panel" id="adminPanelUsers">
                     <table class="admin-users-table">
-                        <thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead>
-                        <tbody id="adminUsersTableBody"><tr><td colspan="4" class="admin-empty">Cargando...</td></tr></tbody>
+                        <thead><tr><th>Usuario</th><th>Rol</th><th>Plan</th><th>Consumo hoy</th><th>Estado</th><th></th></tr></thead>
+                        <tbody id="adminUsersTableBody"><tr><td colspan="6" class="admin-empty">Cargando...</td></tr></tbody>
                     </table>
                 </div>
             </div>
@@ -176,7 +195,7 @@ async function onLoginSubmit(e) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Usuario o contraseña incorrectos.');
         setApiKey(data.token);
-        currentUser = { username: data.username, role: data.role };
+        currentUser = { username: data.username, role: data.role, plan: data.plan, unrestricted: data.unrestricted, daily_usage_seconds: data.daily_usage_seconds, limits: data.limits };
         hideLoginModal();
         renderUserUI();
     } catch (err) {
@@ -247,7 +266,7 @@ export async function initAuthGuard() {
         if (!res.ok) { hideLoginModal(); return; }
         const data = await res.json();
         if (data.username) {
-            currentUser = { username: data.username, role: data.role };
+            currentUser = { username: data.username, role: data.role, plan: data.plan, unrestricted: data.unrestricted, daily_usage_seconds: data.daily_usage_seconds, limits: data.limits };
         }
         hideLoginModal();
         renderUserUI();
@@ -295,6 +314,8 @@ function renderUserUI() {
     const nav = document.getElementById('headerNav');
     if (!nav || !currentUser) return;
 
+    renderPlanBadge(nav);
+
     if (isSuperAdmin() && !document.getElementById('adminBadge')) {
         const badge = document.createElement('span');
         badge.className = 'admin-badge';
@@ -311,6 +332,48 @@ function renderUserUI() {
         nav.prepend(badge);
         refreshPendingCount();
     }
+}
+
+/**
+ * Badge de plan/consumo en el header ("PRO" o "FREE · 12/60 min hoy").
+ * Puramente informativo - el enforcement real es del backend (ver main.py),
+ * esto solo evita que la persona se entere del límite recién cuando un
+ * análisis le rebota con un error.
+ */
+function renderPlanBadge(nav) {
+    if (!currentUser || currentUser.plan == null) return;
+    let badge = document.getElementById('planBadge');
+    if (!badge) {
+        badge = document.createElement('span');
+        badge.id = 'planBadge';
+        badge.className = 'plan-badge';
+        nav.prepend(badge);
+    }
+    if (isPro()) {
+        badge.textContent = 'PRO';
+        badge.className = 'plan-badge plan-badge-pro';
+        badge.title = 'Plan PRO: sin límite diario, Voiceover/Premiere/lote habilitados.';
+    } else {
+        const used = Math.round((currentUser.daily_usage_seconds || 0) / 60);
+        const limitMin = Math.round((currentUser.limits?.daily_seconds || 3600) / 60);
+        badge.textContent = `FREE · ${used}/${limitMin} min hoy`;
+        badge.className = 'plan-badge plan-badge-free';
+        badge.title = 'Plan FREE: 60 min/día, 60 min/archivo, 1 trabajo a la vez. Sin Voiceover/Premiere/lote.';
+    }
+}
+
+/** Re-consulta /auth/check para refrescar el consumo mostrado en el badge (ej. después de un análisis exitoso). */
+export async function refreshUsageBadge() {
+    if (!currentUser) return;
+    try {
+        const res = await fetchWithTimeout(`${BACKEND_URL}/auth/check`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.username) {
+            currentUser = { ...currentUser, plan: data.plan, unrestricted: data.unrestricted, daily_usage_seconds: data.daily_usage_seconds, limits: data.limits };
+            renderUserUI();
+        }
+    } catch (e) { /* silencioso */ }
 }
 
 async function refreshPendingCount() {
@@ -383,6 +446,10 @@ async function loadPendingRequests() {
                 <div class="admin-request-creds">
                     <input type="text" class="admin-req-username" value="${escapeHtml(suggestUsername(r.name))}" placeholder="usuario">
                     <input type="text" class="admin-req-password" value="${escapeHtml(generatePassword())}" placeholder="contraseña">
+                    <select class="admin-req-plan" title="Plan con el que arranca esta cuenta">
+                        <option value="FREE" selected>Plan FREE</option>
+                        <option value="PRO">Plan PRO</option>
+                    </select>
                 </div>
                 <div class="admin-request-actions">
                     <button class="btn-admin-approve">✅ Aprobar y Generar Acceso</button>
@@ -405,16 +472,17 @@ async function approveRequestFromCard(card) {
     const id = card.dataset.id;
     const username = card.querySelector('.admin-req-username').value.trim();
     const password = card.querySelector('.admin-req-password').value;
+    const plan = card.querySelector('.admin-req-plan').value;
     if (!username || !password) { alert('Usuario y contraseña son obligatorios.'); return; }
     try {
         const res = await fetchWithTimeout(`${BACKEND_URL}/admin/access-requests/${id}/approve`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, plan })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'No se pudo aprobar la solicitud.');
-        alert(`Acceso creado.\n\nUsuario: ${username}\nContraseña: ${password}\n\nComunicáselas a la persona - no se van a volver a mostrar acá.`);
+        alert(`Acceso creado (plan ${plan}).\n\nUsuario: ${username}\nContraseña: ${password}\n\nComunicáselas a la persona - no se van a volver a mostrar acá.`);
         loadPendingRequests();
         loadActiveUsers();
     } catch (err) {
@@ -448,11 +516,21 @@ async function loadActiveUsers() {
             <tr data-username="${escapeHtml(u.username)}">
                 <td>${escapeHtml(u.username)}</td>
                 <td>${u.role === 'SUPERADMIN' ? '<span class="admin-role-badge">SUPERADMIN</span>' : 'USER'}</td>
+                <td>
+                    ${u.role === 'SUPERADMIN'
+                        ? '<span class="plan-badge plan-badge-pro" style="position:static;">PRO</span>'
+                        : `<button class="btn-admin-mini btn-admin-toggle-plan" data-plan="${escapeHtml(u.plan || 'FREE')}" title="Click para cambiar de plan">
+                            <span class="plan-badge ${u.plan === 'PRO' ? 'plan-badge-pro' : 'plan-badge-free'}" style="position:static;">${escapeHtml(u.plan || 'FREE')}</span>
+                           </button>`}
+                </td>
+                <td>${Math.round((u.daily_usage_seconds || 0) / 60)} min</td>
                 <td>${u.active ? '<span class="admin-status-active">Activo</span>' : '<span class="admin-status-inactive">Desactivado</span>'}</td>
                 <td class="admin-users-actions">
                     <button class="btn-admin-mini btn-admin-reset" title="Resetear contraseña">🔑</button>
                     <button class="btn-admin-mini btn-admin-revoke" title="Revocar sesión">🚫</button>
-                    <button class="btn-admin-mini btn-admin-deactivate" title="Desactivar acceso" ${u.role === 'SUPERADMIN' ? 'disabled' : ''}>🗑</button>
+                    ${u.active
+                        ? `<button class="btn-admin-mini btn-admin-deactivate" title="Desactivar acceso" ${u.role === 'SUPERADMIN' ? 'disabled' : ''}>🗑</button>`
+                        : `<button class="btn-admin-mini btn-admin-activate" title="Reactivar acceso">♻️</button>`}
                 </td>
             </tr>
         `).join('');
@@ -464,6 +542,12 @@ async function loadActiveUsers() {
         });
         tbody.querySelectorAll('.btn-admin-deactivate').forEach((btn) => {
             btn.addEventListener('click', () => deactivateUserFor(btn.closest('tr').dataset.username));
+        });
+        tbody.querySelectorAll('.btn-admin-activate').forEach((btn) => {
+            btn.addEventListener('click', () => activateUserFor(btn.closest('tr').dataset.username));
+        });
+        tbody.querySelectorAll('.btn-admin-toggle-plan').forEach((btn) => {
+            btn.addEventListener('click', () => togglePlanFor(btn.closest('tr').dataset.username, btn.dataset.plan));
         });
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="4" class="admin-empty">❌ ${escapeHtml(friendlyErrorMessage(err))}</td></tr>`;
@@ -497,6 +581,33 @@ async function deactivateUserFor(username) {
     try {
         const res = await fetchWithTimeout(`${BACKEND_URL}/admin/users/${username}/deactivate`, { method: 'POST', headers: authHeaders() });
         if (!res.ok) throw new Error('No se pudo desactivar el usuario.');
+        loadActiveUsers();
+    } catch (err) {
+        alert('❌ ' + friendlyErrorMessage(err));
+    }
+}
+
+async function activateUserFor(username) {
+    try {
+        const res = await fetchWithTimeout(`${BACKEND_URL}/admin/users/${username}/activate`, { method: 'POST', headers: authHeaders() });
+        if (!res.ok) throw new Error('No se pudo reactivar el usuario.');
+        loadActiveUsers();
+    } catch (err) {
+        alert('❌ ' + friendlyErrorMessage(err));
+    }
+}
+
+async function togglePlanFor(username, currentPlan) {
+    const newPlan = currentPlan === 'PRO' ? 'FREE' : 'PRO';
+    if (!confirm(`¿Cambiar a "${username}" de ${currentPlan} a ${newPlan}?`)) return;
+    try {
+        const res = await fetchWithTimeout(`${BACKEND_URL}/admin/users/${username}/set-plan`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plan: newPlan })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'No se pudo cambiar el plan.');
         loadActiveUsers();
     } catch (err) {
         alert('❌ ' + friendlyErrorMessage(err));

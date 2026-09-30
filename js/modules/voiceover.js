@@ -1,6 +1,7 @@
 import { BACKEND_URL } from '../config.js';
 import { telemetryLog } from '../utils/dom.js';
 import { authHeaders } from '../utils/storage.js';
+import { isPro } from './auth.js';
 
 /** Puebla el <select> de voces desde /tts-voices (así la lista vive en el backend, no hardcodeada acá). */
 export async function loadTtsVoices() {
@@ -34,6 +35,7 @@ export async function generateVoiceover() {
 
     const text = (textEl.value || '').trim();
     if (!text) { alert('Escribí o pegá un texto primero.'); return; }
+    if (!isPro()) { alert('Voiceover es una función exclusiva del plan PRO. Pedile a un administrador que active tu cuenta en PRO.'); return; }
 
     if (btn) { btn.disabled = true; btn.dataset.origHtml = btn.innerHTML; btn.textContent = '⏳ Generando...'; }
     statusEl.className = 'clip-export-status active';

@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { showLoader, updateProgress } from '../modules/loader.js';
 import { saveSession } from '../modules/sessions.js';
 import { authHeaders } from '../utils/storage.js';
+import { refreshUsageBadge } from '../modules/auth.js';
 import { setTelemetryMetrics } from '../utils/dom.js';
 
 // ============================================================
@@ -187,7 +188,10 @@ export async function streamingFetch(url, opts) {
             }
         }
 
-        if (finalResult) saveSession(finalResult);
+        if (finalResult) {
+            saveSession(finalResult);
+            refreshUsageBadge();
+        }
     } finally {
         clearTimeout(watchdog);
         state.currentAbortController = null;

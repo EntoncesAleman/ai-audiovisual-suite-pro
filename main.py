@@ -17,7 +17,7 @@ import zipfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -97,8 +97,15 @@ API_ACCESS_KEY = os.getenv("API_ACCESS_KEY")
 # Las contraseñas NUNCA se guardan en texto plano: se hashean con
 # PBKDF2-HMAC-SHA256 + salt aleatoria por usuario.
 # ------------------------------------------------------------------
-USERS_DB_FILE = Path(__file__).parent / "users_db.json"
-ACCESS_REQUESTS_FILE = Path(__file__).parent / "access_requests.json"
+# DATA_DIR: por default, junto al código (Path(__file__).parent, comportamiento
+# de siempre). En Render, un redeploy reconstruye el filesystem desde la imagen
+# - así que si se monta un Persistent Disk, hay que apuntar DATA_DIR ahí para
+# que usuarios/planes/consumo/índice de exports sobrevivan un redeploy (no solo
+# un restart). Sin esa env var, sigue comportándose exactamente igual que antes.
+DATA_DIR = Path(os.getenv("DATA_DIR", str(Path(__file__).parent)))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+USERS_DB_FILE = DATA_DIR / "users_db.json"
+ACCESS_REQUESTS_FILE = DATA_DIR / "access_requests.json"
 
 # Tokens de sesión emitidos por /auth/login: viven en memoria (se pierden
 # si el servidor reinicia - igual que cualquier "mantener sesión iniciada"
@@ -196,6 +203,229 @@ def require_superadmin(x_api_key: str | None = Header(default=None)):
     if not session or session.get("role") != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Necesitás permisos de administrador.")
     return session
+
+# ------------------------------------------------------------------
+# PLANES (FREE/PRO) + METERING
+# ------------------------------------------------------------------
+# `role` (SUPERADMIN vs USER) sigue siendo el eje de permisos de admin.
+# `plan` (FREE/PRO) es un eje independiente que decide límites de uso -
+# se agrega como campo nuevo en users_db.json, con default perezoso
+# (_ensure_plan_defaults) para no necesitar un script de migración aparte
+# sobre el único usuario que ya existía antes de esta fase.
+PLAN_FREE = "FREE"
+PLAN_PRO = "PRO"
+
+FREE_DAILY_LIMIT_SECONDS = int(os.getenv("FREE_DAILY_LIMIT_SECONDS", str(60 * 60)))   # 60 min/día
+FREE_MAX_FILE_SECONDS = int(os.getenv("FREE_MAX_FILE_SECONDS", str(60 * 60)))         # 60 min/archivo
+FREE_MAX_CONCURRENT_JOBS = 1
+PRO_MAX_CONCURRENT_JOBS = 3          # fair use del lado app; el semáforo global (MAX_CONCURRENT_HEAVY_OPS)
+                                     # sigue siendo el límite real de infraestructura en el free tier de Render.
+FREE_MAX_BATCH_CLIPS = 3            # tope de clips por exportación (export-clips/reel/carousel/capcut) en FREE
+FREE_MAX_EXPORTS_HISTORY = 10       # cuántos exports propios lista /exports para un usuario FREE
+
+
+def _today_str() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _ensure_plan_defaults(user: dict) -> dict:
+    """Migración perezosa: completa plan/daily_usage_* la primera vez que se
+    lee un usuario creado antes de esta fase (o recién creado sin esos campos)."""
+    user.setdefault("plan", PLAN_PRO if user.get("role") == "SUPERADMIN" else PLAN_FREE)
+    user.setdefault("daily_usage_seconds", 0)
+    user.setdefault("daily_usage_date", _today_str())
+    return user
+
+
+def get_current_user(x_api_key: str | None = Header(default=None)) -> dict:
+    """
+    Dependency que resuelve la sesión (require_api_key) y la enriquece con
+    plan/límites, para que los endpoints de metering/feature-gating no
+    tengan que releer users_db.json cada uno a mano. Devuelve siempre un
+    dict con username/role/plan/unrestricted (nunca None).
+    """
+    session = require_api_key(x_api_key)
+    if session is None:
+        # Servidor recién instalado (sin usuarios ni API_ACCESS_KEY todavía):
+        # mismo modo "no bloquea nada" de require_api_key, sin límites de plan.
+        return {"username": None, "role": "USER", "plan": PLAN_PRO, "unrestricted": True}
+    username = session.get("username")
+    role = session.get("role", "USER")
+    if username == "legacy":
+        # API_ACCESS_KEY estática (compatibilidad, sin cuenta real detrás):
+        # no tiene sentido meterle límites de plan a un secreto compartido.
+        return {"username": "legacy", "role": role, "plan": PLAN_PRO, "unrestricted": True}
+    users = _load_users()
+    user = users.get(username)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sesión inválida o expirada. Iniciá sesión de nuevo.")
+    _ensure_plan_defaults(user)
+    return {
+        "username": username,
+        "role": role,
+        "plan": user.get("plan", PLAN_FREE),
+        "unrestricted": role == "SUPERADMIN",
+        "daily_usage_seconds": user.get("daily_usage_seconds", 0),
+        "daily_usage_date": user.get("daily_usage_date"),
+    }
+
+
+def require_pro(user: dict = Depends(get_current_user)) -> dict:
+    """Gate simple on/off para funciones exclusivas de PRO (Voiceover, Premiere/XML)."""
+    if not user["unrestricted"] and user["plan"] != PLAN_PRO:
+        raise HTTPException(status_code=403, detail="Esta función es exclusiva del plan PRO. Pedile a un administrador que active tu cuenta en PRO.")
+    return user
+
+
+def _check_free_quota(user: dict, duration_seconds: float | None):
+    """
+    Enforcement de FREE: 60 min por archivo + 60 min/día acumulados. Se
+    llama ANTES de arrancar el trabajo pesado (ya se conoce la duración real
+    en ese punto - ver process_video_smart/streaming), para no gastar cuota
+    de Gemini/Groq en un análisis que de todos modos se va a rechazar.
+    """
+    if user["unrestricted"] or user["plan"] != PLAN_FREE:
+        return
+    if duration_seconds and duration_seconds > FREE_MAX_FILE_SECONDS:
+        raise HTTPException(
+            status_code=403,
+            detail=f"El plan FREE permite archivos de hasta {FREE_MAX_FILE_SECONDS // 60} minutos. Este archivo dura {duration_seconds / 60:.1f} min. Pasate a PRO para procesar archivos más largos."
+        )
+    username = user.get("username")
+    if not username:
+        return
+    users = _load_users()
+    record = users.get(username)
+    if not record:
+        return
+    _ensure_plan_defaults(record)
+    today = _today_str()
+    if record.get("daily_usage_date") != today:
+        record["daily_usage_seconds"] = 0
+        record["daily_usage_date"] = today
+        _save_users(users)
+    used = record.get("daily_usage_seconds", 0)
+    if used + (duration_seconds or 0) > FREE_DAILY_LIMIT_SECONDS:
+        remaining_min = max(0, (FREE_DAILY_LIMIT_SECONDS - used) // 60)
+        raise HTTPException(
+            status_code=403,
+            detail=f"Límite diario del plan FREE alcanzado (60 min/día). Te quedan {remaining_min} min hoy. Pasate a PRO para uso sin este límite diario."
+        )
+
+
+def _record_usage(username: str | None, duration_seconds: float | None):
+    """Suma `duration_seconds` al contador diario del usuario (con reset por fecha).
+    Se llama SIEMPRE que un análisis termina con éxito, sin importar el plan,
+    para que el admin pueda ver consumo real de cualquier cuenta."""
+    if not username or username == "legacy" or not duration_seconds:
+        return
+    users = _load_users()
+    record = users.get(username)
+    if not record:
+        return
+    _ensure_plan_defaults(record)
+    today = _today_str()
+    if record.get("daily_usage_date") != today:
+        record["daily_usage_seconds"] = 0
+        record["daily_usage_date"] = today
+    record["daily_usage_seconds"] = record.get("daily_usage_seconds", 0) + duration_seconds
+    _save_users(users)
+
+
+def _check_batch_allowed(user: dict, clip_count: int):
+    """Gate de 'batch' PRO: FREE solo puede exportar de a pocos clips por vez."""
+    if user["unrestricted"] or user["plan"] != PLAN_FREE:
+        return
+    if clip_count > FREE_MAX_BATCH_CLIPS:
+        raise HTTPException(
+            status_code=403,
+            detail=f"El plan FREE permite exportar hasta {FREE_MAX_BATCH_CLIPS} clips por vez. Pasate a PRO para exportar en lote."
+        )
+
+
+# ------------------------------------------------------------------
+# Concurrencia POR USUARIO: además del semáforo global (una operación
+# pesada a la vez en TODO el servidor, ver _heavy_ops_semaphore más abajo),
+# FREE no puede tener más de un job propio en curso - si no, una sola
+# cuenta FREE podría acumular cola propia mandando varios requests a la vez.
+# ------------------------------------------------------------------
+_user_active_jobs: dict[str, int] = {}
+_user_jobs_lock = asyncio.Lock()
+
+
+def _max_jobs_for(user: dict) -> int:
+    if user["unrestricted"] or user["plan"] == PLAN_PRO:
+        return PRO_MAX_CONCURRENT_JOBS
+    return FREE_MAX_CONCURRENT_JOBS
+
+
+async def _acquire_user_job_slot(user: dict):
+    username = user.get("username")
+    if not username or username == "legacy" or user.get("unrestricted"):
+        return
+    async with _user_jobs_lock:
+        current = _user_active_jobs.get(username, 0)
+        if current >= _max_jobs_for(user):
+            raise HTTPException(status_code=429, detail="Ya tenés un trabajo en curso. Esperá a que termine antes de iniciar otro.")
+        _user_active_jobs[username] = current + 1
+
+
+def _release_user_job_slot(user: dict):
+    username = user.get("username")
+    if not username or username == "legacy" or user.get("unrestricted"):
+        return
+    current = _user_active_jobs.get(username, 0)
+    if current <= 1:
+        _user_active_jobs.pop(username, None)
+    else:
+        _user_active_jobs[username] = current - 1
+
+
+# ------------------------------------------------------------------
+# RATE LIMITING básico (por IP) para los dos endpoints públicos sin auth
+# (login y solicitud de acceso) - simple ventana fija en memoria, no hace
+# falta Redis para este volumen.
+# ------------------------------------------------------------------
+_rate_limit_buckets: dict[str, list] = {}
+
+
+def _rate_limit(key: str, max_requests: int, window_seconds: float):
+    now = time.time()
+    bucket = _rate_limit_buckets.setdefault(key, [])
+    cutoff = now - window_seconds
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    if len(bucket) >= max_requests:
+        raise HTTPException(status_code=429, detail="Demasiados intentos desde esta IP. Esperá un momento y volvé a intentar.")
+    bucket.append(now)
+
+
+def _client_ip(request) -> str:
+    return request.client.host if request and request.client else "unknown"
+
+
+# ------------------------------------------------------------------
+# OWNERSHIP de exports: antes cualquiera con la URL podía listar/descargar
+# el export de cualquier otro usuario (GET /exports, GET /exports/{filename}
+# sin auth ni dueño). Este índice (filename -> username) es lo que permite
+# gatear ambos endpoints por dueño real.
+# ------------------------------------------------------------------
+EXPORTS_INDEX_FILE = DATA_DIR / "exports_index.json"
+
+
+def _load_exports_index() -> dict:
+    return _load_json(EXPORTS_INDEX_FILE, {})
+
+
+def _save_exports_index(idx: dict):
+    _save_json(EXPORTS_INDEX_FILE, idx)
+
+
+def _register_export(filename: str, username: str | None):
+    idx = _load_exports_index()
+    idx[filename] = {"username": username, "created_at": datetime.now(timezone.utc).isoformat()}
+    _save_exports_index(idx)
+
 
 # Groq (opcional): último recurso cuando TODOS los modelos Gemini agotaron su cuota diaria.
 # Sin diarización de speakers reales (Whisper no la hace), pero mantiene la app funcionando
@@ -1752,7 +1982,7 @@ def process_video_smart(video_path: str, progress_callback=None, engine: str = "
     return "\n".join(full_transcript)
 
 
-async def process_video_with_gemini(video_path: str, cache_key: str = None, engine: str = "auto"):
+async def process_video_with_gemini(video_path: str, user: dict, cache_key: str = None, engine: str = "auto"):
     """Versión no-streaming (compatible con el endpoint clásico)."""
     # Chequeo de cache
     if cache_key:
@@ -1762,6 +1992,7 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None, engi
             cached["from_cache"] = True
             return cached
 
+    await _acquire_user_job_slot(user)
     # Mismo semáforo/guard de memoria que las versiones streaming (ver
     # comentario junto a _heavy_ops_semaphore) - este endpoint clásico hace
     # el mismo trabajo pesado y se había quedado afuera de esa protección.
@@ -1771,6 +2002,11 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None, engi
         if mem_error:
             raise HTTPException(status_code=503, detail=mem_error)
 
+        # Enforcement de plan/cuota ANTES de gastar cuota de Gemini/Groq (ver
+        # _check_free_quota) - se conoce la duración real acá mismo.
+        duration_seconds = await asyncio.to_thread(get_video_duration_seconds, video_path)
+        _check_free_quota(user, duration_seconds)
+
         print("Iniciando procesamiento inteligente (con detección automática de duración)...")
         text = await asyncio.to_thread(process_video_smart, video_path, None, engine)
 
@@ -1779,6 +2015,7 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None, engi
         if cache_key:
             cache_set(cache_key, result)
 
+        _record_usage(user.get("username"), duration_seconds)
         return result
 
     except HTTPException:
@@ -1788,9 +2025,10 @@ async def process_video_with_gemini(video_path: str, cache_key: str = None, engi
         raise HTTPException(status_code=500, detail=f"Error en la IA: {str(e)}")
     finally:
         _heavy_ops_semaphore.release()
+        _release_user_job_slot(user)
 
 
-async def process_video_streaming(video_path: str, cache_key: str = None, engine: str = "auto"):
+async def process_video_streaming(video_path: str, user: dict, cache_key: str = None, engine: str = "auto"):
     """Versión streaming: emite eventos SSE con el progreso real."""
 
     def event(stage: str, message: str, data: dict = None):
@@ -1808,6 +2046,12 @@ async def process_video_streaming(video_path: str, cache_key: str = None, engine
             yield event("done", "Listo (desde cache)", {"result": cached})
             return
 
+    try:
+        await _acquire_user_job_slot(user)
+    except HTTPException as e:
+        yield event("error", e.detail)
+        return
+
     # 2. Cola por el semáforo de operaciones pesadas (ver comentario junto a
     # _heavy_ops_semaphore) - si hay otra en curso, avisamos y esperamos
     # nuestro turno en vez de sumar presión de memoria en simultáneo.
@@ -1822,6 +2066,13 @@ async def process_video_streaming(video_path: str, cache_key: str = None, engine
         # 3. Detectar duración y decidir si procesar entero o por tramos
         duration_seconds = await asyncio.to_thread(get_video_duration_seconds, video_path)
         duration_minutes = duration_seconds / 60 if duration_seconds else 0
+
+        # Enforcement de plan/cuota ANTES de gastar cuota de Gemini/Groq.
+        try:
+            _check_free_quota(user, duration_seconds)
+        except HTTPException as e:
+            yield event("error", e.detail)
+            return
 
         if duration_minutes > 0:
             yield event("info", f"Duración a procesar: {duration_minutes:.1f} minutos")
@@ -1908,20 +2159,22 @@ async def process_video_streaming(video_path: str, cache_key: str = None, engine
         if cache_key:
             cache_set(cache_key, result)
 
+        _record_usage(user.get("username"), duration_seconds)
         yield event("done", "Análisis completo", {"result": result})
 
     except Exception as e:
         yield event("error", f"Error en el procesamiento: {str(e)}")
     finally:
         _heavy_ops_semaphore.release()
+        _release_user_job_slot(user)
 
 
 # ============================================================
 # ENDPOINTS CLÁSICOS (mantenidos por compatibilidad)
 # ============================================================
 
-@app.post("/analyze-url", dependencies=[Depends(require_api_key)])
-async def analyze_url(input_data: UrlInput):
+@app.post("/analyze-url")
+async def analyze_url(input_data: UrlInput, user: dict = Depends(get_current_user)):
     cache_key = url_hash(input_data.url)
     cached = cache_get(cache_key)
     if cached:
@@ -1934,21 +2187,21 @@ async def analyze_url(input_data: UrlInput):
     # el video real por separado, ver /export-clips, /export-reel, etc.
     video_path = await asyncio.to_thread(download_youtube_audio, input_data.url)
     try:
-        return await process_video_with_gemini(video_path, cache_key=cache_key, engine=_normalize_engine(input_data.engine))
+        return await process_video_with_gemini(video_path, user, cache_key=cache_key, engine=_normalize_engine(input_data.engine))
     finally:
         if os.path.exists(video_path):
             os.remove(video_path)
 
 
-@app.post("/analyze-video", dependencies=[Depends(require_api_key)])
-async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto")):
+@app.post("/analyze-video")
+async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto"), user: dict = Depends(get_current_user)):
     temp_dir = tempfile.gettempdir()
     video_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}")
     with open(video_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     try:
         cache_key = file_hash(video_path)
-        return await process_video_with_gemini(video_path, cache_key=cache_key, engine=_normalize_engine(engine))
+        return await process_video_with_gemini(video_path, user, cache_key=cache_key, engine=_normalize_engine(engine))
     finally:
         if os.path.exists(video_path):
             os.remove(video_path)
@@ -1958,8 +2211,8 @@ async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto")
 # ENDPOINTS CON STREAMING DE PROGRESO (nuevos)
 # ============================================================
 
-@app.post("/analyze-url-stream", dependencies=[Depends(require_api_key)])
-async def analyze_url_stream(input_data: UrlInput):
+@app.post("/analyze-url-stream")
+async def analyze_url_stream(input_data: UrlInput, user: dict = Depends(get_current_user)):
     """Versión streaming: el frontend recibe eventos de progreso en tiempo real."""
     cache_key = url_hash(input_data.url)
     engine = _normalize_engine(input_data.engine)
@@ -1993,7 +2246,7 @@ async def analyze_url_stream(input_data: UrlInput):
             return
 
         try:
-            async for chunk in process_video_streaming(video_path, cache_key=cache_key, engine=engine):
+            async for chunk in process_video_streaming(video_path, user, cache_key=cache_key, engine=engine):
                 yield chunk
         finally:
             # No se cachea como "video exportable": es solo audio. Para
@@ -2004,8 +2257,8 @@ async def analyze_url_stream(input_data: UrlInput):
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
-@app.post("/analyze-video-stream", dependencies=[Depends(require_api_key)])
-async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form("auto")):
+@app.post("/analyze-video-stream")
+async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form("auto"), user: dict = Depends(get_current_user)):
     """Versión streaming para archivos locales."""
     temp_dir = tempfile.gettempdir()
     video_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}")
@@ -2017,7 +2270,7 @@ async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form(
 
     async def generator():
         try:
-            async for chunk in process_video_streaming(video_path, cache_key=cache_key, engine=engine):
+            async for chunk in process_video_streaming(video_path, user, cache_key=cache_key, engine=engine):
                 yield chunk
         finally:
             # En vez de borrarlo, lo dejamos cacheado para poder exportar clips
@@ -2120,8 +2373,8 @@ class AssistantChatInput(BaseModel):
     messages: list[AssistantChatMessage]
 
 
-@app.post("/assistant-chat", dependencies=[Depends(require_api_key)])
-async def assistant_chat(input_data: AssistantChatInput):
+@app.post("/assistant-chat")
+async def assistant_chat(input_data: AssistantChatInput, user: dict = Depends(get_current_user)):
     """
     Chat de ida y vuelta del modo "Assistant" (ver ai-assistant-card en
     index.html) - a diferencia de /generate-clip-suggestions (un prompt,
@@ -2155,6 +2408,7 @@ async def assistant_chat(input_data: AssistantChatInput):
     for m in input_data.messages:
         gemini_contents.append({"role": "user" if m.role == "user" else "model", "parts": [{"text": m.content}]})
 
+    await _acquire_user_job_slot(user)
     await _heavy_ops_semaphore.acquire()
     try:
         mem_error = _memory_headroom_error()
@@ -2183,10 +2437,11 @@ async def assistant_chat(input_data: AssistantChatInput):
         raise HTTPException(status_code=502, detail=f"El asistente no pudo responder: {e}")
     finally:
         _heavy_ops_semaphore.release()
+        _release_user_job_slot(user)
 
 
-@app.post("/generate-clip-suggestions", dependencies=[Depends(require_api_key)])
-async def generate_with_ai(input_data: GenerateWithAiInput):
+@app.post("/generate-clip-suggestions")
+async def generate_with_ai(input_data: GenerateWithAiInput, user: dict = Depends(get_current_user)):
     """
     Prompt libre "en la app": manda el prompt (transcripción + instrucciones,
     ya armado del lado del frontend) directo a Gemini y devuelve el texto.
@@ -2214,6 +2469,7 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
         second_name, second_fn = "groq", (lambda: _call_groq_text(input_data.prompt))
     second_available = GROQ_API_KEY if second_name == "groq" else True
 
+    await _acquire_user_job_slot(user)
     await _heavy_ops_semaphore.acquire()
     try:
         mem_error = _memory_headroom_error()
@@ -2238,6 +2494,7 @@ async def generate_with_ai(input_data: GenerateWithAiInput):
         raise HTTPException(status_code=502, detail=f"No se pudo generar una respuesta: {e}")
     finally:
         _heavy_ops_semaphore.release()
+        _release_user_job_slot(user)
 
 
 # ============================================================
@@ -2297,13 +2554,14 @@ def _pcm_to_wav_bytes(pcm_data: bytes, sample_rate: int = 24000, channels: int =
 _TTS_SAMPLE_RATE_RE = re.compile(r"rate=(\d+)")
 
 
-@app.post("/generate-voiceover", dependencies=[Depends(require_api_key)])
-async def generate_voiceover(input_data: TtsInput):
+@app.post("/generate-voiceover")
+async def generate_voiceover(input_data: TtsInput, user: dict = Depends(require_pro)):
     """
     Convierte un texto (guion, copy para redes, lo que sea) en un archivo de
     audio .wav con Gemini TTS - para doblaje/voiceover de los clips exportados.
     No se mezcla automáticamente con ningún video: devuelve el .wav suelto,
     la persona lo importa a mano en Premiere/CapCut/donde edite.
+    Exclusivo PRO (ver require_pro).
     """
     text = (input_data.text or "").strip()
     if not text:
@@ -2312,6 +2570,7 @@ async def generate_voiceover(input_data: TtsInput):
         raise HTTPException(status_code=400, detail="Texto demasiado largo (máx. 5000 caracteres).")
     voice = input_data.voice if input_data.voice in TTS_VOICES else _DEFAULT_TTS_VOICE
 
+    await _acquire_user_job_slot(user)
     await _heavy_ops_semaphore.acquire()
     try:
         mem_error = _memory_headroom_error()
@@ -2347,6 +2606,7 @@ async def generate_voiceover(input_data: TtsInput):
                 filename = f"voiceover_{export_id}.wav"
                 with open(EXPORT_DIR / filename, "wb") as f:
                     f.write(wav_bytes)
+                _register_export(filename, user.get("username"))
 
                 return {"download_url": f"/exports/{filename}", "filename": filename, "model": model, "voice": voice}
             except Exception as e:
@@ -2361,6 +2621,7 @@ async def generate_voiceover(input_data: TtsInput):
         raise HTTPException(status_code=502, detail=f"Error generando el voiceover: {e}")
     finally:
         _heavy_ops_semaphore.release()
+        _release_user_job_slot(user)
 
 
 # ============================================================
@@ -2563,8 +2824,8 @@ class ThumbnailRequest(BaseModel):
     clips: list[ThumbnailSpec]
 
 
-@app.post("/generate-thumbnails", dependencies=[Depends(require_api_key)])
-async def generate_thumbnails(input_data: ThumbnailRequest):
+@app.post("/generate-thumbnails")
+async def generate_thumbnails(input_data: ThumbnailRequest, user: dict = Depends(get_current_user)):
     """
     Extrae un frame por clip (en su timestamp de inicio) del video YA
     CACHEADO del análisis y lo devuelve como JPG chico en base64, para las
@@ -2584,6 +2845,7 @@ async def generate_thumbnails(input_data: ThumbnailRequest):
     if not input_data.clips:
         return {"thumbnails": []}
 
+    await _acquire_user_job_slot(user)
     await _heavy_ops_semaphore.acquire()
     try:
         mem_error = _memory_headroom_error()
@@ -2605,6 +2867,7 @@ async def generate_thumbnails(input_data: ThumbnailRequest):
         return {"thumbnails": thumbnails}
     finally:
         _heavy_ops_semaphore.release()
+        _release_user_job_slot(user)
 
 
 class EnsureCachedVideoRequest(BaseModel):
@@ -2612,8 +2875,8 @@ class EnsureCachedVideoRequest(BaseModel):
     cache_key: str = ""
 
 
-@app.post("/ensure-cached-video", dependencies=[Depends(require_api_key)])
-async def ensure_cached_video(input_data: EnsureCachedVideoRequest):
+@app.post("/ensure-cached-video")
+async def ensure_cached_video(input_data: EnsureCachedVideoRequest, user: dict = Depends(get_current_user)):
     """
     A diferencia de /generate-thumbnails (que a propósito NO descarga si no
     hay cache), este SÍ fuerza la descarga del video completo de una URL para
@@ -2631,6 +2894,7 @@ async def ensure_cached_video(input_data: EnsureCachedVideoRequest):
     if not input_data.url:
         raise HTTPException(status_code=404, detail="No hay video cacheado y no se dio una URL para descargarlo.")
 
+    await _acquire_user_job_slot(user)
     await _heavy_ops_semaphore.acquire()
     try:
         mem_error = _memory_headroom_error()
@@ -2645,6 +2909,7 @@ async def ensure_cached_video(input_data: EnsureCachedVideoRequest):
         return {"cache_key": effective_cache_key, "cached": True}
     finally:
         _heavy_ops_semaphore.release()
+        _release_user_job_slot(user)
 
 
 @app.get("/cached-video/{cache_key}", dependencies=[Depends(require_api_key)])
@@ -2827,8 +3092,8 @@ class ExportClipsInput(BaseModel):
     subtitle_style: SubtitleStyle | None = None
 
 
-@app.post("/export-clips", dependencies=[Depends(require_api_key)])
-async def export_clips_endpoint(input_data: ExportClipsInput):
+@app.post("/export-clips")
+async def export_clips_endpoint(input_data: ExportClipsInput, user: dict = Depends(get_current_user)):
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
         if data:
@@ -2850,6 +3115,17 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
         timespan_error = validate_clips_timespan(input_data.clips)
         if timespan_error:
             yield event("error", f"Timestamps inválidos: {timespan_error}")
+            return
+        try:
+            _check_batch_allowed(user, len(input_data.clips))
+        except HTTPException as e:
+            yield event("error", e.detail)
+            return
+
+        try:
+            await _acquire_user_job_slot(user)
+        except HTTPException as e:
+            yield event("error", e.detail)
             return
 
         # Cola por el semáforo de operaciones pesadas (ver comentario junto a
@@ -2947,6 +3223,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
             if len(clip_files) == 1:
                 single_name = f"clip_{export_id}.mp4"
                 shutil.copy(clip_files[0], str(EXPORT_DIR / single_name))
+                _register_export(single_name, user.get("username"))
                 yield event("done", "✓ Clip exportado.", {
                     "download_url": f"/exports/{single_name}",
                     "filename": single_name,
@@ -2961,6 +3238,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
                 with zipfile.ZipFile(zip_path, "w") as zf:
                     for cf in clip_files:
                         zf.write(cf, os.path.basename(cf))
+                _register_export(zip_name, user.get("username"))
                 yield event("done", f"✓ {len(clip_files)} clips empaquetados en ZIP.", {
                     "download_url": f"/exports/{zip_name}",
                     "filename": zip_name,
@@ -2981,24 +3259,37 @@ async def export_clips_endpoint(input_data: ExportClipsInput):
             except Exception:
                 pass
             _heavy_ops_semaphore.release()
+            _release_user_job_slot(user)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 @app.get("/exports")
-async def list_exports():
+async def list_exports(user: dict = Depends(get_current_user)):
     """
     Lista lo que haya terminado de generarse en el servidor, con link de
     descarga directo. Sirve como red de contención cuando la conexión se
     corta antes de que la web reciba el link (el archivo puede haberse
     terminado igual del lado del servidor) - navegá a /exports para
     buscarlo a mano en vez de tener que volver a generarlo.
+
+    Ownership: cada usuario ve solo lo que exportó él mismo (índice
+    filename->username en exports_index.json, ver _register_export).
+    SUPERADMIN ve todo. Los archivos "huérfanos" (de antes de esta fase,
+    sin dueño registrado) solo los ve SUPERADMIN, por las dudas.
     """
+    idx = _load_exports_index()
+    is_admin = user["role"] == "SUPERADMIN"
     files = sorted(
         (f for f in EXPORT_DIR.iterdir() if f.is_file()),
         key=lambda f: f.stat().st_mtime,
         reverse=True,
     )
+    if not is_admin:
+        username = user.get("username")
+        files = [f for f in files if idx.get(f.name, {}).get("username") == username]
+        if not user["unrestricted"] and user["plan"] == PLAN_FREE:
+            files = files[:FREE_MAX_EXPORTS_HISTORY]
     rows = "\n".join(
         f'<tr><td>{f.name}</td><td>{f.stat().st_size / (1024 * 1024):.1f} MB</td>'
         f'<td>{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(f.stat().st_mtime))}</td>'
@@ -3025,13 +3316,23 @@ async def list_exports():
 
 
 @app.get("/exports/{filename}")
-async def download_export(filename: str):
-    """Descarga un archivo de clip exportado."""
+async def download_export(filename: str, user: dict = Depends(get_current_user)):
+    """
+    Descarga un archivo exportado. Antes no chequeaba dueño (cualquiera con
+    la URL podía bajar el export de cualquier otro usuario) - ahora exige
+    que el archivo esté registrado a nombre de quien pide, o SUPERADMIN.
+    Archivos sin dueño registrado (de antes de esta fase) solo los puede
+    bajar SUPERADMIN.
+    """
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Nombre inválido.")
     filepath = EXPORT_DIR / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado o expirado.")
+    owner = _load_exports_index().get(filename, {}).get("username")
+    is_owner = owner is not None and owner == user.get("username")
+    if not is_owner and user["role"] != "SUPERADMIN":
+        raise HTTPException(status_code=403, detail="No tenés permiso para descargar este archivo.")
     media_type = "video/mp4" if filename.endswith(".mp4") else "application/zip"
     return FileResponse(str(filepath), media_type=media_type, filename=filename)
 
@@ -3066,8 +3367,9 @@ class ExportPremiereInput(BaseModel):
     include_srt: bool = False
 
 
-@app.post("/export-premiere-xml", dependencies=[Depends(require_api_key)])
-async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
+@app.post("/export-premiere-xml")
+async def export_premiere_xml_endpoint(input_data: ExportPremiereInput, user: dict = Depends(require_pro)):
+    """Exclusivo PRO (ver require_pro) - marcado como tal en el producto."""
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
         if data:
@@ -3086,6 +3388,12 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
         timespan_error = validate_clips_timespan(input_data.clips)
         if timespan_error:
             yield event("error", f"Timestamps inválidos: {timespan_error}")
+            return
+
+        try:
+            await _acquire_user_job_slot(user)
+        except HTTPException as e:
+            yield event("error", e.detail)
             return
 
         async for _ in _wait_for_heavy_slot():
@@ -3219,6 +3527,7 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                     # usuario ya lo tiene, relinkea a mano contra su original.
                     zf.write(video_path, bundled_video_name)
 
+            _register_export(zip_name, user.get("username"))
             extras = []
             if input_data.include_companion:
                 extras.append("companion")
@@ -3245,6 +3554,7 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput):
                 except Exception:
                     pass
             _heavy_ops_semaphore.release()
+            _release_user_job_slot(user)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -3275,8 +3585,8 @@ class ExportCapCutInput(BaseModel):
     project_name: str = ""
 
 
-@app.post("/export-capcut", dependencies=[Depends(require_api_key)])
-async def export_capcut_endpoint(input_data: ExportCapCutInput):
+@app.post("/export-capcut")
+async def export_capcut_endpoint(input_data: ExportCapCutInput, user: dict = Depends(get_current_user)):
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
         if data:
@@ -3299,6 +3609,12 @@ async def export_capcut_endpoint(input_data: ExportCapCutInput):
         timespan_error = validate_clips_timespan([input_data.clip])
         if timespan_error:
             yield event("error", f"Timestamps inválidos: {timespan_error}")
+            return
+
+        try:
+            await _acquire_user_job_slot(user)
+        except HTTPException as e:
+            yield event("error", e.detail)
             return
 
         async for _ in _wait_for_heavy_slot():
@@ -3391,6 +3707,7 @@ async def export_capcut_endpoint(input_data: ExportCapCutInput):
                     pass
             shutil.rmtree(str(clip_dir), ignore_errors=True)
             _heavy_ops_semaphore.release()
+            _release_user_job_slot(user)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -3426,8 +3743,8 @@ class CarouselExportInput(BaseModel):
     # Sin "tamaño original": el carrusel siempre es 1:1 (clips o placas), no aplica.
 
 
-@app.post("/export-reel", dependencies=[Depends(require_api_key)])
-async def export_reel_endpoint(input_data: ReelExportInput):
+@app.post("/export-reel")
+async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends(get_current_user)):
     """Descarga, corta, une y convierte clips al formato de la plataforma. Devuelve un MP4."""
 
     def event(stage: str, message: str, data: dict = None):
@@ -3449,6 +3766,15 @@ async def export_reel_endpoint(input_data: ReelExportInput):
         cfg = PLATFORM_CONFIGS.get(input_data.platform)
         if not cfg:
             yield event("error", f"Plataforma desconocida: {input_data.platform}"); return
+        try:
+            _check_batch_allowed(user, len(input_data.clips))
+        except HTTPException as e:
+            yield event("error", e.detail); return
+
+        try:
+            await _acquire_user_job_slot(user)
+        except HTTPException as e:
+            yield event("error", e.detail); return
 
         # Cola por el semáforo de operaciones pesadas antes de tocar disco/red/ffmpeg.
         async for _ in _wait_for_heavy_slot():
@@ -3578,6 +3904,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             if len(output_files) == 1:
                 output_name = f"reel_{input_data.platform}_{export_id}.mp4"
                 shutil.copy(output_files[0], str(EXPORT_DIR / output_name))
+                _register_export(output_name, user.get("username"))
                 yield event("done", f"✓ Video listo en {size_label}.", {
                     "download_url": f"/exports/{output_name}",
                     "filename": output_name,
@@ -3594,6 +3921,7 @@ async def export_reel_endpoint(input_data: ReelExportInput):
                 with zipfile.ZipFile(zip_path, "w") as zf:
                     for f in output_files:
                         zf.write(f, os.path.basename(f))
+                _register_export(zip_name, user.get("username"))
                 yield event("done", f"✓ {len(output_files)} clips listos en {size_label}.", {
                     "download_url": f"/exports/{zip_name}",
                     "filename": zip_name,
@@ -3612,12 +3940,13 @@ async def export_reel_endpoint(input_data: ReelExportInput):
             try: shutil.rmtree(str(clip_dir), ignore_errors=True)
             except: pass
             _heavy_ops_semaphore.release()
+            _release_user_job_slot(user)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
-@app.post("/export-carousel", dependencies=[Depends(require_api_key)])
-async def export_carousel_endpoint(input_data: CarouselExportInput):
+@app.post("/export-carousel")
+async def export_carousel_endpoint(input_data: CarouselExportInput, user: dict = Depends(get_current_user)):
     """Genera un carrusel: clips 1:1 (ZIP de MP4) o placas de texto (ZIP de JPG)."""
 
     def event(stage: str, message: str, data: dict = None):
@@ -3646,6 +3975,15 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             bad = [i for i, c in enumerate(input_data.clips, 1) if _parse_ts_strict(c.start) is None]
             if bad:
                 yield event("error", f"No pude interpretar el timestamp de la(s) placa(s) {', '.join(map(str, bad))} (formato esperado MM:SS o HH:MM:SS)."); return
+        try:
+            _check_batch_allowed(user, len(input_data.clips))
+        except HTTPException as e:
+            yield event("error", e.detail); return
+
+        try:
+            await _acquire_user_job_slot(user)
+        except HTTPException as e:
+            yield event("error", e.detail); return
 
         # Cola por el semáforo de operaciones pesadas antes de tocar disco/red/ffmpeg.
         async for _ in _wait_for_heavy_slot():
@@ -3769,6 +4107,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             with zipfile.ZipFile(zip_path, "w") as zf:
                 for f in output_files:
                     zf.write(f, os.path.basename(f))
+            _register_export(zip_name, user.get("username"))
 
             yield event("done", f"✓ {len(output_files)} slides listos.", {
                 "download_url": f"/exports/{zip_name}",
@@ -3786,6 +4125,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput):
             try: shutil.rmtree(str(carousel_dir), ignore_errors=True)
             except: pass
             _heavy_ops_semaphore.release()
+            _release_user_job_slot(user)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -3820,18 +4160,47 @@ def read_historial():
     return {"status": "historial.html no encontrado en el directorio del proyecto."}
 
 
+def _plan_payload_for(username: str, role: str) -> dict:
+    """Bloque de plan/consumo/límites que se manda al frontend en login y
+    auth/check, para que la UI pueda mostrar 'FREE 12/60 min hoy' o 'PRO'
+    sin tener que pegarle a otro endpoint aparte."""
+    if username == "legacy":
+        return {"plan": PLAN_PRO, "unrestricted": True, "daily_usage_seconds": 0, "limits": {}}
+    users = _load_users()
+    record = users.get(username)
+    if not record:
+        return {"plan": PLAN_FREE, "unrestricted": False, "daily_usage_seconds": 0, "limits": {}}
+    _ensure_plan_defaults(record)
+    _save_users(users)
+    today = _today_str()
+    used = record.get("daily_usage_seconds", 0) if record.get("daily_usage_date") == today else 0
+    unrestricted = role == "SUPERADMIN"
+    plan = record.get("plan", PLAN_FREE)
+    return {
+        "plan": plan,
+        "unrestricted": unrestricted,
+        "daily_usage_seconds": used,
+        "limits": {} if (unrestricted or plan == PLAN_PRO) else {
+            "daily_seconds": FREE_DAILY_LIMIT_SECONDS,
+            "max_file_seconds": FREE_MAX_FILE_SECONDS,
+            "max_batch_clips": FREE_MAX_BATCH_CLIPS,
+            "max_concurrent_jobs": FREE_MAX_CONCURRENT_JOBS,
+        },
+    }
+
+
 @app.get("/auth/check", dependencies=[Depends(require_api_key)])
 def auth_check(x_api_key: str | None = Header(default=None)):
     """
     El Auth Guard del frontend le pega a este endpoint con el header
     X-API-Key (el token guardado en el navegador) para saber si la sesión
     sigue siendo válida antes de mostrar el dashboard. Devuelve además
-    username/role para poder restaurar el estado (badge de SUPERUSER, etc.)
-    sin tener que loguearse de nuevo en cada F5.
+    username/role/plan para poder restaurar el estado (badge de SUPERUSER,
+    plan/consumo, etc.) sin tener que loguearse de nuevo en cada F5.
     """
     session = _sessions.get(x_api_key) if x_api_key else None
     if session:
-        return {"ok": True, "username": session["username"], "role": session["role"]}
+        return {"ok": True, "username": session["username"], "role": session["role"], **_plan_payload_for(session["username"], session["role"])}
     return {"ok": True, "auth_enabled": bool(API_ACCESS_KEY)}
 
 
@@ -3841,14 +4210,16 @@ class LoginBody(BaseModel):
 
 
 @app.post("/auth/login")
-def auth_login(body: LoginBody):
+def auth_login(body: LoginBody, request: Request):
+    _rate_limit(f"login:{_client_ip(request)}", max_requests=10, window_seconds=300)
     users = _load_users()
     user = users.get(body.username)
     if not user or not user.get("active", True) or not _verify_password(body.password, user["password_hash"], user["salt"]):
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos.")
     token = secrets.token_hex(24)
-    _sessions[token] = {"username": body.username, "role": user.get("role", "USER")}
-    return {"token": token, "username": body.username, "role": user.get("role", "USER")}
+    role = user.get("role", "USER")
+    _sessions[token] = {"username": body.username, "role": role}
+    return {"token": token, "username": body.username, "role": role, **_plan_payload_for(body.username, role)}
 
 
 @app.post("/auth/logout", dependencies=[Depends(require_api_key)])
@@ -3864,8 +4235,9 @@ class AccessRequestBody(BaseModel):
 
 
 @app.post("/access-requests")
-def create_access_request(body: AccessRequestBody):
+def create_access_request(body: AccessRequestBody, request: Request):
     """Público (sin auth): cualquiera sin cuenta puede pedir acceso desde el modal de login."""
+    _rate_limit(f"access-request:{_client_ip(request)}", max_requests=5, window_seconds=3600)
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="El nombre es obligatorio.")
@@ -3890,6 +4262,7 @@ def list_access_requests():
 class ApproveRequestBody(BaseModel):
     username: str
     password: str
+    plan: str = PLAN_FREE  # "FREE" | "PRO" - el admin elige al aprobar (default FREE)
 
 
 @app.post("/admin/access-requests/{request_id}/approve", dependencies=[Depends(require_superadmin)])
@@ -3901,6 +4274,7 @@ def approve_access_request(request_id: str, body: ApproveRequestBody):
     username = body.username.strip()
     if not username or not body.password:
         raise HTTPException(status_code=400, detail="Usuario y contraseña son obligatorios.")
+    plan = body.plan if body.plan in (PLAN_FREE, PLAN_PRO) else PLAN_FREE
     users = _load_users()
     if username in users:
         raise HTTPException(status_code=400, detail="Ese nombre de usuario ya existe.")
@@ -3909,6 +4283,9 @@ def approve_access_request(request_id: str, body: ApproveRequestBody):
         "password_hash": pw_hash,
         "salt": salt,
         "role": "USER",
+        "plan": plan,
+        "daily_usage_seconds": 0,
+        "daily_usage_date": _today_str(),
         "active": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -3932,10 +4309,53 @@ def reject_access_request(request_id: str):
 @app.get("/admin/users", dependencies=[Depends(require_superadmin)])
 def list_users():
     users = _load_users()
-    return {"users": [
-        {"username": uname, "role": u.get("role"), "active": u.get("active", True), "created_at": u.get("created_at")}
-        for uname, u in users.items()
-    ]}
+    changed = False
+    rows = []
+    for uname, u in users.items():
+        before = dict(u)
+        _ensure_plan_defaults(u)
+        if u != before:
+            changed = True
+        today = _today_str()
+        used = u.get("daily_usage_seconds", 0) if u.get("daily_usage_date") == today else 0
+        rows.append({
+            "username": uname,
+            "role": u.get("role"),
+            "plan": u.get("plan", PLAN_FREE),
+            "active": u.get("active", True),
+            "created_at": u.get("created_at"),
+            "daily_usage_seconds": used,
+        })
+    if changed:
+        _save_users(users)
+    return {"users": rows}
+
+
+class SetPlanBody(BaseModel):
+    plan: str  # "FREE" | "PRO"
+
+
+@app.post("/admin/users/{username}/set-plan", dependencies=[Depends(require_superadmin)])
+def set_user_plan(username: str, body: SetPlanBody):
+    if body.plan not in (PLAN_FREE, PLAN_PRO):
+        raise HTTPException(status_code=400, detail="Plan inválido (usá FREE o PRO).")
+    users = _load_users()
+    if username not in users:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    _ensure_plan_defaults(users[username])
+    users[username]["plan"] = body.plan
+    _save_users(users)
+    return {"ok": True, "username": username, "plan": body.plan}
+
+
+@app.post("/admin/users/{username}/activate", dependencies=[Depends(require_superadmin)])
+def activate_user(username: str):
+    users = _load_users()
+    if username not in users:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    users[username]["active"] = True
+    _save_users(users)
+    return {"ok": True}
 
 
 def _revoke_sessions_for(username: str):

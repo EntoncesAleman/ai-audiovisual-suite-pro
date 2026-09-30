@@ -6,6 +6,7 @@ import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { seekAndPlay } from './player.js';
 import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
+import { checkBatchAllowed } from './auth.js';
 
 function isVideoEnfoque(key) {
     if (!state.PROMPTS_LIBRARY) return false;
@@ -172,7 +173,11 @@ export function cycleReelClipColor(i) {
     renderReelClipsList();
 }
 export function playReelClip(i) { seekAndPlay(state.reelClipsList[i].start); }
-export async function exportAllReelClips() { selectAllReelClips(true); await startReelExport(); }
+export async function exportAllReelClips() {
+    if (!checkBatchAllowed(state.reelClipsList.length)) return;
+    selectAllReelClips(true);
+    await startReelExport();
+}
 
 export function toggleAiImport() {
     const body = document.getElementById("aiImportBody");

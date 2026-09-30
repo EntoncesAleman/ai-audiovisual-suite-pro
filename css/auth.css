@@ -79,6 +79,12 @@
     font-size: 10.5px; font-weight: 800; letter-spacing: .6px;
     padding: 4px 9px; border-radius: 999px;
 }
+.plan-badge {
+    font-size: 10.5px; font-weight: 800; letter-spacing: .4px;
+    padding: 4px 9px; border-radius: 999px; white-space: nowrap;
+}
+.plan-badge-pro { background: var(--accent-gold); color: #14100a; }
+.plan-badge-free { background: var(--bg-card-inner); color: var(--text-sub); border: 1px solid var(--border-subtle, rgba(255,255,255,.12)); }
 .btn-admin-panel {
     display: flex; align-items: center; gap: 8px;
     background: var(--bg-card-inner); border: 1px solid var(--accent-gold); color: var(--accent-gold);

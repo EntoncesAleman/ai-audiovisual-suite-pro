@@ -8,6 +8,13 @@ import { renderInteractiveTranscript } from './transcriptPanel.js';
 import { setTelemetryMetrics, resetExportPreview } from '../utils/dom.js';
 import { estimateDurationSeconds, secondsToTs, collapseRepeatedRuns } from '../utils/helpers.js';
 import { clearAssistantChat } from './assistantChat.js';
+import { isPro } from './auth.js';
+
+// Historial "limitado" para FREE (ver AUDIT_FREE_PRO.md): vive en
+// localStorage del navegador, no en el servidor, así que esto es un tope
+// de UX/orden, no un control de seguridad real - lo único enforce-able de
+// verdad del lado del servidor son los exports (ver /exports, con dueño).
+const FREE_HISTORY_LIMIT = 15;
 
 // El listado/administración del historial (borrar, exportar JSON, importar,
 // borrar caché del servidor) vive en historial.html/historial.js, una
@@ -25,6 +32,9 @@ export function saveSession(data) {
     let sessions = getSessions();
     const newSession = { id: Date.now(), timestamp: new Date().toLocaleDateString(), data: data };
     sessions.unshift(newSession);
+    if (!isPro() && sessions.length > FREE_HISTORY_LIMIT) {
+        sessions = sessions.slice(0, FREE_HISTORY_LIMIT);
+    }
     try {
         setSessions(sessions);
     } catch (e) {
