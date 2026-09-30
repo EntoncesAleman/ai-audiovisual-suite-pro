@@ -2,9 +2,8 @@ import { state } from '../state.js';
 import { BACKEND_URL, PLATFORM_DATA, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip, getClipDialogueText } from '../utils/helpers.js';
-import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
+import { resolveExportSource, fetchClipThumbnails, playFromSource } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
-import { seekAndPlay } from './player.js';
 import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
 import { checkBatchAllowed } from './auth.js';
 
@@ -172,7 +171,7 @@ export function cycleReelClipColor(i) {
     state.reelClipsList[i].color = idx === -1 ? REEL_CLIP_COLOR_PALETTE[0] : (REEL_CLIP_COLOR_PALETTE[idx + 1] || null);
     renderReelClipsList();
 }
-export function playReelClip(i) { seekAndPlay(state.reelClipsList[i].start); }
+export function playReelClip(i) { playFromSource(state.reelClipsList[i].start); }
 export async function exportAllReelClips() {
     if (!checkBatchAllowed(state.reelClipsList.length)) return;
     selectAllReelClips(true);
@@ -391,7 +390,7 @@ export async function generateReelCaptions() {
         const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt })
+            body: JSON.stringify({ prompt, engine_preference: 'groq' })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);

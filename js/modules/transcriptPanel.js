@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { escapeHtml } from '../utils/dom.js';
 import { parseTimelineToSegments, tsToSeconds, estimateDurationSeconds } from '../utils/helpers.js';
-import { seekAndPlay } from './player.js';
+import { playFromSource } from '../api/api.js';
 import { generateIAPrompt } from './prompts.js';
 import { getSessions, setSessions } from '../utils/storage.js';
 
@@ -130,7 +130,7 @@ function transcriptLine(s) {
 }
 
 export function seekTranscriptTo(timestamp) {
-    seekAndPlay(timestamp);
+    playFromSource(timestamp);
 }
 
 /**

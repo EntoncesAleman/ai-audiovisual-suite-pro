@@ -2,7 +2,7 @@ import { BACKEND_URL } from '../config.js';
 import { state } from '../state.js';
 import { authHeaders } from '../utils/storage.js';
 import { telemetryLog } from '../utils/dom.js';
-import { hasPreviewSource, loadRemoteSourcePreview } from '../modules/player.js';
+import { hasPreviewSource, loadRemoteSourcePreview, seekAndPlay } from '../modules/player.js';
 
 /**
  * Resuelve de dónde sale el video fuente para exportar. Orden de prioridad:
@@ -132,4 +132,28 @@ async function loadPreviewFromSourceIfNeeded(cacheKey, url) {
     } catch (e) {
         return cacheKey;
     }
+}
+
+/**
+ * Como seekAndPlay (player.js), pero si el mini-player todavía no tiene
+ * fuente y el análisis vino de una URL (YouTube/Drive, no archivo local),
+ * primero intenta cachear/traer el video real antes de saltar - a
+ * diferencia de un archivo local (que se carga solo con seleccionarlo, ver
+ * loadLocalSourcePreview en app.js), un video por link recién se cacheaba
+ * como side-effect de pedir miniaturas de clips - si todavía no había
+ * clips generados, el mini-player quedaba sin fuente y clickear "play" en
+ * la transcripción solo mostraba "subí un archivo local", aunque el video
+ * SÍ viniera de una URL válida. A propósito sigue siendo perezoso (no
+ * fuerza la descarga en cuanto termina el análisis) para no bajar el video
+ * completo si la persona nunca llega a usar el mini-player.
+ */
+export async function playFromSource(startTs) {
+    if (!hasPreviewSource()) {
+        const cacheKey = state.currentData?.cache_key || "";
+        const url = state.currentData?.source_url || "";
+        if (cacheKey || url) {
+            await loadPreviewFromSourceIfNeeded(cacheKey, url);
+        }
+    }
+    seekAndPlay(startTs);
 }

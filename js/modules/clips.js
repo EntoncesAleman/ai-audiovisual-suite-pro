@@ -2,9 +2,8 @@ import { state } from '../state.js';
 import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip, getClipDialogueText } from '../utils/helpers.js';
-import { resolveExportSource, fetchClipThumbnails } from '../api/api.js';
+import { resolveExportSource, fetchClipThumbnails, playFromSource } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
-import { seekAndPlay } from './player.js';
 import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
 import { checkBatchAllowed } from './auth.js';
 
@@ -123,7 +122,7 @@ export function cycleClipColor(i) {
 }
 
 export function playClip(i) {
-    seekAndPlay(state.clipsList[i].start);
+    playFromSource(state.clipsList[i].start);
 }
 
 export function toggleClipSelection(i, checked) {
@@ -333,7 +332,7 @@ export async function generateClipCaptions() {
         const res = await fetch(`${BACKEND_URL}/generate-clip-suggestions`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt })
+            body: JSON.stringify({ prompt, engine_preference: 'groq' })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
