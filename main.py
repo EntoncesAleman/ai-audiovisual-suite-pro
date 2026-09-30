@@ -897,6 +897,63 @@ def _format_yt_progress(d: dict) -> str | None:
     return None
 
 
+# ------------------------------------------------------------------
+# Errores de YouTube que NINGUNA estrategia/reintento va a arreglar (el
+# contenido en sí está bloqueado/no existe) - para estos cortamos rápido
+# en vez de probar las 4 estrategias en vano. Cualquier otro error (incluido
+# "Failed to extract any player response", que es justamente el síntoma de
+# que el player_client forzado quedó afectado por el rollout SABR-only de
+# YouTube - ver https://github.com/yt-dlp/yt-dlp/issues/12482) SÍ vale la
+# pena reintentar con la siguiente estrategia, porque ya se confirmó
+# reproduciendo el error que "sin forzar player_client" lo resuelve en la
+# mayoría de los casos.
+_YOUTUBE_UNFIXABLE_PATTERNS = (
+    "video unavailable", "video is unavailable", "private video", "this video is private",
+    "video is no longer available", "video has been removed",
+    "account associated with this video has been terminated",
+    "sign in to confirm your age", "age-restricted", "not available in your country",
+    "copyright", "this video is not available", "video does not exist",
+)
+
+
+def _friendly_youtube_error(err_str: str) -> str:
+    """
+    Traduce el error crudo de yt-dlp (que suele incluir texto en inglés
+    pensado para devs, plantillas de GitHub issue, sugerencias de `-U`, etc.
+    - ver el mensaje real que veía el usuario antes de este fix) a un
+    mensaje corto y accionable. Si no reconoce el patrón, devuelve un
+    mensaje genérico igual de limpio (nunca el traceback crudo). Esta misma
+    función de descarga (_download_youtube, a pesar del nombre) también
+    maneja links de Google Drive - de ahí el caso de permisos/cookies abajo.
+    """
+    low = err_str.lower()
+    if "403" in err_str or "401" in err_str or "forbidden" in low or "cookie" in low:
+        return (
+            "No se pudo acceder al archivo (permiso denegado). Si es de Google Drive, "
+            "verificá que tenga permiso 'Cualquier persona con el enlace'. Si es de YouTube, "
+            "puede ser un bloqueo temporal - reintentá en unos minutos, o subí el archivo como 'Subir Local'."
+        )
+    if any(p in low for p in ("private video", "this video is private")):
+        return "Ese video es privado. Pedile al dueño que lo haga público o 'No listado', o subilo como archivo local."
+    if any(p in low for p in ("video unavailable", "video is unavailable", "video is no longer available", "video has been removed", "video does not exist", "this video is not available")):
+        return "Ese video ya no está disponible en YouTube (lo borraron o el link está mal)."
+    if "terminated" in low:
+        return "La cuenta de YouTube dueña de ese video fue dada de baja - el video ya no existe."
+    if "age-restricted" in low or "sign in to confirm your age" in low:
+        return "Ese video tiene restricción de edad y requiere inicio de sesión en YouTube - no se puede descargar de forma anónima."
+    if "not available in your country" in low or "geo" in low:
+        return "Ese video no está disponible en la región del servidor (restricción geográfica de YouTube)."
+    if "copyright" in low:
+        return "Ese video fue bloqueado por un reclamo de copyright y ya no está disponible."
+    if "sign in to confirm you" in low or "not a bot" in low:
+        return "YouTube le pidió al servidor confirmar que no es un bot. Reintentá en unos minutos, o subí el video como archivo local mientras tanto."
+    if "player response" in low or "sabr" in low:
+        return "YouTube cambió cómo entrega este video y no se pudo extraer con ningún método. Reintentá en unos minutos (suele ser temporal) o subí el video como archivo local."
+    if "live event has ended" in low or "no video formats found" in low:
+        return "Ese video fue una transmisión en vivo que recién terminó y YouTube todavía no lo terminó de procesar. Reintentá en unos minutos."
+    return "No se pudo descargar ese video de YouTube. Puede ser un bloqueo temporal de YouTube - reintentá en unos minutos, o subilo como archivo local mientras tanto."
+
+
 def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", progress_callback=None) -> str:
     extractor_args = {}
     if POT_PROVIDER_BASE_URL:
@@ -942,35 +999,23 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", 
         except Exception as e:
             err_str = str(e)
             last_error = e
-            is_auth_issue = (
-                "403" in err_str or "401" in err_str or "Forbidden" in err_str or "cookie" in err_str.lower()
-            )
-            # "This live event has ended" / "No video formats found" en un
-            # stream que acaba de terminar son específicos de qué
-            # player_client se usó (ver estrategia "player_client por
-            # defecto" arriba) - vale la pena seguir probando en vez de
-            # cortar en el primer intento.
-            is_live_ended = (
-                "live event has ended" in err_str.lower() or "no video formats found" in err_str.lower()
-            )
-            if is_auth_issue or is_live_ended:
-                reason = "permisos" if is_auth_issue else "stream recién terminado"
-                print(f"   ⚠ Falló ({reason}): {err_str[:120]}")
-                continue
-            print(f"   ✗ Error no relacionado con autenticación: {err_str[:200]}")
-            raise HTTPException(status_code=400, detail=f"Error al descargar: {err_str}")
+            low = err_str.lower()
+            if any(p in low for p in _YOUTUBE_UNFIXABLE_PATTERNS):
+                # El video en sí está bloqueado/no existe - ninguna otra
+                # estrategia (otro player_client, cookies, etc.) lo arregla.
+                print(f"   ✗ Error no recuperable: {err_str[:200]}")
+                raise HTTPException(status_code=400, detail=_friendly_youtube_error(err_str))
+            # Cualquier otro error (incluido "Failed to extract any player
+            # response" - síntoma del rollout SABR-only de YouTube que
+            # degrada los player_client forzados, ver comentario arriba de
+            # _YOUTUBE_UNFIXABLE_PATTERNS) vale la pena reintentar con la
+            # siguiente estrategia antes de darnos por vencidos.
+            print(f"   ⚠ Falló, reintentando con la siguiente estrategia: {err_str[:150]}")
+            continue
 
-    # Si llegamos acá, todos los métodos fallaron
-    raise HTTPException(
-        status_code=403,
-        detail=(
-            f"No se pudo descargar con ningún método de autenticación. "
-            f"Último error: {str(last_error)[:200]}. "
-            f"Soluciones: (1) Verificá que el archivo de Drive tenga permiso 'Cualquier persona con el enlace'. "
-            f"(2) Exportá cookies.txt desde Chrome y guardalo en la carpeta del proyecto. "
-            f"(3) Bajá el archivo manualmente y subilo con 'Subir Local'."
-        )
-    )
+    # Si llegamos acá, todas las estrategias fallaron.
+    print(f"   ✗ Las {len(strategies)} estrategias de descarga fallaron. Último error: {last_error}")
+    raise HTTPException(status_code=502, detail=_friendly_youtube_error(str(last_error)))
 
 
 def download_youtube_video(url: str, progress_callback=None) -> str:
