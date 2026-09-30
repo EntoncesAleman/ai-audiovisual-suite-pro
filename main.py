@@ -636,6 +636,13 @@ def _cookies_file_diagnostics() -> dict:
                 entry["owner_gid"] = st.st_gid
                 entry["mode_octal"] = oct(st.st_mode & 0o777)
                 entry["readable_by_this_process"] = os.access(candidate, os.R_OK)
+                # Edad del archivo (NO del contenido/expiración real de cada
+                # cookie, que no se lee) - señal indirecta útil: las cookies
+                # de sesión de YouTube suelen vencer en semanas: un archivo
+                # de varios meses es la sospecha #1 si YouTube empieza a
+                # rechazar todo con "Sign in to confirm you're not a bot"
+                # incluso con cookies.txt presente y legible.
+                entry["age_days"] = round((datetime.now(timezone.utc).timestamp() - st.st_mtime) / 86400, 1)
             except OSError as e:
                 entry["stat_error"] = str(e)
         result["candidates"].append(entry)
