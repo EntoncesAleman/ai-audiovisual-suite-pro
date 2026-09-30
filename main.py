@@ -91,55 +91,107 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 API_ACCESS_KEY = os.getenv("API_ACCESS_KEY")
 
 # ------------------------------------------------------------------
-# Usuarios reales (username + password) con roles, en reemplazo del
-# secreto único de arriba. Guardado en JSON planos junto al proyecto
-# (mismo patrón simple que el resto de la app - nada de base de datos).
-# Las contraseñas NUNCA se guardan en texto plano: se hashean con
-# PBKDF2-HMAC-SHA256 + salt aleatoria por usuario.
+# Usuarios reales (username + password) con roles. Las contraseñas NUNCA
+# se guardan en texto plano: se hashean con PBKDF2-HMAC-SHA256 + salt
+# aleatoria por usuario.
+#
+# PERSISTENCIA: usuarios, access requests y ownership de exports viven en
+# Supabase (Postgres), no en JSON local - un redeploy de Render reconstruye
+# el filesystem desde la imagen, así que cualquier JSON en disco se perdía
+# en cada redeploy (no solo un restart). Se accede vía la REST API de
+# PostgREST (Data API) con el service_role key, siempre server-side - el
+# frontend nunca habla con Supabase directo. Todo vive en un schema propio
+# (SUPABASE_SCHEMA, ver migración) separado de "public", para no mezclarse
+# con otras apps que puedan compartir el mismo proyecto Supabase.
 # ------------------------------------------------------------------
-# DATA_DIR: por default, junto al código (Path(__file__).parent, comportamiento
-# de siempre). En Render, un redeploy reconstruye el filesystem desde la imagen
-# - así que si se monta un Persistent Disk, hay que apuntar DATA_DIR ahí para
-# que usuarios/planes/consumo/índice de exports sobrevivan un redeploy (no solo
-# un restart). Sin esa env var, sigue comportándose exactamente igual que antes.
-DATA_DIR = Path(os.getenv("DATA_DIR", str(Path(__file__).parent)))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-USERS_DB_FILE = DATA_DIR / "users_db.json"
-ACCESS_REQUESTS_FILE = DATA_DIR / "access_requests.json"
+SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").rstrip("/")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+SUPABASE_SCHEMA = os.getenv("SUPABASE_SCHEMA", "avsuite")
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+    raise RuntimeError(
+        "Faltan SUPABASE_URL / SUPABASE_SERVICE_KEY. Son obligatorias: usuarios, planes, consumo, "
+        "access requests y ownership de exports viven en Supabase (no en JSON local), así que sin "
+        "esto el server no tiene dónde persistir nada.\n"
+        "Ejemplo: export SUPABASE_URL='https://xxxx.supabase.co'\n"
+        "         export SUPABASE_SERVICE_KEY='eyJ...' (service_role, NUNCA el anon/publishable key)"
+    )
+
+
+def _supabase_request(method: str, table: str, params: dict | None = None, json_body=None, prefer: str | None = None):
+    """
+    Llamada cruda a la Data API (PostgREST) de Supabase. Siempre con el
+    service_role key (bypassa RLS) - nunca se expone al frontend. `table`
+    puede ser "users", "access_requests", "exports_index" o "rpc/<func>".
+    """
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    headers = {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+        "Accept-Profile": SUPABASE_SCHEMA,
+        "Content-Profile": SUPABASE_SCHEMA,
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    resp = requests.request(method, url, headers=headers, params=params, json=json_body, timeout=15)
+    if not resp.ok:
+        raise RuntimeError(f"Supabase {method} {table} falló ({resp.status_code}): {resp.text[:300]}")
+    return resp
+
+
+def _supabase_select(table: str, params: dict | None = None) -> list:
+    return _supabase_request("GET", table, params={"select": "*", **(params or {})}).json()
+
+
+def _supabase_upsert(table: str, rows, on_conflict: str):
+    """Upsert (insert o update por PK) de una o más filas. No borra filas ausentes del batch."""
+    if isinstance(rows, dict):
+        rows = [rows]
+    if not rows:
+        return
+    _supabase_request(
+        "POST", table, params={"on_conflict": on_conflict}, json_body=rows,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+
 
 # Tokens de sesión emitidos por /auth/login: viven en memoria (se pierden
 # si el servidor reinicia - igual que cualquier "mantener sesión iniciada"
 # en un free tier que duerme, el navegador simplemente vuelve a pedir login).
+# A propósito NO se migran a Supabase: son de corta vida y volver a loguearse
+# después de un restart/redeploy es un costo aceptable (a diferencia de
+# perder usuarios/planes/consumo, que sí importa).
 _sessions: dict[str, dict] = {}
 
 
-def _load_json(path: Path, default):
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return default
-    return default
-
-
-def _save_json(path: Path, data):
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
 def _load_users() -> dict:
-    return _load_json(USERS_DB_FILE, {})
+    rows = _supabase_select("users")
+    return {r["username"]: {k: v for k, v in r.items() if k != "username"} for r in rows}
 
 
 def _save_users(users: dict):
-    _save_json(USERS_DB_FILE, users)
+    """Upsert de TODO el dict recibido (siempre se llama después de _load_users(),
+    así que ya trae todas las filas relevantes - no hace falta un diff)."""
+    rows = [{"username": uname, **fields} for uname, fields in users.items()]
+    _supabase_upsert("users", rows, on_conflict="username")
+
+
+def _get_user_row(username: str) -> dict | None:
+    """Fetch de UNA sola fila (evita traer toda la tabla) - usado en los paths
+    calientes de auth/metering que corren en cada request."""
+    rows = _supabase_select("users", params={"username": f"eq.{username}", "limit": "1"})
+    if not rows:
+        return None
+    r = rows[0]
+    return {k: v for k, v in r.items() if k != "username"}
 
 
 def _load_requests() -> list:
-    return _load_json(ACCESS_REQUESTS_FILE, [])
+    return _supabase_select("access_requests", params={"order": "created_at.desc"})
 
 
 def _save_requests(reqs: list):
-    _save_json(ACCESS_REQUESTS_FILE, reqs)
+    _supabase_upsert("access_requests", reqs, on_conflict="id")
 
 
 def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
@@ -255,8 +307,7 @@ def get_current_user(x_api_key: str | None = Header(default=None)) -> dict:
         # API_ACCESS_KEY estática (compatibilidad, sin cuenta real detrás):
         # no tiene sentido meterle límites de plan a un secreto compartido.
         return {"username": "legacy", "role": role, "plan": PLAN_PRO, "unrestricted": True}
-    users = _load_users()
-    user = users.get(username)
+    user = _get_user_row(username)
     if not user:
         raise HTTPException(status_code=401, detail="Sesión inválida o expirada. Iniciá sesión de nuevo.")
     _ensure_plan_defaults(user)
@@ -294,17 +345,12 @@ def _check_free_quota(user: dict, duration_seconds: float | None):
     username = user.get("username")
     if not username:
         return
-    users = _load_users()
-    record = users.get(username)
+    record = _get_user_row(username)
     if not record:
         return
     _ensure_plan_defaults(record)
     today = _today_str()
-    if record.get("daily_usage_date") != today:
-        record["daily_usage_seconds"] = 0
-        record["daily_usage_date"] = today
-        _save_users(users)
-    used = record.get("daily_usage_seconds", 0)
+    used = record.get("daily_usage_seconds", 0) if record.get("daily_usage_date") == today else 0
     if used + (duration_seconds or 0) > FREE_DAILY_LIMIT_SECONDS:
         remaining_min = max(0, (FREE_DAILY_LIMIT_SECONDS - used) // 60)
         raise HTTPException(
@@ -314,22 +360,21 @@ def _check_free_quota(user: dict, duration_seconds: float | None):
 
 
 def _record_usage(username: str | None, duration_seconds: float | None):
-    """Suma `duration_seconds` al contador diario del usuario (con reset por fecha).
-    Se llama SIEMPRE que un análisis termina con éxito, sin importar el plan,
-    para que el admin pueda ver consumo real de cualquier cuenta."""
+    """
+    Suma `duration_seconds` al contador diario del usuario (con reset por
+    fecha). Se llama SIEMPRE que un análisis termina con éxito, sin importar
+    el plan, para que el admin pueda ver consumo real de cualquier cuenta.
+    Usa el RPC atómico avsuite.increment_usage (UPDATE del lado de Postgres)
+    en vez de leer-modificar-escribir desde acá, para no perder incrementos
+    si dos requests del mismo usuario terminan casi al mismo tiempo (plan PRO
+    permite hasta 3 jobs simultáneos - ver PRO_MAX_CONCURRENT_JOBS).
+    """
     if not username or username == "legacy" or not duration_seconds:
         return
-    users = _load_users()
-    record = users.get(username)
-    if not record:
-        return
-    _ensure_plan_defaults(record)
-    today = _today_str()
-    if record.get("daily_usage_date") != today:
-        record["daily_usage_seconds"] = 0
-        record["daily_usage_date"] = today
-    record["daily_usage_seconds"] = record.get("daily_usage_seconds", 0) + duration_seconds
-    _save_users(users)
+    _supabase_request(
+        "POST", "rpc/increment_usage",
+        json_body={"p_username": username, "p_seconds": int(round(duration_seconds)), "p_today": _today_str()},
+    )
 
 
 def _check_batch_allowed(user: dict, clip_count: int):
@@ -407,24 +452,34 @@ def _client_ip(request) -> str:
 # ------------------------------------------------------------------
 # OWNERSHIP de exports: antes cualquiera con la URL podía listar/descargar
 # el export de cualquier otro usuario (GET /exports, GET /exports/{filename}
-# sin auth ni dueño). Este índice (filename -> username) es lo que permite
-# gatear ambos endpoints por dueño real.
+# sin auth ni dueño). Esta tabla (filename -> username, en Supabase) es lo
+# que permite gatear ambos endpoints por dueño real - los archivos en sí
+# siguen en el filesystem efímero de Render (EXPORT_DIR), solo el ÍNDICE de
+# quién es el dueño de cada uno vive en la base.
 # ------------------------------------------------------------------
-EXPORTS_INDEX_FILE = DATA_DIR / "exports_index.json"
-
 
 def _load_exports_index() -> dict:
-    return _load_json(EXPORTS_INDEX_FILE, {})
+    rows = _supabase_select("exports_index")
+    return {r["filename"]: {"username": r["username"], "created_at": r["created_at"]} for r in rows}
 
 
 def _save_exports_index(idx: dict):
-    _save_json(EXPORTS_INDEX_FILE, idx)
+    rows = [{"filename": fn, **fields} for fn, fields in idx.items()]
+    _supabase_upsert("exports_index", rows, on_conflict="filename")
 
 
 def _register_export(filename: str, username: str | None):
-    idx = _load_exports_index()
-    idx[filename] = {"username": username, "created_at": datetime.now(timezone.utc).isoformat()}
-    _save_exports_index(idx)
+    _supabase_upsert(
+        "exports_index",
+        {"filename": filename, "username": username, "created_at": datetime.now(timezone.utc).isoformat()},
+        on_conflict="filename",
+    )
+
+
+def _get_export_owner(filename: str) -> str | None:
+    """Fetch de UNA sola fila (evita traer todo el índice) - usado en la descarga."""
+    rows = _supabase_select("exports_index", params={"filename": f"eq.{filename}", "select": "username", "limit": "1"})
+    return rows[0]["username"] if rows else None
 
 
 # Groq (opcional): último recurso cuando TODOS los modelos Gemini agotaron su cuota diaria.
@@ -3329,7 +3384,7 @@ async def download_export(filename: str, user: dict = Depends(get_current_user))
     filepath = EXPORT_DIR / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado o expirado.")
-    owner = _load_exports_index().get(filename, {}).get("username")
+    owner = _get_export_owner(filename)
     is_owner = owner is not None and owner == user.get("username")
     if not is_owner and user["role"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="No tenés permiso para descargar este archivo.")
