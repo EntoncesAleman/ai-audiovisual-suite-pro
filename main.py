@@ -562,28 +562,92 @@ print(f"✓ Backend activo. Cacheo en: {CACHE_DIR}")
 
 _WRITABLE_COOKIES_FILE = Path(tempfile.gettempdir()) / "cookies_writable.txt"
 
+# Ruta configurable por env var (antes hardcodeada a /etc/secrets/cookies.txt,
+# que es donde Render monta los "Secret Files" por default - pero ese mount
+# point puede variar según cómo esté configurado el servicio, así que ahora
+# es override-able sin tocar código). Si no se setea, se prueban los mismos
+# dos defaults de siempre.
+YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE")
+
+
+def _cookies_file_candidates() -> list:
+    candidates = []
+    if YTDLP_COOKIES_FILE:
+        candidates.append(Path(YTDLP_COOKIES_FILE))
+    candidates.append(Path("/etc/secrets/cookies.txt"))  # default de Render para Secret Files
+    candidates.append(Path(__file__).parent / "cookies.txt")  # uso local, o Secret Files montados en la raíz de la app
+    return candidates
+
 
 def _find_cookies_file():
     """
-    Busca cookies.txt en las ubicaciones posibles según dónde se esté corriendo:
-    - /etc/secrets/cookies.txt: ruta garantizada por Render para Secret Files (solo lectura).
-    - junto a main.py: uso local o Secret Files montados en la raíz de la app.
-    yt-dlp reescribe el cookiejar después de cada uso, así que si el original es de
-    solo lectura (caso Render) lo copiamos a un archivo escribible en /tmp y devolvemos ese.
-    Devuelve el Path a usar, o None si no hay cookies en ningún lado.
+    Busca cookies.txt en las ubicaciones posibles según dónde se esté corriendo
+    (ver _cookies_file_candidates). yt-dlp reescribe el cookiejar después de
+    cada uso, así que si el original es de solo lectura (caso Render) lo
+    copiamos a un archivo escribible en /tmp y devolvemos ese.
+    Devuelve el Path a usar, o None si no hay cookies en ningún lado o si el
+    archivo existe pero no se puede LEER (permiso denegado a nivel filesystem
+    - se loguea claro y se sigue sin cookies, en vez de que un error acá
+    tire abajo toda la descarga con un traceback no relacionado).
     """
     if _WRITABLE_COOKIES_FILE.exists():
         return _WRITABLE_COOKIES_FILE
 
-    candidates = [
-        Path("/etc/secrets/cookies.txt"),
-        Path(__file__).parent / "cookies.txt",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
+    for candidate in _cookies_file_candidates():
+        if not candidate.exists():
+            continue
+        if not os.access(candidate, os.R_OK):
+            print(f"⚠ cookies.txt encontrado en {candidate} pero el proceso no tiene permiso de lectura (uid actual: {os.getuid()}). Se sigue sin cookies.")
+            continue
+        try:
             shutil.copy(candidate, _WRITABLE_COOKIES_FILE)
             return _WRITABLE_COOKIES_FILE
+        except OSError as e:
+            # No debería pasar si el os.access() de arriba dio OK, pero por
+            # las dudas no dejamos que un error acá tire abajo la descarga
+            # entera con un traceback sin relación con YouTube/Drive.
+            print(f"⚠ cookies.txt encontrado en {candidate} pero falló al copiarlo a {_WRITABLE_COOKIES_FILE}: {e}. Se sigue sin cookies.")
+            continue
     return None
+
+
+def _cookies_file_diagnostics() -> dict:
+    """
+    Diagnóstico de cookies.txt SIN tocar su contenido (nunca se lee ni se
+    devuelve una sola línea del archivo) - solo existencia/tamaño/dueño/
+    permisos/legibilidad, para poder auditar por qué yt-dlp no las está
+    usando sin necesidad de acceso directo al filesystem de Render. Ver
+    /debug/ytdlp-info.
+    """
+    result = {
+        "configured_path_env": YTDLP_COOKIES_FILE,
+        "running_as_uid": os.getuid(),
+        "running_as_gid": os.getgid(),
+        "candidates": [],
+        "resolved": None,
+    }
+    for candidate in _cookies_file_candidates():
+        entry = {"path": str(candidate), "exists": candidate.exists()}
+        if entry["exists"]:
+            try:
+                st = candidate.stat()
+                entry["size_bytes"] = st.st_size
+                entry["owner_uid"] = st.st_uid
+                entry["owner_gid"] = st.st_gid
+                entry["mode_octal"] = oct(st.st_mode & 0o777)
+                entry["readable_by_this_process"] = os.access(candidate, os.R_OK)
+            except OSError as e:
+                entry["stat_error"] = str(e)
+        result["candidates"].append(entry)
+    resolved = _find_cookies_file()
+    if resolved:
+        result["resolved"] = str(resolved)
+        try:
+            st = resolved.stat()
+            result["resolved_size_bytes"] = st.st_size
+        except OSError:
+            pass
+    return result
 
 
 # Aviso sobre métodos de autenticación para Drive/YouTube
@@ -591,8 +655,8 @@ _cookies_file_check = _find_cookies_file()
 if _cookies_file_check:
     print(f"✓ Cookies encontradas en: {_cookies_file_check} (se usarán para archivos privados)")
 else:
-    print("ℹ Sin cookies.txt en la carpeta. Para archivos privados de Drive se intentará leer cookies de Chrome.")
-    print("  Si Drive te da 403, exportá cookies.txt con la extensión 'Get cookies.txt LOCALLY' y guardalo acá.")
+    print("ℹ Sin cookies.txt accesible. Para archivos privados de Drive se intentará leer cookies de Chrome.")
+    print("  Si Drive/YouTube te da 403, revisá /debug/ytdlp-info para ver qué rutas se probaron y por qué.")
 
 
 class UrlInput(BaseModel):
@@ -924,15 +988,19 @@ def _friendly_youtube_error(err_str: str) -> str:
     mensaje corto y accionable. Si no reconoce el patrón, devuelve un
     mensaje genérico igual de limpio (nunca el traceback crudo). Esta misma
     función de descarga (_download_youtube, a pesar del nombre) también
-    maneja links de Google Drive - de ahí el caso de permisos/cookies abajo.
+    maneja links de Google Drive.
+
+    IMPORTANTE: el orden de los checks importa. "Sign in to confirm you're
+    not a bot" y errores de cookies vencidas casi siempre vienen acompañados
+    de "HTTP Error 403: Forbidden" en el mismo mensaje - si el check genérico
+    de 403/permisos fuera el primero, se comería esos casos y el usuario
+    vería "permiso denegado" para un bloqueo anti-bot de YouTube que no tiene
+    nada que ver con permisos de archivo (bug real que tuvo este mensaje
+    antes de reordenar). Por eso los patrones más específicos de YouTube van
+    primero, y el catch-all de permisos/cookies genérico (pensado para Drive)
+    queda último, antes del fallback genérico.
     """
     low = err_str.lower()
-    if "403" in err_str or "401" in err_str or "forbidden" in low or "cookie" in low:
-        return (
-            "No se pudo acceder al archivo (permiso denegado). Si es de Google Drive, "
-            "verificá que tenga permiso 'Cualquier persona con el enlace'. Si es de YouTube, "
-            "puede ser un bloqueo temporal - reintentá en unos minutos, o subí el archivo como 'Subir Local'."
-        )
     if any(p in low for p in ("private video", "this video is private")):
         return "Ese video es privado. Pedile al dueño que lo haga público o 'No listado', o subilo como archivo local."
     if any(p in low for p in ("video unavailable", "video is unavailable", "video is no longer available", "video has been removed", "video does not exist", "this video is not available")):
@@ -945,12 +1013,26 @@ def _friendly_youtube_error(err_str: str) -> str:
         return "Ese video no está disponible en la región del servidor (restricción geográfica de YouTube)."
     if "copyright" in low:
         return "Ese video fue bloqueado por un reclamo de copyright y ya no está disponible."
-    if "sign in to confirm you" in low or "not a bot" in low:
-        return "YouTube le pidió al servidor confirmar que no es un bot. Reintentá en unos minutos, o subí el video como archivo local mientras tanto."
+    # Cookies vencidas/rechazadas por YouTube: yt-dlp lo reporta con frases
+    # como "cookies are no longer valid" o "cookies have expired" - DISTINTO
+    # de un error de filesystem (no poder leer cookies.txt, que ni siquiera
+    # llega hasta acá, ver _find_cookies_file).
+    if ("cookies" in low and ("no longer valid" in low or "expired" in low or "invalid" in low)):
+        return "Las cookies de YouTube configuradas en el servidor están vencidas o ya no son válidas. Hay que renovar cookies.txt (exportarlas de nuevo desde una sesión logueada en YouTube)."
+    if "sign in to confirm you" in low or "not a bot" in low or "login_required" in low:
+        return "YouTube le pidió al servidor confirmar que no es un bot (bloqueo anti-bot, no un problema de permisos de archivo). Reintentá en unos minutos, o subí el video como archivo local mientras tanto."
     if "player response" in low or "sabr" in low:
         return "YouTube cambió cómo entrega este video y no se pudo extraer con ningún método. Reintentá en unos minutos (suele ser temporal) o subí el video como archivo local."
     if "live event has ended" in low or "no video formats found" in low:
         return "Ese video fue una transmisión en vivo que recién terminó y YouTube todavía no lo terminó de procesar. Reintentá en unos minutos."
+    # Catch-all de permisos/cookies genérico: acá sí puede ser Google Drive
+    # (URL que esta función también maneja) con el archivo no compartido.
+    if "403" in err_str or "401" in err_str or "forbidden" in low:
+        return (
+            "No se pudo acceder al archivo (permiso denegado). Si es de Google Drive, "
+            "verificá que tenga permiso 'Cualquier persona con el enlace'. Si es de YouTube, "
+            "puede ser un bloqueo temporal - reintentá en unos minutos, o subí el archivo como 'Subir Local'."
+        )
     return "No se pudo descargar ese video de YouTube. Puede ser un bloqueo temporal de YouTube - reintentá en unos minutos, o subilo como archivo local mientras tanto."
 
 
@@ -987,6 +1069,7 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", 
 
     strategies = _build_ydl_opts_with_auth(base_opts)
     last_error = None
+    best_error = None  # último error que vino de una extracción REAL contra YouTube/Drive (no un fallo local de herramientas, ver abajo)
 
     for strategy_name, ydl_opts in strategies:
         try:
@@ -1005,6 +1088,14 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", 
                 # estrategia (otro player_client, cookies, etc.) lo arregla.
                 print(f"   ✗ Error no recuperable: {err_str[:200]}")
                 raise HTTPException(status_code=400, detail=_friendly_youtube_error(err_str))
+            # "could not find chrome cookies database": la última estrategia
+            # ("cookies de Chrome") SIEMPRE falla así en Render (no hay Chrome
+            # instalado) - es un fallo local y predecible, no un error real de
+            # YouTube/Drive. Si lo dejáramos pisar `best_error`, el mensaje
+            # final sería ese ruido en vez del motivo real del fallo previo
+            # (ej. cookies.txt vencidas, bloqueo anti-bot).
+            if "chrome cookies database" not in low:
+                best_error = e
             # Cualquier otro error (incluido "Failed to extract any player
             # response" - síntoma del rollout SABR-only de YouTube que
             # degrada los player_client forzados, ver comentario arriba de
@@ -1013,9 +1104,12 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", 
             print(f"   ⚠ Falló, reintentando con la siguiente estrategia: {err_str[:150]}")
             continue
 
-    # Si llegamos acá, todas las estrategias fallaron.
-    print(f"   ✗ Las {len(strategies)} estrategias de descarga fallaron. Último error: {last_error}")
-    raise HTTPException(status_code=502, detail=_friendly_youtube_error(str(last_error)))
+    # Si llegamos acá, todas las estrategias fallaron. Preferimos el último
+    # error que vino de una extracción real (best_error) para el mensaje
+    # final - más informativo que el ruido local de "cookies de Chrome".
+    final_error = best_error if best_error is not None else last_error
+    print(f"   ✗ Las {len(strategies)} estrategias de descarga fallaron. Último error relevante: {final_error}")
+    raise HTTPException(status_code=502, detail=_friendly_youtube_error(str(final_error)))
 
 
 def download_youtube_video(url: str, progress_callback=None) -> str:
@@ -4497,8 +4591,9 @@ def revoke_user_session(username: str):
 @app.get("/debug/ytdlp-info", dependencies=[Depends(require_api_key)])
 def debug_ytdlp_info():
     """
-    Diagnostico temporal: confirma si el plugin bgutil-ytdlp-pot-provider esta
-    instalado y si yt-dlp lo detecta como plugin cargado. No requiere Shell
+    Diagnostico de la infraestructura de descarga de YouTube/Drive: versión
+    de yt-dlp, ffmpeg, plugin bgutil-ytdlp-pot-provider, y cookies.txt
+    (existencia/tamaño/dueño/permisos - NUNCA contenido). No requiere Shell
     (que es solo para planes pagos de Render) - se consulta como cualquier URL.
     """
     import importlib.metadata
@@ -4506,6 +4601,12 @@ def debug_ytdlp_info():
     import contextlib
 
     result = {}
+
+    result["yt_dlp_version"] = yt_dlp.version.__version__
+    result["ffmpeg_path"] = shutil.which("ffmpeg")
+    result["ffprobe_path"] = shutil.which("ffprobe")
+    result["deno_path"] = shutil.which("deno")
+    result["cookies"] = _cookies_file_diagnostics()
 
     try:
         result["bgutil_pip_version"] = importlib.metadata.version("bgutil-ytdlp-pot-provider")
