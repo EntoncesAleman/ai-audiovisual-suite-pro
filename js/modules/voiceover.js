@@ -53,11 +53,18 @@ export async function generateVoiceover() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
+        // /exports/{filename} exige dueño (ver main.py) - ni un <a href> ni
+        // un <audio src> planos mandan el header de auth, así que hay que
+        // traer el archivo con fetch()+authHeaders y reusar el mismo blob
+        // para el reproductor y la descarga (evita pedirlo dos veces).
         const url = BACKEND_URL + data.download_url;
-        downloadBtn.href = url;
+        const audioRes = await fetch(url, { headers: authHeaders() });
+        if (!audioRes.ok) throw new Error(`No se pudo cargar el audio generado (HTTP ${audioRes.status})`);
+        const objectUrl = URL.createObjectURL(await audioRes.blob());
+        downloadBtn.href = objectUrl;
         downloadBtn.download = data.filename;
         downloadBtn.className = 'btn-clip-download active';
-        preview.src = url;
+        preview.src = objectUrl;
         preview.style.display = 'block';
         statusEl.textContent = `✅ Listo (voz: ${data.voice}).`;
         telemetryLog('telemetry', `✓ Voiceover generado (voz: ${data.voice}).`, 'done');

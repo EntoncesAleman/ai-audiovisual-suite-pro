@@ -2,7 +2,7 @@ import { state } from '../state.js';
 import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { setExportProgress, resetExportProgress, telemetryLog } from '../utils/dom.js';
 import { tsToSeconds, buildSubtitleCuesForClip } from '../utils/helpers.js';
-import { resolveExportSource } from '../api/api.js';
+import { resolveExportSource, wireDownloadButton } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { isPro } from './auth.js';
 
@@ -144,8 +144,7 @@ async function runPremiereExport(ctx, options) {
                     if (payload.stage === "done") {
                         setExportProgress('premiereExport', 100);
                         statusEl.textContent = "✅ " + payload.message;
-                        downloadBtn.href = BACKEND_URL + payload.download_url;
-                        downloadBtn.download = payload.filename;
+                        wireDownloadButton(downloadBtn, BACKEND_URL + payload.download_url, payload.filename);
                         downloadBtn.className = "btn-clip-download active";
                     } else {
                         statusEl.textContent = "⏳ " + payload.message;

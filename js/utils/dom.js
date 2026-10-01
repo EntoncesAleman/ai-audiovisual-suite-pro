@@ -1,3 +1,5 @@
+import { authHeaders } from './storage.js';
+
 export function escapeHtml(s) {
     return (s || "").replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -47,15 +49,27 @@ export function resetExportProgress(prefix) {
  * archivo que previsualizar y se deja el placeholder). `videoUrl` debe ser
  * la URL absoluta ya resuelta (ej: downloadBtn.href).
  */
-export function showExportPreview(videoId, payload, videoUrl) {
+/**
+ * videoUrl es una ruta protegida (/exports/{filename}, exige dueño - ver
+ * main.py); un <video src> plano no manda headers custom, así que hay que
+ * traerlo con fetch() + X-API-Key y pasarle el blob resultante, igual que
+ * loadRemoteSourcePreview en player.js (mismo motivo).
+ */
+export async function showExportPreview(videoId, payload, videoUrl) {
     const video = document.getElementById(videoId);
     const placeholder = document.getElementById(`${videoId}Placeholder`);
     if (!video) return;
     const isSingleMp4 = payload.clip_count === 1 && (payload.filename || "").endsWith(".mp4");
     if (isSingleMp4 && videoUrl) {
-        video.src = videoUrl;
-        video.classList.add('has-src');
-        if (placeholder) placeholder.style.display = 'none';
+        try {
+            const res = await fetch(videoUrl, { headers: authHeaders() });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            video.src = URL.createObjectURL(await res.blob());
+            video.classList.add('has-src');
+            if (placeholder) placeholder.style.display = 'none';
+        } catch (e) {
+            resetExportPreview(videoId);
+        }
     } else {
         resetExportPreview(videoId);
     }

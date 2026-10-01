@@ -2,7 +2,7 @@ import { state } from '../state.js';
 import { BACKEND_URL, PLATFORM_DATA, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
 import { tsToSeconds, secondsToTs, parseAiTimestampsText, buildSubtitleCuesForClip, getClipDialogueText } from '../utils/helpers.js';
-import { resolveExportSource, fetchClipThumbnails, playFromSource } from '../api/api.js';
+import { resolveExportSource, fetchClipThumbnails, playFromSource, wireDownloadButton } from '../api/api.js';
 import { authHeaders } from '../utils/storage.js';
 import { subtitlesEnabled, getSubtitleStyle } from './subtitleStyle.js';
 import { checkBatchAllowed } from './auth.js';
@@ -536,10 +536,10 @@ export async function startReelExport() {
                     if (payload.stage === "done") {
                         setExportProgress('reelExport', 100);
                         statusEl.textContent = "✅ " + payload.message;
-                        downloadBtn.href = BACKEND_URL + payload.download_url;
-                        downloadBtn.download = payload.filename;
+                        const fullUrl = BACKEND_URL + payload.download_url;
+                        wireDownloadButton(downloadBtn, fullUrl, payload.filename);
                         downloadBtn.className = "btn-reel-download active";
-                        showExportPreview('previewVideo', payload, downloadBtn.href);
+                        showExportPreview('previewVideo', payload, fullUrl);
                     } else {
                         statusEl.textContent = "⏳ " + payload.message;
                     }

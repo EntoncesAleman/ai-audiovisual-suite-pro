@@ -5,6 +5,52 @@ import { telemetryLog } from '../utils/dom.js';
 import { hasPreviewSource, loadRemoteSourcePreview, seekAndPlay } from '../modules/player.js';
 
 /**
+ * Descarga un archivo protegido de /exports/{filename} (o cualquier ruta que
+ * exija X-API-Key) disparando un fetch con el header de auth, en vez de
+ * dejar que el navegador navegue directo a un <a href>: un link plano NO
+ * manda headers custom, así que desde que /exports/{filename} exige dueño
+ * (ver ownership de exports en main.py) un click nativo siempre devolvía
+ * 401/403 y el navegador lo mostraba como "El archivo no se encontraba
+ * disponible en el sitio", sin ningún detalle del error real. Usado por los
+ * botones "Descargar" de clips/reel/Premiere/voiceover.
+ */
+export async function downloadAuthenticated(url, filename) {
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { detail = (await res.json()).detail || detail; } catch (e) { /* respuesta no-JSON, nos quedamos con el status */ }
+        throw new Error(detail);
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename || '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+}
+
+/**
+ * Deja un botón/link de descarga (<a id=...>) listo: guarda la URL real
+ * (BACKEND_URL + download_url) para mostrarla/usarla como fallback visual,
+ * pero el click dispara downloadAuthenticated en vez de la navegación
+ * nativa del <a href>. Centraliza el wiring que antes se repetía suelto en
+ * cada módulo de export (clips/reel/Premiere/voiceover).
+ */
+export function wireDownloadButton(downloadBtn, url, filename) {
+    downloadBtn.href = url;
+    downloadBtn.download = filename || '';
+    downloadBtn.onclick = (e) => {
+        e.preventDefault();
+        downloadAuthenticated(url, filename).catch((err) => {
+            alert('No se pudo descargar el archivo: ' + err.message);
+        });
+    };
+}
+
+/**
  * Resuelve de dónde sale el video fuente para exportar. Orden de prioridad:
  * 1. cache_key del análisis actual (el server guardó el video, cero re-subida/descarga).
  * 2. URL pegada.
