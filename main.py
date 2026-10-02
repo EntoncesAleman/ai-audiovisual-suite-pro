@@ -1043,7 +1043,41 @@ def _friendly_youtube_error(err_str: str) -> str:
     return "No se pudo descargar ese video de YouTube. Puede ser un bloqueo temporal de YouTube - reintentá en unos minutos, o subilo como archivo local mientras tanto."
 
 
+# ------------------------------------------------------------------
+# Cooldown anti rate-limit de YouTube: si una URL ya nos devolvió 429/
+# "confirmá que no sos un bot", reintentar el ciclo completo de 4
+# estrategias de nuevo a los pocos segundos (típico si alguien ve el error
+# y reintenta al toque, o dos tabs/clicks superpuestos) solo empeora las
+# cosas - cada estrategia vuelve a pegarle a YouTube desde la misma IP, que
+# es justo lo que escala el bloqueo. Confirmado en logs reales de
+# producción: un mismo request disparó 2 ciclos completos (8 intentos) en
+# ~25s, todos fallando con el mismo bloqueo.
+_YT_RATE_LIMIT_COOLDOWN_SECONDS = int(os.getenv("YT_RATE_LIMIT_COOLDOWN_SECONDS", "90"))
+_recent_youtube_blocks: dict[str, float] = {}
+
+
+def _is_rate_limit_or_bot_check(err_str: str) -> bool:
+    low = err_str.lower()
+    return "429" in err_str or "too many requests" in low or "sign in to confirm you" in low or "not a bot" in low
+
+
 def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", progress_callback=None) -> str:
+    cooldown_key = url_hash(url)
+    blocked_at = _recent_youtube_blocks.get(cooldown_key)
+    if blocked_at is not None:
+        elapsed = time.time() - blocked_at
+        if elapsed < _YT_RATE_LIMIT_COOLDOWN_SECONDS:
+            remaining = int(_YT_RATE_LIMIT_COOLDOWN_SECONDS - elapsed)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"YouTube bloqueó temporalmente este video hace muy poco (demasiados intentos seguidos "
+                    f"desde este servidor). Esperá {remaining}s antes de reintentar - reintentar ahora solo "
+                    f"empeora el bloqueo. Mientras tanto podés subir el video como archivo local."
+                ),
+            )
+        del _recent_youtube_blocks[cooldown_key]
+
     extractor_args = {}
     if POT_PROVIDER_BASE_URL:
         # Le dice al plugin bgutil-ytdlp-pot-provider (instalado via requirements.txt)
@@ -1095,6 +1129,18 @@ def _download_youtube(url: str, format_selector: str, outtmpl_suffix: str = "", 
                 # estrategia (otro player_client, cookies, etc.) lo arregla.
                 print(f"   ✗ Error no recuperable: {err_str[:200]}")
                 raise HTTPException(status_code=400, detail=_friendly_youtube_error(err_str))
+            if _is_rate_limit_or_bot_check(err_str):
+                # Bloqueo a nivel IP (429) o chequeo anti-bot de YouTube: NO
+                # es algo que otro player_client o cookies.txt vaya a
+                # esquivar (confirmado en logs reales: las 4 estrategias
+                # fallan igual una vez que arranca). Cortamos acá en vez de
+                # seguir probando - cada intento extra es otro request a
+                # YouTube que solo puede empeorar el bloqueo - y guardamos
+                # el cooldown para que un reintento inmediato (manual o
+                # automático) no vuelva a pegarle.
+                _recent_youtube_blocks[cooldown_key] = time.time()
+                print(f"   ✗ Bloqueo anti-bot/rate-limit de YouTube, corto acá (cooldown {_YT_RATE_LIMIT_COOLDOWN_SECONDS}s): {err_str[:200]}")
+                raise HTTPException(status_code=429, detail=_friendly_youtube_error(err_str))
             # "could not find chrome cookies database": la última estrategia
             # ("cookies de Chrome") SIEMPRE falla así en Render (no hay Chrome
             # instalado) - es un fallo local y predecible, no un error real de
