@@ -26,7 +26,7 @@ Actualizado el 5 de octubre de 2026. `HANDOFF.md` y `AUDIT_FREE_PRO.md` son docu
 5. Desplegar el Dockerfile actualizado. Instala Node y `capcut-cli@0.21.0`, y copia los nuevos módulos. Mantener inicialmente **una instancia / un proceso Uvicorn**: la concurrencia del pipeline existente todavía usa semáforos en memoria.
 6. Verificar login, subir una fuente sintética, guardar un proyecto y descargar sus resultados. Para imágenes, la clave Gemini debe tener cuota para el modelo configurado. `scripts/check_images.py` consume una generación real y guarda el resultado solo temporalmente.
 
-**Preflight realizado:** la tabla del estudio devolvió HTTP 404 y el bucket HTTP 400; todavía no están listos para este bloque. La prueba real de imágenes recibió HTTP 429 de Gemini. No se desplegaron estos cambios ni se modificó la base de producción.
+**Migración confirmada:** el propietario ejecutó el SQL en Supabase; se verificaron la tabla del estudio, el bucket privado y el RPC `studio_write`, incluido su control de revisión sin crear registros. La prueba real de imágenes recibió HTTP 429 de Gemini: su cuota sigue pendiente. La publicación del código no equivale a una verificación del despliegue online.
 
 El nuevo login depende de la tabla del estudio: aplicar la migración **antes** de publicar el código.
 
