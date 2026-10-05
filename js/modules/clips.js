@@ -1,3 +1,4 @@
+import { durableJobFetch } from '../api/jobs.js';
 import { state } from '../state.js';
 import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
@@ -48,6 +49,7 @@ export function parseClipsFromTimeline(silent = false) {
 }
 
 export function renderClipsList() {
+    document.dispatchEvent(new CustomEvent('editor-changed'));
     const grid = document.getElementById('clipsCardGrid');
     const badge = document.getElementById('clipCountBadge');
     const selected = state.clipsList.filter(c => c.selected).length;
@@ -74,7 +76,7 @@ export function renderClipsList() {
             <div class="clip-card-footer">
                 <button class="clip-card-color-dot" style="background:${clip.color || 'transparent'};" onclick="cycleClipColor(${i})" title="Asignar color (para organizar)"></button>
                 <input type="text" class="clip-card-title" value="${escapeHtml(clip.label)}" onchange="updateClip(${i}, 'label', this.value)" placeholder="Descripción del clip">
-                <button class="btn-clip-remove" onclick="sendClipToCapCut(${i})" title="Enviar a CapCut (beta, requiere server local con CapCut instalado)" style="font-size:11px;width:auto;padding:0 4px;">🎞</button>
+                <button class="btn-clip-remove" onclick="sendClipToCapCut(${i})" title="Exportar a CapCut" style="font-size:11px;width:auto;padding:0 4px;">🎞</button>
                 <button class="btn-clip-remove" onclick="removeClip(${i})" title="Quitar">×</button>
             </div>
             <details class="clip-card-advanced">
@@ -412,7 +414,7 @@ export async function startClipExport() {
     const clips = selected.map(c => ({
         start: c.start, end: c.end, label: c.label,
         subtitles: wantsSubtitles
-            ? buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline)
+            ? (c.subtitles || buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline))
             : [],
     }));
     const subtitleStyle = wantsSubtitles ? getSubtitleStyle() : null;
@@ -429,7 +431,7 @@ export async function startClipExport() {
     };
 
     try {
-        const res = await fetch(`${BACKEND_URL}/export-clips`, {
+        const res = await durableJobFetch(`${BACKEND_URL}/export-clips`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...source, clips, subtitle_style: subtitleStyle }),
@@ -521,7 +523,7 @@ export async function sendClipToCapCut(i) {
         return;
     }
     if (!status.capcut_installed || !status.capcut_cli_found) {
-        alert("CapCut no está disponible en este servidor. Esta función solo funciona corriendo el server local en tu Mac con CapCut instalado (no en Render) - ver HANDOFF.md.");
+        window.openOnlineStudio('capcut');
         return;
     }
     if (!confirm(`Se va a generar un proyecto en CapCut con el clip "${clip.label || 'sin título'}".\n\nCerrá CapCut si lo tenés abierto antes de continuar (necesario para no pisar sus propios archivos). ¿Seguimos?`)) {
@@ -547,7 +549,7 @@ export async function sendClipToCapCut(i) {
     const subtitleStyle = wantsSubtitles ? getSubtitleStyle() : null;
 
     try {
-        const res = await fetch(`${BACKEND_URL}/export-capcut`, {
+        const res = await durableJobFetch(`${BACKEND_URL}/export-capcut`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({

@@ -2,6 +2,8 @@ venv/
 __pycache__/
 *.pyc
 .env
+.studio-data/
+test-results/
 .git/
 .claude/
 Metraje_Completo_Analizado.txt

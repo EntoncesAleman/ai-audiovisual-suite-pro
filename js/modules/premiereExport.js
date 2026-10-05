@@ -1,3 +1,4 @@
+import { durableJobFetch } from '../api/jobs.js';
 import { state } from '../state.js';
 import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { setExportProgress, resetExportProgress, telemetryLog } from '../utils/dom.js';
@@ -81,7 +82,7 @@ async function runPremiereExport(ctx, options) {
     const clips = selected.map(c => ({
         start: c.start, end: c.end, label: c.label,
         subtitles: options.includeSubtitles
-            ? buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline)
+            ? (c.subtitles || buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline))
             : [],
         transition_out: c.transitionOut || "none",
     }));
@@ -98,7 +99,7 @@ async function runPremiereExport(ctx, options) {
     };
 
     try {
-        const res = await fetch(`${BACKEND_URL}/export-premiere-xml`, {
+        const res = await durableJobFetch(`${BACKEND_URL}/export-premiere-xml`, {
             method: 'POST',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify({

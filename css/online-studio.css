@@ -1,0 +1,42 @@
+.studio-save { font-size:12px; color:var(--text-muted,#9ca3af); max-width:230px; }
+.studio-save[data-state="error"], .studio-save[data-state="conflict"] { color:#fbbf24; }
+.studio-save[data-state="saved"] { color:#86efac; }
+.studio-nav-btn { background:transparent; border:1px solid var(--border-color,#36363e); border-radius:8px; padding:7px 11px; color:var(--text-main,#eee); cursor:pointer; }
+.studio-overlay { position:fixed; inset:0; z-index:1100; background:#000a; padding:4vh 3vw; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; }
+.studio-overlay[hidden] { display:none; }
+.studio-window { width:min(1050px,100%); min-width:0; max-width:100%; height:90vh; background:var(--bg-card,#17171d); color:var(--text-main,#eee); border:1px solid var(--border-color,#36363e); border-radius:16px; display:flex; flex-direction:column; box-shadow:0 25px 80px #0008; box-sizing:border-box; }
+.studio-window header { display:flex; gap:14px; align-items:center; padding:18px 22px; border-bottom:1px solid #ffffff16; }
+.studio-window header h2 { flex:1; font-size:20px; margin:0; }
+.studio-tabs { display:flex; flex-shrink:0; min-width:0; gap:8px; padding:14px 22px; overflow-x:auto; border-bottom:1px solid #ffffff16; }
+.studio-tabs button { flex:0 0 auto; white-space:nowrap; }
+.studio-tabs button[aria-selected="true"] { border-color:#d6a646; color:#f4ce7d; background:#d6a64615; }
+.studio-content { overflow:auto; flex:1; padding:22px; }
+.studio-content [hidden] { display:none !important; }
+.studio-content h3 { margin:0 0 12px; font-size:18px; }
+.studio-content p { color:var(--text-muted,#a0a0ab); line-height:1.6; margin:0 0 18px; }
+.studio-form { display:grid; gap:16px; }
+.studio-form label { display:grid; gap:7px; font-size:13px; }
+.studio-form input:not([type="checkbox"]), .studio-form textarea, .studio-form select { width:100%; margin:0; background:var(--bg-input,#222229); color:var(--text-main,#eee); border:1px solid #ffffff26; border-radius:8px; padding:10px; box-sizing:border-box; font:inherit; }
+.studio-form input[type="color"] { min-height:42px; padding:3px; }
+.studio-form textarea { min-height:100px; resize:vertical; }
+.studio-row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+.studio-row > label { flex:1; min-width:140px; }
+.studio-primary { background:#d6a646; color:#17110a; border:0; border-radius:8px; padding:11px 16px; font-weight:600; cursor:pointer; }
+.studio-primary:disabled, .studio-nav-btn:disabled { opacity:.45; cursor:default; }
+.studio-feedback { min-height:24px; margin:12px 0; font-size:13px; color:#c6c6d0; white-space:pre-wrap; }
+.studio-feedback[data-error="true"] { color:#fca5a5; }
+.studio-gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; margin:18px 0; }
+.studio-media { border:1px solid #ffffff20; border-radius:10px; overflow:hidden; padding:12px; }
+.studio-media img { width:100%; aspect-ratio:1; object-fit:contain; background:#111; margin-bottom:10px; border-radius:6px; }
+.studio-media h4 { overflow-wrap:anywhere; font-size:13px; margin:0 0 8px; }
+.studio-job { padding:16px 0; border-bottom:1px solid #ffffff20; }
+.studio-job strong { display:block; margin-bottom:6px; }
+.studio-job p { font-size:13px; margin:0 0 8px; }
+.studio-timeline { display:grid; gap:8px; }
+.studio-cut { border:1px solid #ffffff20; border-radius:9px; padding:12px; display:grid; grid-template-columns:minmax(120px,1fr) auto; gap:8px; }
+.studio-cut .studio-row { justify-content:flex-end; }
+.studio-cut input { width:90px; background:#222229; color:#eee; border:1px solid #ffffff26; border-radius:5px; padding:5px; }
+.studio-timebar { height:8px; border-radius:8px; background:#ffffff12; overflow:hidden; margin-top:8px; }
+.studio-timebar span { display:block; height:100%; background:#d6a646; min-width:3px; }
+.studio-content :focus-visible, .studio-window button:focus-visible { outline:2px solid #e6bd66; outline-offset:3px; }
+@media (max-width:650px) { .studio-overlay { padding:0; } .studio-window { height:100dvh; border-radius:0; } .studio-content { padding:16px; } .studio-tabs { padding:12px 16px; } .studio-cut { grid-template-columns:1fr; } .studio-save { max-width:140px; font-size:11px; } }

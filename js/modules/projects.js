@@ -110,7 +110,7 @@ function renderProjectsList() {
     list.innerHTML = projects.map((p) => {
         const count = sessions.filter(s => s.project_id === p.id).length;
         return `
-        <div class="admin-request-card" data-id="${p.id}" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+        <div class="admin-request-card" data-id="${escapeHtml(p.id)}" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
             <input type="text" class="project-rename-input" value="${escapeHtml(p.name)}" style="flex:1; margin:0; background:var(--bg-input); border:var(--border); border-radius:var(--radius); color:var(--text-main); padding:8px 10px; font-size:13px;">
             <span style="color:var(--text-muted); font-size:12px; white-space:nowrap;">${count} sesión${count === 1 ? '' : 'es'}</span>
             <button class="btn-admin-mini btn-project-delete" title="Borrar proyecto">🗑</button>

@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     unzip \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # deno: yt-dlp lo usa como runtime de JavaScript para resolver los challenges
@@ -15,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (sin esto, yt-dlp solo consigue miniaturas/imágenes, no video descargable).
 ENV DENO_INSTALL=/usr/local
 RUN curl -fsSL https://deno.land/install.sh | sh
+
+# Pinned draft compiler: portable online exports do not require CapCut on the server.
+RUN npm install -g capcut-cli@0.21.0
 
 WORKDIR /app
 
@@ -24,6 +29,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY premiere_export.py .
 COPY capcut_export.py .
+COPY studio_store.py .
+COPY studio_backend.py .
+COPY studio_tools.py .
+COPY studio_render.py .
 COPY index.html .
 COPY login.html .
 COPY historial.html .

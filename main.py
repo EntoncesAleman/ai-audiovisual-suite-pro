@@ -17,11 +17,12 @@ import zipfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from google import genai
 from google.genai import types as genai_types
 import yt_dlp
@@ -29,6 +30,11 @@ import requests
 from dotenv import load_dotenv
 import premiere_export
 import capcut_export
+from studio_store import RecordStore
+from studio_backend import install_studio, upload_media, account
+from studio_tools import ImageRequest, CampaignRequest, CapCutPackageRequest, generate_images, generate_campaign, build_capcut_package
+from studio_render import StudioRenderRequest, render_studio
+from studio_tools import CampaignPackageRequest, build_campaign_package
 
 load_dotenv()
 
@@ -56,7 +62,7 @@ async def no_cache_static_assets(request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()],
     # No usamos cookies para nada (la sesión viaja por header X-API-Key, ver
     # más abajo), así que no hace falta allow_credentials=True. Dejarlo en
     # True junto con allow_origins=["*"] es la combinación que habilita un
@@ -155,13 +161,8 @@ def _supabase_upsert(table: str, rows, on_conflict: str):
     )
 
 
-# Tokens de sesión emitidos por /auth/login: viven en memoria (se pierden
-# si el servidor reinicia - igual que cualquier "mantener sesión iniciada"
-# en un free tier que duerme, el navegador simplemente vuelve a pedir login).
-# A propósito NO se migran a Supabase: son de corta vida y volver a loguearse
-# después de un restart/redeploy es un costo aceptable (a diferencia de
-# perder usuarios/planes/consumo, que sí importa).
-_sessions: dict[str, dict] = {}
+# Session token hashes are persisted in studio_records, expire after 7 days
+# and can be revoked across server restarts. Raw tokens are never stored.
 
 
 def _load_users() -> dict:
@@ -234,19 +235,17 @@ _bootstrap_superadmin()
 
 
 def require_api_key(x_api_key: str | None = Header(default=None)):
-    """Dependency de FastAPI para los endpoints protegidos: exige un token de
-    sesión válido (emitido por /auth/login) o, por compatibilidad, la
-    API_ACCESS_KEY estática si está configurada. Si no hay ningún usuario
-    creado todavía y tampoco API_ACCESS_KEY, no bloquea nada (servidor recién
-    instalado, sin login configurado)."""
+    """Exige una sesión persistente válida o la clave estática de compatibilidad."""
     if x_api_key:
-        session = _sessions.get(x_api_key)
+        session = studio_store.get_session(x_api_key)
         if session:
+            user = _get_user_row(session["username"])
+            if not user or not user.get("active",True):
+                raise HTTPException(401,"Sesión inválida o expirada. Iniciá sesión de nuevo.")
+            session["role"] = user.get("role","USER")
             return session
         if API_ACCESS_KEY and x_api_key == API_ACCESS_KEY:
             return {"username": "legacy", "role": "USER"}
-    if not _load_users() and not API_ACCESS_KEY:
-        return None
     raise HTTPException(status_code=401, detail="Sesión inválida o expirada. Iniciá sesión de nuevo.")
 
 
@@ -297,10 +296,6 @@ def get_current_user(x_api_key: str | None = Header(default=None)) -> dict:
     dict con username/role/plan/unrestricted (nunca None).
     """
     session = require_api_key(x_api_key)
-    if session is None:
-        # Servidor recién instalado (sin usuarios ni API_ACCESS_KEY todavía):
-        # mismo modo "no bloquea nada" de require_api_key, sin límites de plan.
-        return {"username": None, "role": "USER", "plan": PLAN_PRO, "unrestricted": True}
     username = session.get("username")
     role = session.get("role", "USER")
     if username == "legacy":
@@ -308,7 +303,7 @@ def get_current_user(x_api_key: str | None = Header(default=None)) -> dict:
         # no tiene sentido meterle límites de plan a un secreto compartido.
         return {"username": "legacy", "role": role, "plan": PLAN_PRO, "unrestricted": True}
     user = _get_user_row(username)
-    if not user:
+    if not user or not user.get("active",True):
         raise HTTPException(status_code=401, detail="Sesión inválida o expirada. Iniciá sesión de nuevo.")
     _ensure_plan_defaults(user)
     return {
@@ -469,6 +464,10 @@ def _save_exports_index(idx: dict):
 
 
 def _register_export(filename: str, username: str | None):
+    if not username or username == "legacy":
+        raise HTTPException(401, "Ingresá con una cuenta para guardar exportaciones.")
+    studio_store.save_media(username, EXPORT_DIR / filename, filename, "export",
+                           hashlib.sha256(filename.encode()).hexdigest())
     _supabase_upsert(
         "exports_index",
         {"filename": filename, "username": username, "created_at": datetime.now(timezone.utc).isoformat()},
@@ -513,16 +512,46 @@ EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 VIDEO_CACHE_DIR = CACHE_DIR / "videos"
 VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+studio_store = RecordStore(
+    os.getenv("STUDIO_DATA_DIR", str(Path(__file__).parent / ".studio-data")),
+    mode=os.getenv("STUDIO_STORAGE", "supabase"), url=SUPABASE_URL,
+    key=SUPABASE_SERVICE_KEY, schema=SUPABASE_SCHEMA,
+)
 
-def cache_video_path(cache_key: str):
+
+def _scoped_cache_key(key: str, user: dict) -> str:
+    return hashlib.sha256(f"{account(user)}:{key}".encode()).hexdigest()
+
+
+async def _validate_media_input(input_data, user):
+    """Only accept opaque owned assets; never a path supplied by a browser."""
+    if getattr(input_data, "video_path", ""):
+        raise HTTPException(400, "Las rutas del servidor no se aceptan. Volvé a subir el archivo.")
+    if getattr(input_data, "url", ""):
+        _validate_source_url(input_data.url)
+    asset_id = getattr(input_data, "asset_id", "")
+    if asset_id:
+        path, media = await asyncio.to_thread(studio_store.media_path, account(user), asset_id)
+        if media["suffix"] in {".png", ".jpg", ".jpeg", ".webp", ".zip"}:
+            raise HTTPException(400, "Elegí una fuente de audio o video.")
+        input_data.video_path = str(path)
+
+
+def cache_video_path(cache_key: str, user: dict):
     """Devuelve la ruta al video cacheado para este cache_key, o None si no esta."""
     if not cache_key:
         return None
-    matches = list(VIDEO_CACHE_DIR.glob(f"{cache_key}.*"))
-    return str(matches[0]) if matches else None
+    if not re.fullmatch(r"[a-f0-9]{32,64}", cache_key):
+        raise HTTPException(400, "Identificador de video inválido.")
+    if not studio_store.get(account(user), "media", cache_key):
+        return None
+    path, media = studio_store.media_path(account(user), cache_key)
+    if media["suffix"] in {".png", ".jpg", ".jpeg", ".webp", ".zip"}:
+        return None
+    return str(path)
 
 
-def cache_video_store(cache_key: str, source_path: str):
+def cache_video_store(cache_key: str, source_path: str, user: dict):
     """
     Mueve el video original a la carpeta de cache (no lo copia: evita duplicar
     el escrito a disco). A partir de ahi, exportar clips lo reusa directo sin
@@ -530,15 +559,7 @@ def cache_video_store(cache_key: str, source_path: str):
     """
     if not cache_key or not os.path.exists(source_path):
         return
-    ext = Path(source_path).suffix or ".mp4"
-    dest = VIDEO_CACHE_DIR / f"{cache_key}{ext}"
-    try:
-        # Si ya habia un cacheado (re-analisis del mismo video), lo reemplazamos.
-        if dest.exists():
-            dest.unlink()
-        shutil.move(source_path, str(dest))
-    except Exception as e:
-        print(f"⚠ No se pudo cachear el video: {e}")
+    studio_store.save_media(account(user), source_path, Path(source_path).name, "source", cache_key)
 
 # Configs de plataforma para exportación de video: (ancho, alto, max_dur_seg o None)
 PLATFORM_CONFIGS: dict[str, tuple] = {
@@ -670,6 +691,27 @@ class UrlInput(BaseModel):
     url: str
     engine: str = "auto"  # "auto" (Gemini + Groq de respaldo) | "gemini" | "groq"
 
+    @field_validator("url")
+    @classmethod
+    def valid_url(cls, value):
+        try:
+            return _validate_source_url(value)
+        except HTTPException as exc:
+            raise ValueError(exc.detail) from exc
+
+
+def _validate_source_url(value):
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit(value.strip())
+        host = (parsed.hostname or "").lower()
+        allowed = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "drive.google.com", "docs.google.com"}
+        if parsed.scheme != "https" or host not in allowed or parsed.port not in {None, 443} or parsed.username or parsed.password:
+            raise ValueError()
+    except ValueError as exc:
+        raise HTTPException(400, "Usá un enlace HTTPS de YouTube o Google Drive, o subí el archivo.") from exc
+    return value.strip()
+
 
 # ============================================================
 # UTILIDADES DE CACHEO
@@ -706,15 +748,8 @@ def _safe_upload_filename(filename: str) -> str:
 
 
 def deterministic_export_id(*parts: str) -> str:
-    """
-    ID de exportación estable a partir de la fuente + los clips pedidos (en
-    vez de un uuid random). Así, si el server se reinicia a mitad de un
-    export y el usuario le da "Generar" de nuevo con los mismos clips, cae
-    en la MISMA carpeta y puede saltear los clips que ya se habían cortado,
-    en vez de arrancar de cero. El video fuente en /tmp sobrevive un reinicio
-    por OOM (no un redeploy), asi que esto le saca provecho a eso.
-    """
-    payload = "|".join(parts)
+    """ID único por exportación para aislar archivos entre pedidos y cuentas."""
+    payload = "|".join((*parts, uuid.uuid4().hex))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -1291,7 +1326,8 @@ def inspect_media_file(file_path: str) -> dict:
         pass
 
     # Duración
-    info["duration_minutes"] = round(get_video_duration_seconds(file_path) / 60, 2)
+    info["duration_seconds"] = get_video_duration_seconds(file_path)
+    info["duration_minutes"] = round(info["duration_seconds"] / 60, 2)
 
     # Streams con ffprobe
     try:
@@ -1305,6 +1341,8 @@ def inspect_media_file(file_path: str) -> dict:
                 if stream.get("codec_type") == "video":
                     info["has_video"] = True
                     info["video_codec"] = stream.get("codec_name")
+                    info["width"] = stream.get("width")
+                    info["height"] = stream.get("height")
                 elif stream.get("codec_type") == "audio":
                     info["has_audio"] = True
                     info["audio_codec"] = stream.get("codec_name")
@@ -2422,7 +2460,7 @@ async def process_video_streaming(video_path: str, user: dict, cache_key: str = 
 
 @app.post("/analyze-url")
 async def analyze_url(input_data: UrlInput, user: dict = Depends(get_current_user)):
-    cache_key = url_hash(input_data.url)
+    cache_key = _scoped_cache_key(url_hash(input_data.url), user)
     cached = cache_get(cache_key)
     if cached:
         cached["from_cache"] = True
@@ -2442,16 +2480,11 @@ async def analyze_url(input_data: UrlInput, user: dict = Depends(get_current_use
 
 @app.post("/analyze-video")
 async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto"), user: dict = Depends(get_current_user)):
-    temp_dir = tempfile.gettempdir()
-    video_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}")
-    with open(video_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    try:
-        cache_key = file_hash(video_path)
-        return await process_video_with_gemini(video_path, user, cache_key=cache_key, engine=_normalize_engine(engine))
-    finally:
-        if os.path.exists(video_path):
-            os.remove(video_path)
+    media = await upload_media(studio_store, user, file, inspect=inspect_media_file)
+    video_path, _ = await asyncio.to_thread(studio_store.media_path, account(user), media["id"])
+    result = await process_video_with_gemini(str(video_path), user, cache_key=media["id"], engine=_normalize_engine(engine))
+    result["asset_id"] = media["id"]
+    return result
 
 
 # ============================================================
@@ -2461,7 +2494,7 @@ async def analyze_video(file: UploadFile = File(...), engine: str = Form("auto")
 @app.post("/analyze-url-stream")
 async def analyze_url_stream(input_data: UrlInput, user: dict = Depends(get_current_user)):
     """Versión streaming: el frontend recibe eventos de progreso en tiempo real."""
-    cache_key = url_hash(input_data.url)
+    cache_key = _scoped_cache_key(url_hash(input_data.url), user)
     engine = _normalize_engine(input_data.engine)
 
     async def generator():
@@ -2507,22 +2540,14 @@ async def analyze_url_stream(input_data: UrlInput, user: dict = Depends(get_curr
 @app.post("/analyze-video-stream")
 async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form("auto"), user: dict = Depends(get_current_user)):
     """Versión streaming para archivos locales."""
-    temp_dir = tempfile.gettempdir()
-    video_path = os.path.join(temp_dir, f"{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}")
-    with open(video_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    cache_key = file_hash(video_path)
+    media = await upload_media(studio_store, user, file, inspect=inspect_media_file)
+    video_path, _ = await asyncio.to_thread(studio_store.media_path, account(user), media["id"])
+    cache_key = media["id"]
     engine = _normalize_engine(engine)
 
     async def generator():
-        try:
-            async for chunk in process_video_streaming(video_path, user, cache_key=cache_key, engine=engine):
-                yield chunk
-        finally:
-            # En vez de borrarlo, lo dejamos cacheado para poder exportar clips
-            # despues sin volver a re-subirlo.
-            cache_video_store(cache_key, video_path)
+        async for chunk in process_video_streaming(str(video_path), user, cache_key=cache_key, engine=engine):
+            yield chunk
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -2532,8 +2557,8 @@ async def analyze_video_stream(file: UploadFile = File(...), engine: str = Form(
 # para resolver la fuente de una exportación de clips/reel)
 # ============================================================
 
-@app.post("/inspect-file", dependencies=[Depends(require_api_key)])
-async def inspect_file(file: UploadFile = File(...)):
+@app.post("/inspect-file")
+async def inspect_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """
     Recibe un archivo, lo analiza con ffprobe y devuelve qué tiene adentro.
     Después de inspeccionar, deja el archivo en una ruta temporal y devuelve
@@ -2541,24 +2566,15 @@ async def inspect_file(file: UploadFile = File(...)):
     _process_single_video_file) ya no pasa por acá; este endpoint solo lo
     usa el frontend para subir el archivo fuente al exportar clips/reel.
     """
-    temp_dir = tempfile.gettempdir()
-    # Generamos un nombre único para que dos archivos con el mismo nombre no choquen
-    safe_name = f"inspect_{uuid.uuid4().hex[:8]}_{_safe_upload_filename(file.filename)}"
-    temp_path = os.path.join(temp_dir, safe_name)
-
-    with open(temp_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    info = await asyncio.to_thread(inspect_media_file, temp_path)
-    info["temp_path"] = temp_path  # frontend devuelve esta ruta en el siguiente paso
-    return info
+    media = await upload_media(studio_store, user, file, inspect=inspect_media_file)
+    return {**media["metadata"], "asset_id": media["id"], "name": media["name"]}
 
 
 # ============================================================
 # UTILIDADES
 # ============================================================
 
-@app.get("/cache-stats")
+@app.get("/cache-stats",dependencies=[Depends(require_superadmin)])
 def cache_stats():
     """Estadísticas del cache: cuántos análisis guardados, tamaño total."""
     files = list(CACHE_DIR.glob("*.json"))
@@ -2570,11 +2586,22 @@ def cache_stats():
     }
 
 
-@app.post("/cache-clear", dependencies=[Depends(require_api_key)])
-def cache_clear():
-    """Vacía el cache."""
+@app.post("/cache-clear")
+def cache_clear(user: dict = Depends(get_current_user)):
+    """Vacía solo análisis asociados a los medios y proyectos de esta cuenta."""
     deleted = 0
-    for f in CACHE_DIR.glob("*.json"):
+    owner=account(user)
+    rows=studio_store.list(owner,"media",1000)
+    workspace=studio_store.get(owner,"workspace","main")
+    sessions=workspace["payload"].get("sessions",[]) if workspace else []
+    keys={row["id"] for row in rows}
+    keys.update(session.get("data",{}).get("cache_key","") for session in sessions)
+    for key in keys:
+        if not re.fullmatch(r"[a-f0-9]{32,64}",key):
+            continue
+        f=CACHE_DIR/f"{key}.json"
+        if not f.exists():
+            continue
         try:
             f.unlink()
             deleted += 1
@@ -2853,7 +2880,7 @@ async def generate_voiceover(input_data: TtsInput, user: dict = Depends(require_
                 filename = f"voiceover_{export_id}.wav"
                 with open(EXPORT_DIR / filename, "wb") as f:
                     f.write(wav_bytes)
-                _register_export(filename, user.get("username"))
+                await asyncio.to_thread(_register_export, filename, user.get("username"))
 
                 return {"download_url": f"/exports/{filename}", "filename": filename, "model": model, "voice": voice}
             except Exception as e:
@@ -3065,6 +3092,7 @@ class ThumbnailSpec(BaseModel):
 
 
 class ThumbnailRequest(BaseModel):
+    asset_id: str = ""
     url: str = ""
     video_path: str = ""
     cache_key: str = ""
@@ -3073,6 +3101,7 @@ class ThumbnailRequest(BaseModel):
 
 @app.post("/generate-thumbnails")
 async def generate_thumbnails(input_data: ThumbnailRequest, user: dict = Depends(get_current_user)):
+    await _validate_media_input(input_data, user)
     """
     Extrae un frame por clip (en su timestamp de inicio) del video YA
     CACHEADO del análisis y lo devuelve como JPG chico en base64, para las
@@ -3083,8 +3112,8 @@ async def generate_thumbnails(input_data: ThumbnailRequest, user: dict = Depends
     """
     import base64
 
-    effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
-    video_path = cache_video_path(effective_cache_key) if effective_cache_key else None
+    effective_cache_key = input_data.cache_key or (_scoped_cache_key(url_hash(input_data.url), user) if input_data.url else "")
+    video_path = await asyncio.to_thread(cache_video_path, effective_cache_key, user) if effective_cache_key else None
     if not video_path and input_data.video_path and os.path.exists(input_data.video_path):
         video_path = input_data.video_path
     if not video_path:
@@ -3124,6 +3153,7 @@ class EnsureCachedVideoRequest(BaseModel):
 
 @app.post("/ensure-cached-video")
 async def ensure_cached_video(input_data: EnsureCachedVideoRequest, user: dict = Depends(get_current_user)):
+    await _validate_media_input(input_data, user)
     """
     A diferencia de /generate-thumbnails (que a propósito NO descarga si no
     hay cache), este SÍ fuerza la descarga del video completo de una URL para
@@ -3135,8 +3165,8 @@ async def ensure_cached_video(input_data: EnsureCachedVideoRequest, user: dict =
     """
     if not input_data.url and not input_data.cache_key:
         raise HTTPException(status_code=400, detail="Falta url o cache_key.")
-    effective_cache_key = input_data.cache_key or url_hash(input_data.url)
-    if cache_video_path(effective_cache_key):
+    effective_cache_key = input_data.cache_key or _scoped_cache_key(url_hash(input_data.url), user)
+    if await asyncio.to_thread(cache_video_path, effective_cache_key, user):
         return {"cache_key": effective_cache_key, "cached": True}
     if not input_data.url:
         raise HTTPException(status_code=404, detail="No hay video cacheado y no se dio una URL para descargarlo.")
@@ -3149,7 +3179,7 @@ async def ensure_cached_video(input_data: EnsureCachedVideoRequest, user: dict =
             raise HTTPException(status_code=503, detail=mem_error)
         video_path = await asyncio.to_thread(download_youtube_video, input_data.url)
         try:
-            cache_video_store(effective_cache_key, video_path)
+            await asyncio.to_thread(cache_video_store, effective_cache_key, video_path, user)
         finally:
             if os.path.exists(video_path):
                 os.remove(video_path)
@@ -3159,15 +3189,15 @@ async def ensure_cached_video(input_data: EnsureCachedVideoRequest, user: dict =
         _release_user_job_slot(user)
 
 
-@app.get("/cached-video/{cache_key}", dependencies=[Depends(require_api_key)])
-def get_cached_video(cache_key: str):
+@app.get("/cached-video/{cache_key}")
+def get_cached_video(cache_key: str, user: dict = Depends(get_current_user)):
     """
     Sirve el video cacheado para el mini-player. Requiere el header de auth
     (como cualquier endpoint protegido), así que el frontend lo pide con
     fetch() + authHeaders() y arma un blob: URL - un <video src="..."> plano
     no serviría porque el navegador no manda headers custom en esa request.
     """
-    video_path = cache_video_path(cache_key)
+    video_path = cache_video_path(cache_key, user)
     if not video_path:
         raise HTTPException(status_code=404, detail="Video no cacheado.")
     return FileResponse(video_path)
@@ -3208,16 +3238,16 @@ async def list_subtitle_fonts():
 
 
 class SubtitleCue(BaseModel):
-    start: float  # segundos, relativo al inicio del clip (no del video original)
-    end: float
-    text: str
+    start: float = Field(ge=0,allow_inf_nan=False)
+    end: float = Field(gt=0,allow_inf_nan=False)
+    text: str = Field(max_length=1000)
 
 
 class SubtitleStyle(BaseModel):
     font: str = "anton"
     color: str = "#FFFFFF"
     border_color: str = "#000000"
-    border_width: int = 3
+    border_width: int = Field(default=3,ge=0,le=12)
 
 
 def _ffprobe_dimensions(video_path: str):
@@ -3271,8 +3301,7 @@ def _render_subtitle_png(text: str, style: "SubtitleStyle", width: int, height: 
 
 
 def burn_subtitles(clip_path: str, output_path: str, cues: list, style: "SubtitleStyle"):
-    """Quema las cues de subtítulo en el clip ya cortado. Si algo falla, copia
-    el clip sin subtítulos en vez de romper toda la exportación."""
+    """Quema subtítulos; un fallo debe avisarse, nunca entregar un video incompleto."""
     import subprocess
     usable_cues = [c for c in cues if c.text and c.text.strip() and c.end > c.start]
     if not usable_cues:
@@ -3314,8 +3343,8 @@ def burn_subtitles(clip_path: str, output_path: str, cues: list, style: "Subtitl
         if result.returncode != 0:
             raise Exception(f"ffmpeg overlay: {result.stderr[:300]}")
     except Exception as e:
-        print(f"⚠ Burn-in de subtítulos falló ({e}), exportando el clip sin subtítulos.")
-        shutil.copy(clip_path, output_path)
+        print(f"⚠ Burn-in de subtítulos falló: {e}")
+        raise RuntimeError("No se pudieron incrustar los subtítulos. Reintentá o desactivá los subtítulos.") from e
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -3332,6 +3361,7 @@ class ClipSpec(BaseModel):
 
 
 class ExportClipsInput(BaseModel):
+    asset_id: str = ""
     url: str = ""
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
@@ -3341,6 +3371,7 @@ class ExportClipsInput(BaseModel):
 
 @app.post("/export-clips")
 async def export_clips_endpoint(input_data: ExportClipsInput, user: dict = Depends(get_current_user)):
+    await _validate_media_input(input_data, user)
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
         if data:
@@ -3351,8 +3382,8 @@ async def export_clips_endpoint(input_data: ExportClipsInput, user: dict = Depen
         # Si no vino cache_key (ej: exportar directo pegando una URL, sin
         # pasar antes por análisis), usamos el hash de la URL para que un
         # segundo export del mismo video pueda reusar lo recién descargado.
-        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
-        cached_video = cache_video_path(effective_cache_key)
+        effective_cache_key = input_data.cache_key or (_scoped_cache_key(url_hash(input_data.url), user) if input_data.url else "")
+        cached_video = await asyncio.to_thread(cache_video_path, effective_cache_key, user)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido para exportar clips.")
             return
@@ -3402,7 +3433,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput, user: dict = Depen
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo.")
                     return
                 video_path = input_data.video_path
-                delete_video_after = True
+                delete_video_after = False
             else:
                 yield event("downloading", f"Descargando video fuente para cortar {len(input_data.clips)} clip(s)...", {"pct": 5})
                 await asyncio.sleep(0)
@@ -3470,7 +3501,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput, user: dict = Depen
             if len(clip_files) == 1:
                 single_name = f"clip_{export_id}.mp4"
                 shutil.copy(clip_files[0], str(EXPORT_DIR / single_name))
-                _register_export(single_name, user.get("username"))
+                await asyncio.to_thread(_register_export, single_name, user.get("username"))
                 yield event("done", "✓ Clip exportado.", {
                     "download_url": f"/exports/{single_name}",
                     "filename": single_name,
@@ -3485,7 +3516,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput, user: dict = Depen
                 with zipfile.ZipFile(zip_path, "w") as zf:
                     for cf in clip_files:
                         zf.write(cf, os.path.basename(cf))
-                _register_export(zip_name, user.get("username"))
+                await asyncio.to_thread(_register_export, zip_name, user.get("username"))
                 yield event("done", f"✓ {len(clip_files)} clips empaquetados en ZIP.", {
                     "download_url": f"/exports/{zip_name}",
                     "filename": zip_name,
@@ -3574,13 +3605,15 @@ async def download_export(filename: str, user: dict = Depends(get_current_user))
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Nombre inválido.")
     filepath = EXPORT_DIR / filename
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="Archivo no encontrado o expirado.")
-    owner = _get_export_owner(filename)
+    owner = await asyncio.to_thread(_get_export_owner, filename)
     is_owner = owner is not None and owner == user.get("username")
     if not is_owner and user["role"] != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="No tenés permiso para descargar este archivo.")
-    media_type = "video/mp4" if filename.endswith(".mp4") else "application/zip"
+    if not filepath.exists():
+        restored, _ = await asyncio.to_thread(studio_store.media_path, owner, hashlib.sha256(filename.encode()).hexdigest())
+        filepath = restored
+    import mimetypes
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return FileResponse(str(filepath), media_type=media_type, filename=filename)
 
 
@@ -3593,6 +3626,7 @@ async def download_export(filename: str, user: dict = Depends(get_current_user))
 # usuario importa en su propio Premiere, funciona igual en Render.
 
 class ExportPremiereInput(BaseModel):
+    asset_id: str = ""
     url: str = ""
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
@@ -3616,6 +3650,7 @@ class ExportPremiereInput(BaseModel):
 
 @app.post("/export-premiere-xml")
 async def export_premiere_xml_endpoint(input_data: ExportPremiereInput, user: dict = Depends(require_pro)):
+    await _validate_media_input(input_data, user)
     """Exclusivo PRO (ver require_pro) - marcado como tal en el producto."""
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
@@ -3624,8 +3659,8 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput, user: di
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
-        cached_video = cache_video_path(effective_cache_key)
+        effective_cache_key = input_data.cache_key or (_scoped_cache_key(url_hash(input_data.url), user) if input_data.url else "")
+        cached_video = await asyncio.to_thread(cache_video_path, effective_cache_key, user)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido para exportar a Premiere.")
             return
@@ -3672,7 +3707,7 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput, user: di
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo.")
                     return
                 video_path = input_data.video_path
-                delete_video_after = True
+                delete_video_after = False
                 is_local_upload = True
             else:
                 yield event("downloading", "Descargando video fuente para armar la secuencia de Premiere...", {"pct": 10})
@@ -3774,7 +3809,7 @@ async def export_premiere_xml_endpoint(input_data: ExportPremiereInput, user: di
                     # usuario ya lo tiene, relinkea a mano contra su original.
                     zf.write(video_path, bundled_video_name)
 
-            _register_export(zip_name, user.get("username"))
+            await asyncio.to_thread(_register_export, zip_name, user.get("username"))
             extras = []
             if input_data.include_companion:
                 extras.append("companion")
@@ -3824,6 +3859,7 @@ def capcut_status():
 
 
 class ExportCapCutInput(BaseModel):
+    asset_id: str = ""
     url: str = ""
     video_path: str = ""
     cache_key: str = ""
@@ -3834,6 +3870,7 @@ class ExportCapCutInput(BaseModel):
 
 @app.post("/export-capcut")
 async def export_capcut_endpoint(input_data: ExportCapCutInput, user: dict = Depends(get_current_user)):
+    await _validate_media_input(input_data, user)
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
         if data:
@@ -3848,8 +3885,8 @@ async def export_capcut_endpoint(input_data: ExportCapCutInput, user: dict = Dep
             yield event("error", "No encontré capcut-cli en este servidor. Instalalo con: npm install -g capcut-cli")
             return
 
-        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
-        cached_video = cache_video_path(effective_cache_key)
+        effective_cache_key = input_data.cache_key or (_scoped_cache_key(url_hash(input_data.url), user) if input_data.url else "")
+        cached_video = await asyncio.to_thread(cache_video_path, effective_cache_key, user)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido.")
             return
@@ -3890,7 +3927,7 @@ async def export_capcut_endpoint(input_data: ExportCapCutInput, user: dict = Dep
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo.")
                     return
                 video_path = input_data.video_path
-                delete_video_after = True
+                delete_video_after = False
             else:
                 yield event("downloading", "Descargando video fuente para el clip...", {"pct": 10})
                 await asyncio.sleep(0)
@@ -3971,6 +4008,7 @@ class ReelClipSpec(BaseModel):
 
 
 class ReelExportInput(BaseModel):
+    asset_id: str = ""
     url: str = ""
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
@@ -3981,6 +4019,7 @@ class ReelExportInput(BaseModel):
 
 
 class CarouselExportInput(BaseModel):
+    asset_id: str = ""
     url: str = ""
     video_path: str = ""  # ruta de un archivo subido con /inspect-file, alternativa a url
     cache_key: str = ""   # cache_key del analisis: si el video quedo cacheado, se reusa sin descargar/subir
@@ -3992,6 +4031,7 @@ class CarouselExportInput(BaseModel):
 
 @app.post("/export-reel")
 async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends(get_current_user)):
+    await _validate_media_input(input_data, user)
     """Descarga, corta, une y convierte clips al formato de la plataforma. Devuelve un MP4."""
 
     def event(stage: str, message: str, data: dict = None):
@@ -4001,8 +4041,8 @@ async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
-        cached_video = cache_video_path(effective_cache_key)
+        effective_cache_key = input_data.cache_key or (_scoped_cache_key(url_hash(input_data.url), user) if input_data.url else "")
+        cached_video = await asyncio.to_thread(cache_video_path, effective_cache_key, user)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
@@ -4050,7 +4090,7 @@ async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends
                 if not os.path.exists(input_data.video_path):
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo."); return
                 video_path = input_data.video_path
-                delete_video_after = True
+                delete_video_after = False
             else:
                 yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
@@ -4151,7 +4191,7 @@ async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends
             if len(output_files) == 1:
                 output_name = f"reel_{input_data.platform}_{export_id}.mp4"
                 shutil.copy(output_files[0], str(EXPORT_DIR / output_name))
-                _register_export(output_name, user.get("username"))
+                await asyncio.to_thread(_register_export, output_name, user.get("username"))
                 yield event("done", f"✓ Video listo en {size_label}.", {
                     "download_url": f"/exports/{output_name}",
                     "filename": output_name,
@@ -4168,7 +4208,7 @@ async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends
                 with zipfile.ZipFile(zip_path, "w") as zf:
                     for f in output_files:
                         zf.write(f, os.path.basename(f))
-                _register_export(zip_name, user.get("username"))
+                await asyncio.to_thread(_register_export, zip_name, user.get("username"))
                 yield event("done", f"✓ {len(output_files)} clips listos en {size_label}.", {
                     "download_url": f"/exports/{zip_name}",
                     "filename": zip_name,
@@ -4194,6 +4234,7 @@ async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends
 
 @app.post("/export-carousel")
 async def export_carousel_endpoint(input_data: CarouselExportInput, user: dict = Depends(get_current_user)):
+    await _validate_media_input(input_data, user)
     """Genera un carrusel: clips 1:1 (ZIP de MP4) o placas de texto (ZIP de JPG)."""
 
     def event(stage: str, message: str, data: dict = None):
@@ -4203,8 +4244,8 @@ async def export_carousel_endpoint(input_data: CarouselExportInput, user: dict =
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     async def generator():
-        effective_cache_key = input_data.cache_key or (url_hash(input_data.url) if input_data.url else "")
-        cached_video = cache_video_path(effective_cache_key)
+        effective_cache_key = input_data.cache_key or (_scoped_cache_key(url_hash(input_data.url), user) if input_data.url else "")
+        cached_video = await asyncio.to_thread(cache_video_path, effective_cache_key, user)
         if not cached_video and not input_data.url and not input_data.video_path:
             yield event("error", "Se requiere una URL o un archivo local subido."); return
         if not input_data.clips:
@@ -4258,7 +4299,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput, user: dict =
                 if not os.path.exists(input_data.video_path):
                     yield event("error", "El archivo subido ya no existe en el servidor, volvé a subirlo."); return
                 video_path = input_data.video_path
-                delete_video_after = True
+                delete_video_after = False
             else:
                 yield event("downloading", "Descargando video fuente...", {"pct": 5})
                 await asyncio.sleep(0)
@@ -4354,7 +4395,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput, user: dict =
             with zipfile.ZipFile(zip_path, "w") as zf:
                 for f in output_files:
                     zf.write(f, os.path.basename(f))
-            _register_export(zip_name, user.get("username"))
+            await asyncio.to_thread(_register_export, zip_name, user.get("username"))
 
             yield event("done", f"✓ {len(output_files)} slides listos.", {
                 "download_url": f"/exports/{zip_name}",
@@ -4413,12 +4454,10 @@ def _plan_payload_for(username: str, role: str) -> dict:
     sin tener que pegarle a otro endpoint aparte."""
     if username == "legacy":
         return {"plan": PLAN_PRO, "unrestricted": True, "daily_usage_seconds": 0, "limits": {}}
-    users = _load_users()
-    record = users.get(username)
+    record = _get_user_row(username)
     if not record:
         return {"plan": PLAN_FREE, "unrestricted": False, "daily_usage_seconds": 0, "limits": {}}
     _ensure_plan_defaults(record)
-    _save_users(users)
     today = _today_str()
     used = record.get("daily_usage_seconds", 0) if record.get("daily_usage_date") == today else 0
     unrestricted = role == "SUPERADMIN"
@@ -4436,8 +4475,8 @@ def _plan_payload_for(username: str, role: str) -> dict:
     }
 
 
-@app.get("/auth/check", dependencies=[Depends(require_api_key)])
-def auth_check(x_api_key: str | None = Header(default=None)):
+@app.get("/auth/check")
+def auth_check(session: dict = Depends(require_api_key)):
     """
     El Auth Guard del frontend le pega a este endpoint con el header
     X-API-Key (el token guardado en el navegador) para saber si la sesión
@@ -4445,7 +4484,6 @@ def auth_check(x_api_key: str | None = Header(default=None)):
     username/role/plan para poder restaurar el estado (badge de SUPERUSER,
     plan/consumo, etc.) sin tener que loguearse de nuevo en cada F5.
     """
-    session = _sessions.get(x_api_key) if x_api_key else None
     if session:
         return {"ok": True, "username": session["username"], "role": session["role"], **_plan_payload_for(session["username"], session["role"])}
     return {"ok": True, "auth_enabled": bool(API_ACCESS_KEY)}
@@ -4465,13 +4503,14 @@ def auth_login(body: LoginBody, request: Request):
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos.")
     token = secrets.token_hex(24)
     role = user.get("role", "USER")
-    _sessions[token] = {"username": body.username, "role": role}
+    studio_store.save_session(token,body.username,role)
     return {"token": token, "username": body.username, "role": role, **_plan_payload_for(body.username, role)}
 
 
 @app.post("/auth/logout", dependencies=[Depends(require_api_key)])
 def auth_logout(x_api_key: str | None = Header(default=None)):
-    _sessions.pop(x_api_key, None)
+    if x_api_key:
+        studio_store.revoke_session(x_api_key)
     return {"ok": True}
 
 
@@ -4606,8 +4645,7 @@ def activate_user(username: str):
 
 
 def _revoke_sessions_for(username: str):
-    for tok in [t for t, s in _sessions.items() if s["username"] == username]:
-        del _sessions[tok]
+    studio_store.revoke_user_sessions(username)
 
 
 @app.post("/admin/users/{username}/reset-password", dependencies=[Depends(require_superadmin)])
@@ -4641,7 +4679,7 @@ def revoke_user_session(username: str):
     return {"ok": True}
 
 
-@app.get("/debug/ytdlp-info", dependencies=[Depends(require_api_key)])
+@app.get("/debug/ytdlp-info", dependencies=[Depends(require_superadmin)])
 def debug_ytdlp_info():
     """
     Diagnostico de la infraestructura de descarga de YouTube/Drive: versión
@@ -4682,3 +4720,129 @@ def debug_ytdlp_info():
     result["full_verbose_tail"] = verbose_output[-3000:]
 
     return JSONResponse(result)
+
+
+# Online studio handlers share the verified export implementations above.
+class AnalyzeAssetInput(BaseModel):
+    asset_id: str = Field(min_length=32, max_length=64, pattern=r"^[a-f0-9]+$")
+    engine: Literal["auto", "gemini", "groq"] = "auto"
+
+
+async def _analyze_asset_job(payload, user):
+    request = AnalyzeAssetInput(**payload)
+    path, media = await asyncio.to_thread(studio_store.media_path, account(user), request.asset_id)
+    if media["suffix"] in {".png", ".jpg", ".jpeg", ".webp", ".zip"}:
+        raise HTTPException(400, "Seleccioná un archivo de audio o video.")
+    return StreamingResponse(process_video_streaming(str(path), user, cache_key=request.asset_id, engine=request.engine), media_type="text/event-stream")
+
+
+async def _studio_ai_job(func, *args, user):
+    await _acquire_user_job_slot(user)
+    try:
+        async with _heavy_ops_semaphore:
+            return await asyncio.to_thread(func, *args)
+    finally:
+        _release_user_job_slot(user)
+
+
+async def _image_job(payload, user):
+    return await _studio_ai_job(generate_images, client, studio_store, account(user), ImageRequest(**payload), user=user)
+
+
+async def _campaign_job(payload, user):
+    return await _studio_ai_job(generate_campaign, _call_gemini_text, CampaignRequest(**payload), user=user)
+
+
+async def _campaign_package_job(payload, user):
+    filename=f"campaña_{uuid.uuid4().hex}.zip"
+    request=CampaignPackageRequest(**payload)
+    result=await _studio_ai_job(build_campaign_package,request,str(EXPORT_DIR/filename),studio_store,account(user),user=user)
+    await asyncio.to_thread(_register_export,filename,account(user))
+    return result
+
+
+async def _capcut_package_job(payload, user):
+    request = CapCutPackageRequest(**payload)
+    await _validate_media_input(request, user)
+    _check_batch_allowed(user, len(request.clips))
+    invalid = validate_clips_timespan(request.clips)
+    if invalid:
+        raise HTTPException(400, invalid)
+    await _acquire_user_job_slot(user)
+    downloaded = None
+    try:
+        async with _heavy_ops_semaphore:
+            source = request.video_path or await asyncio.to_thread(cache_video_path, request.cache_key, user)
+            if not source:
+                if not request.url:
+                    raise HTTPException(400, "Elegí una fuente para exportar.")
+                downloaded = await asyncio.to_thread(download_youtube_video, request.url)
+                source = downloaded
+            filename = f"capcut_{uuid.uuid4().hex}.zip"
+            result = await asyncio.to_thread(build_capcut_package, request, source, str(EXPORT_DIR / filename),
+                capcut_export._find_capcut_cli(), cut_single_clip, ts_to_seconds_f, inspect_media_file)
+            await asyncio.to_thread(_register_export, filename, account(user))
+            return result
+    finally:
+        if downloaded:
+            Path(downloaded).unlink(missing_ok=True)
+        _release_user_job_slot(user)
+
+
+def _export_job(endpoint, model):
+    async def run(payload, user):
+        return await endpoint(model(**payload), user=user)
+    return run
+
+
+async def _render_studio_job(payload, user):
+    request = StudioRenderRequest(**payload)
+    await _validate_media_input(request, user)
+    invalid = validate_clips_timespan(request.clips)
+    if invalid:
+        raise HTTPException(400, invalid)
+    if request.track_speaker:
+        if request.framing != "fill":
+            raise HTTPException(400,"Elegí llenar el cuadro para seguir al hablante.")
+        await asyncio.to_thread(studio_store.reserve_quota,account(user),"reframe:"+_today_str(),len(request.clips),100)
+    await _acquire_user_job_slot(user)
+    downloaded = None
+    try:
+        async with _heavy_ops_semaphore:
+            source = request.video_path or await asyncio.to_thread(cache_video_path, request.cache_key, user)
+            if not source:
+                if not request.url:
+                    raise HTTPException(400, "Elegí una fuente para exportar.")
+                downloaded = await asyncio.to_thread(download_youtube_video, request.url)
+                source = downloaded
+            filename = f"montaje_{uuid.uuid4().hex}.mp4"
+            result = await asyncio.to_thread(render_studio, request, source, str(EXPORT_DIR / filename), studio_store,
+                account(user), ts_to_seconds_f, inspect_media_file, burn_subtitles, SubtitleStyle, client, _get_active_model())
+            await asyncio.to_thread(_register_export, filename, account(user))
+            return result
+    finally:
+        if downloaded:
+            Path(downloaded).unlink(missing_ok=True)
+        _release_user_job_slot(user)
+
+
+studio_jobs = install_studio(app, studio_store, get_current_user, {
+    "analyze-url": (UrlInput, _export_job(analyze_url_stream, UrlInput), False),
+    "analyze-file": (AnalyzeAssetInput, _analyze_asset_job, False),
+    "export-clips": (ExportClipsInput, _export_job(export_clips_endpoint, ExportClipsInput), False),
+    "export-reel": (ReelExportInput, _export_job(export_reel_endpoint, ReelExportInput), False),
+    "export-carousel": (CarouselExportInput, _export_job(export_carousel_endpoint, CarouselExportInput), False),
+    "export-premiere": (ExportPremiereInput, _export_job(export_premiere_xml_endpoint, ExportPremiereInput), True),
+    "export-capcut-local": (ExportCapCutInput, _export_job(export_capcut_endpoint, ExportCapCutInput), True),
+    "export-capcut-package": (CapCutPackageRequest, _capcut_package_job, True),
+    "generate-images": (ImageRequest, _image_job, True),
+    "generate-campaign": (CampaignRequest, _campaign_job, True),
+    "render-studio": (StudioRenderRequest, _render_studio_job, True),
+    "export-campaign": (CampaignPackageRequest, _campaign_package_job, True),
+}, inspect=inspect_media_file)
+
+
+@app.get("/studio/features")
+def studio_features(user: dict = Depends(get_current_user)):
+    return {"storage": studio_store.mode, "images": True, "capcut_package": capcut_export._find_capcut_cli() is not None,
+            "capcut_local": capcut_export.capcut_available(), "campaigns": True}

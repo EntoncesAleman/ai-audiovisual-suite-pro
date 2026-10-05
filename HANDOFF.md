@@ -1,5 +1,7 @@
 # Handoff — AI Audiovisual Suite Pro (continuar en otra Mac)
 
+> Estado nuevo del estudio online: ver [README_ONLINE.md](README_ONLINE.md). Este documento conserva snapshots históricos.
+
 **Generated:** 2026-08-21 · **Última actualización:** 2026-08-28
 **Repo:** `EntoncesAleman/ai-audiovisual-suite-pro` (GitHub) — deploy en Render, servicio `audiovisual-suite-pro`
 **Next focus:** ver "📍 ESTADO ACTUAL" abajo para comparar contra la otra Mac antes de seguir — así no se pisan cambios hechos en las dos máquinas por separado.
@@ -114,7 +116,7 @@ users_db.json                           [gitignored - base de usuarios reales, c
 
 ### 1. Sistema de autenticación completo (nuevo)
 - Backend en `main.py`: `users_db.json`/`access_requests.json` (JSON en disco, gitignored), sesiones en memoria (`_sessions` dict, token por `X-API-Key` header — **se pierden al reiniciar el server**, hay que loguearse de nuevo), hash PBKDF2-HMAC-SHA256 con salt por usuario.
-- Superadmin real bootstrapeado desde `.env` (`ADMIN_USERNAME=tomas.aleman`, `ADMIN_PASSWORD=Pass120384` — **solo vive en `.env`, gitignored**, no en ningún archivo trackeado).
+- Superadmin real bootstrapeado desde `.env` (`ADMIN_USERNAME=tomas.aleman`, `ADMIN_PASSWORD=[REDACTADO]` — **solo vive en `.env`, gitignored**, no en ningún archivo trackeado).
 - Endpoints: `/auth/login`, `/auth/logout`, `/auth/check`, `/access-requests` (público), `/admin/access-requests` (listar/aprobar/rechazar), `/admin/users` (listar/resetear password/desactivar/revocar sesión).
 - Frontend nuevo: `js/modules/auth.js` + `css/auth.css` — modal de login/solicitar acceso, dropdown de cuenta (Proyectos + Cerrar sesión), panel admin (drawer) para superusuario, recuperación de contraseña reusando el flujo de "Solicitar Acceso".
 - `/login` ahora redirige a `/` (la vieja pantalla de login cósmica standalone quedó sin usar).
@@ -484,7 +486,7 @@ Dos pedidos de Tomás en la misma sesión:
 - **Repo:** `EntoncesAleman/ai-audiovisual-suite-pro` en GitHub, branch `main`. Último commit local: `d19df71` (sin pushear todavía — ver "📍 ESTADO ACTUAL" arriba).
 - **Deploy:** Render, servicio `audiovisual-suite-pro`. Esta sesión fue enteramente trabajo local — no se tocó producción ni se verificó nada en Render.
 - **CapCut:** proyectos reales del usuario en `~/Movies/CapCut/User Data/Projects/com.lveditor.draft/` (macOS), 119 en total. Todo lo de prueba de esta sesión se limpió — no queda ningún draft ni entrada de índice de AVSuite ahí.
-- **Credenciales del superadmin real:** `tomas.aleman` / `Pass120384`, solo en `.env` local (gitignored, no está en ningún artifact ni acá).
+- **Credenciales del superadmin real:** `tomas.aleman` / `[REDACTADO]`, solo en `.env` local (gitignored, no está en ningún artifact ni acá).
 
 ---
 

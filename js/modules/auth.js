@@ -1,6 +1,7 @@
 import { BACKEND_URL } from '../config.js';
-import { getApiKey, setApiKey, clearApiKey, authHeaders } from '../utils/storage.js';
+import { getApiKey, setApiKey, clearApiKey, authHeaders, setStorageAccount } from '../utils/storage.js';
 import { fetchWithTimeout } from '../utils/helpers.js';
+import { flushWorkspace } from './workspaceSync.js';
 
 // ============================================================
 // SISTEMA DE USUARIOS: Auth Guard (modal de login + solicitar
@@ -237,6 +238,8 @@ async function onRequestSubmit(e) {
 }
 
 export async function logout() {
+    document.dispatchEvent(new CustomEvent('editor-flush'));
+    await flushWorkspace();
     try {
         await fetchWithTimeout(`${BACKEND_URL}/auth/logout`, { method: 'POST', headers: authHeaders() });
     } catch (e) { /* best-effort */ }
@@ -280,6 +283,13 @@ export async function initAuthGuard() {
 // HEADER: nombre de usuario + badge SUPERUSER + botón Panel de Control
 // ------------------------------------------------------------
 function renderUserUI() {
+    if (currentUser?.username) {
+        setStorageAccount(currentUser.username);
+        if (document.body.dataset.studioAccount !== currentUser.username) {
+            document.body.dataset.studioAccount = currentUser.username;
+            document.dispatchEvent(new CustomEvent('auth-ready', { detail: currentUser }));
+        }
+    }
     const accountLabel = document.getElementById('navAccountLabel');
     const accountLink = document.getElementById('navAccountLink');
     if (accountLabel && currentUser) accountLabel.textContent = currentUser.username;

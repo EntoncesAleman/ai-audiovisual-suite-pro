@@ -21,7 +21,7 @@
 .app-logo-icon { display: flex; flex-shrink: 0; color: var(--accent-gold); }
 .app-brand-name { font-size: 16px; font-weight: 800; letter-spacing: 0.02em; color: var(--text-main); }
 
-.header-nav { display: flex; align-items: center; gap: 22px; }
+.header-nav { display: flex; align-items: center; gap: 22px; flex-wrap:wrap; max-width:100%; min-width:0; }
 .nav-link {
     display: flex; align-items: center; gap: 6px;
     color: var(--text-sub); text-decoration: none;

@@ -9,6 +9,9 @@ import { setTelemetryMetrics, resetExportPreview } from '../utils/dom.js';
 import { estimateDurationSeconds, secondsToTs, collapseRepeatedRuns } from '../utils/helpers.js';
 import { clearAssistantChat } from './assistantChat.js';
 import { isPro } from './auth.js';
+import { restoreEditor, initializeEditorHistory, persistEditor } from './editorState.js';
+import { renderAssistantChat } from './assistantChat.js';
+import { writeAccountValue } from '../utils/storage.js';
 
 // Historial "limitado" para FREE (ver AUDIT_FREE_PRO.md): vive en
 // localStorage del navegador, no en el servidor, así que esto es un tope
@@ -23,6 +26,7 @@ const FREE_HISTORY_LIMIT = 15;
 // (typ. al volver desde el historial con ?session=<id>, ver app.js).
 
 export function saveSession(data) {
+    persistEditor();
     if (state._pendingSourceUrl) { data.source_url = state._pendingSourceUrl; state._pendingSourceUrl = ""; }
     // Metadata de la tabla System Telemetry, para que sobreviva a recargar
     // esta sesión más tarde desde el historial (ver loadSessionData abajo).
@@ -41,14 +45,17 @@ export function saveSession(data) {
         alert("⚠ El historial está casi lleno. Andá al Historial y exportá/vaciá algunas sesiones antes de seguir.");
     }
     state.currentSessionId = newSession.id;
+    writeAccountValue('active_session', newSession.id);
     loadSessionData(data);
 }
 
 export function loadSessionById(id) {
+    persistEditor();
     let sessions = getSessions();
     let item = sessions.find(s => s.id === id);
     if (item) {
         state.currentSessionId = id;
+        writeAccountValue('active_session', id);
         loadSessionData(item.data);
     }
 }
@@ -75,14 +82,16 @@ export function loadSessionData(data) {
     // volcar cientos de clips sin que la persona pidiera nada. Pedido
     // explícito: que no se dispare solo, solo a mano con "Extraer
     // timestamps" o generando con IA.
-    state.clipsList = [];
+    restoreEditor(data.editor || {});
     renderClipsList();
     // Actualizar panel de video para redes
-    state.reelClipsList = [];
     renderReelClipsList();
     updateVideoPanel();
     generateIAPrompt();
     renderInteractiveTranscript();
+    renderAssistantChat();
+    initializeEditorHistory();
+    document.dispatchEvent(new CustomEvent('session-loaded'));
     resetExportPreview('previewVideo');
     const durationSec = estimateDurationSeconds(state.originalTimeline);
     setTelemetryMetrics({
@@ -95,8 +104,12 @@ export function loadSessionData(data) {
 }
 
 export function startNewSession() {
+    persistEditor();
     state.currentData = null;
     state.currentSessionId = null;
+    writeAccountValue('active_session', null);
+    state.campaign = null;
+    clearAssistantChat();
     document.getElementById('streamUrl').value = "";
     document.getElementById('localFile').value = "";
     document.getElementById('resTimeline').innerText = "Procesá un audio/video para ver acá la transcripción completa.";

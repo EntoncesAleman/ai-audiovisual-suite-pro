@@ -37,3 +37,13 @@ export const state = {
     // (sin datos por STREAM_STALL_MS), no porque el usuario le dio "Detener".
     _lastStreamStalled: false,
 };
+
+// Cuts are shared by every output format. Switching formats only changes export settings.
+let sharedClips = state.clipsList;
+for (const key of ['clipsList', 'reelClipsList']) {
+    Object.defineProperty(state, key, {
+        enumerable: true,
+        get: () => sharedClips,
+        set: value => { sharedClips = value; },
+    });
+}

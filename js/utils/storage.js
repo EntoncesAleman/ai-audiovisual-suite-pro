@@ -2,13 +2,29 @@ const SESSIONS_KEY = "video_sessions_v5";
 const API_KEY_STORAGE = "api_access_key";
 const URL_DRAFT_KEY = "draft_stream_url";
 const PROJECTS_KEY = "video_projects_v1";
+let storageAccount = null;
+
+export function getStorageAccount() { return storageAccount; }
+export function setStorageAccount(username) { storageAccount = username || null; }
+function scoped(key) { return `studio:${encodeURIComponent(storageAccount || 'anonymous')}:${key}`; }
+export function readAccountValue(key, fallback = null) {
+    try { return JSON.parse(localStorage.getItem(scoped(key))) ?? fallback; }
+    catch { return fallback; }
+}
+export function writeAccountValue(key, value) { localStorage.setItem(scoped(key), JSON.stringify(value)); }
+function notifyChange(collection) {
+    writeAccountValue('pending_sync', true);
+    document.dispatchEvent(new CustomEvent('workspace-changed', { detail: { collection } }));
+}
 
 export function getSessions() {
-    return JSON.parse(localStorage.getItem(SESSIONS_KEY)) || [];
+    const value=readAccountValue(SESSIONS_KEY, []);
+    return Array.isArray(value) ? value.filter(s => s && Number.isSafeInteger(s.id) && s.data && typeof s.data.raw_timeline==='string') : [];
 }
 
 export function setSessions(sessions) {
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+    writeAccountValue(SESSIONS_KEY, sessions);
+    notifyChange('sessions');
 }
 
 // ============================================================
@@ -18,11 +34,13 @@ export function setSessions(sessions) {
 // ============================================================
 
 export function getProjects() {
-    return JSON.parse(localStorage.getItem(PROJECTS_KEY)) || [];
+    const value=readAccountValue(PROJECTS_KEY, []);
+    return Array.isArray(value) ? value.filter(p => p && typeof p.id==='string' && typeof p.name==='string') : [];
 }
 
 export function setProjects(projects) {
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+    writeAccountValue(PROJECTS_KEY, projects);
+    notifyChange('projects');
 }
 
 // ============================================================
@@ -58,19 +76,19 @@ export function authHeaders() {
 // ============================================================
 
 export function getUrlDraft() {
-    return localStorage.getItem(URL_DRAFT_KEY) || "";
+    return readAccountValue(URL_DRAFT_KEY, "");
 }
 
 export function setUrlDraft(url) {
     if (url) {
-        localStorage.setItem(URL_DRAFT_KEY, url);
+        writeAccountValue(URL_DRAFT_KEY, url);
     } else {
-        localStorage.removeItem(URL_DRAFT_KEY);
+        localStorage.removeItem(scoped(URL_DRAFT_KEY));
     }
 }
 
 export function clearUrlDraft() {
-    localStorage.removeItem(URL_DRAFT_KEY);
+    localStorage.removeItem(scoped(URL_DRAFT_KEY));
 }
 
 // ============================================================
@@ -80,13 +98,26 @@ export function clearUrlDraft() {
 const LAST_PROMPT_KEY = "last_prompt_key";
 
 export function getLastPromptKey() {
-    return localStorage.getItem(LAST_PROMPT_KEY) || "";
+    return readAccountValue(LAST_PROMPT_KEY, "");
 }
 
 export function setLastPromptKey(key) {
     if (key) {
-        localStorage.setItem(LAST_PROMPT_KEY, key);
+        writeAccountValue(LAST_PROMPT_KEY, key);
     } else {
-        localStorage.removeItem(LAST_PROMPT_KEY);
+        localStorage.removeItem(scoped(LAST_PROMPT_KEY));
     }
+}
+
+export function getBrand() { return readAccountValue('brand', {}); }
+export function setBrand(brand) { writeAccountValue('brand', brand); notifyChange('brand'); }
+export function getWorkspaceDocument() { return { sessions: getSessions(), projects: getProjects(), brand: getBrand() }; }
+export function applyWorkspaceDocument(doc) {
+    writeAccountValue(SESSIONS_KEY, Array.isArray(doc.sessions) ? doc.sessions : []);
+    writeAccountValue(PROJECTS_KEY, Array.isArray(doc.projects) ? doc.projects : []);
+    writeAccountValue('brand', doc.brand || {});
+}
+export function getLegacyWorkspace() {
+    try { return { sessions: JSON.parse(localStorage.getItem(SESSIONS_KEY)) || [], projects: JSON.parse(localStorage.getItem(PROJECTS_KEY)) || [] }; }
+    catch { return { sessions: [], projects: [] }; }
 }

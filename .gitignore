@@ -9,3 +9,5 @@ __pycache__/
 users_db.json
 access_requests.json
 exports_index.json
+.studio-data/
+test-results/

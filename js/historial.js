@@ -7,6 +7,7 @@ import { getSessions, setSessions, authHeaders, getProjects } from './utils/stor
 import { escapeHtml } from './utils/dom.js';
 import { initAuthGuard } from './modules/auth.js';
 import { getProjectName, assignSessionToProject } from './modules/projects.js';
+import { initOnlineStudio } from './modules/onlineStudio.js';
 
 let activeProjectFilter = ""; // "" = todos, "none" = sin proyecto, o un project_id
 
@@ -17,7 +18,7 @@ function populateProjectFilter() {
     const current = sel.value;
     sel.innerHTML = '<option value="">📁 Todos los proyectos</option>'
         + '<option value="none">Sin proyecto</option>'
-        + projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+        + projects.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
     // Mantener la selección si el proyecto sigue existiendo
     if ([...sel.options].some(o => o.value === current)) sel.value = current;
 }
@@ -25,7 +26,7 @@ function populateProjectFilter() {
 function projectOptionsHtml(selectedId) {
     const projects = getProjects();
     return '<option value=""' + (!selectedId ? ' selected' : '') + '>Sin proyecto</option>'
-        + projects.map(p => `<option value="${p.id}"${p.id === selectedId ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+        + projects.map(p => `<option value="${escapeHtml(p.id)}"${p.id === selectedId ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
 }
 
 function renderSessions() {
@@ -130,6 +131,7 @@ async function clearServerCache() {
     try {
         const res = await fetch(`${BACKEND_URL}/cache-clear`, { method: 'POST', headers: authHeaders() });
         const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'No se pudo borrar el caché.');
         btn.textContent = `✅ ${data.deleted} análisis borrados`;
         setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 3000);
     } catch (e) {
@@ -139,7 +141,12 @@ async function clearServerCache() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    initOnlineStudio();
     initAuthGuard();
+    populateProjectFilter();
+    renderSessions();
+});
+document.addEventListener('workspace-ready', () => {
     populateProjectFilter();
     renderSessions();
 });

@@ -91,7 +91,7 @@ export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
         }
         const info = await res.json();
         telemetryLog('telemetry', '✓ Archivo local subido.', 'done');
-        return { video_path: info.temp_path };
+        return { asset_id: info.asset_id };
     }
     return { url };
 }

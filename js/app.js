@@ -14,6 +14,9 @@ import { initAuthGuard } from './modules/auth.js';
 import { toggleSubtitleStylePanel, updateSubtitlePreview } from './modules/subtitleStyle.js';
 import { startPremiereExport, updatePremiereClipCount } from './modules/premiereExport.js';
 import { loadTtsVoices, generateVoiceover } from './modules/voiceover.js';
+import { initOnlineStudio } from './modules/onlineStudio.js';
+import { getActiveSessionId } from './modules/editorState.js';
+import { studioRequest } from './modules/workspaceSync.js';
 
 /**
  * Render (plan free) apaga el servidor tras 15 min sin requests entrantes;
@@ -228,9 +231,26 @@ function clearTelemetryLog() {
     if (log) log.innerHTML = '';
 }
 
+let promptsReady = Promise.resolve();
+document.addEventListener('workspace-ready', async () => {
+    await promptsReady;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('job')) {
+        try {
+            const job = await studioRequest('/studio/jobs/' + encodeURIComponent(params.get('job')));
+            if (job.status === 'done' && job.result?.result) {
+                const { saveSession } = await import('./modules/sessions.js');
+                saveSession(job.result.result);
+                window.history.replaceState(null, '', window.location.pathname);
+            }
+        } catch (error) { alert(error.message); }
+    } else if (params.has('session')) loadSessionFromQueryString();
+    else if (getActiveSessionId()) loadSessionById(getActiveSessionId());
+});
 document.addEventListener("DOMContentLoaded", () => {
+    initOnlineStudio();
     initAuthGuard();
-    loadPromptsLibrary();
+    promptsReady = loadPromptsLibrary();
     loadTtsVoices();
     startKeepAlive();
     initDropzone();
@@ -239,7 +259,6 @@ document.addEventListener("DOMContentLoaded", () => {
     initPlayer();
     initSpeechMapSync();
     renderInteractiveTranscript();
-    loadSessionFromQueryString();
 });
 
 // Todos los onclick/onchange/oninput del HTML están definidos como atributos

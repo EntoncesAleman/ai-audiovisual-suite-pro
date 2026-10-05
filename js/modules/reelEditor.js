@@ -1,3 +1,4 @@
+import { durableJobFetch } from '../api/jobs.js';
 import { state } from '../state.js';
 import { BACKEND_URL, PLATFORM_DATA, STREAM_STALL_MS } from '../config.js';
 import { escapeHtml, setExportProgress, resetExportProgress, telemetryLog, showExportPreview, resetExportPreview } from '../utils/dom.js';
@@ -84,6 +85,7 @@ export function parseClipsForReel() {
 }
 
 export function renderReelClipsList() {
+    document.dispatchEvent(new CustomEvent('editor-changed'));
     const grid = document.getElementById("reelCardGrid");
     const badge = document.getElementById("reelCountBadge");
     if (!grid) return;
@@ -484,7 +486,7 @@ export async function startReelExport() {
     const clips = selected.map(c => ({
         start: c.start, end: c.end, label: c.label,
         subtitles: wantsSubtitles
-            ? buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline)
+            ? (c.subtitles || buildSubtitleCuesForClip(tsToSeconds(c.start), tsToSeconds(c.end), state.originalTimeline))
             : [],
     }));
     const subtitleStyle = wantsSubtitles ? getSubtitleStyle() : null;
@@ -501,7 +503,7 @@ export async function startReelExport() {
     };
 
     try {
-        const res = await fetch(endpoint, {
+        const res = await durableJobFetch(endpoint, {
             method: "POST",
             headers: { ...authHeaders(), "Content-Type": "application/json" },
             body: JSON.stringify({ ...source, clips, platform: state.currentPlatformKey, original_size: originalSize, subtitle_style: subtitleStyle }),

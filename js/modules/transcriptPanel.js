@@ -55,14 +55,14 @@ function renderSpeechMap(segments) {
         const nextSec = i < segments.length - 1 ? tsToSeconds(segments[i + 1].timestamp) : total;
         const startPct = total > 0 ? (startSec / total) * 100 : 0;
         const widthPct = total > 0 ? Math.max(((nextSec - startSec) / total) * 100, 0.6) : 0;
-        return `<div class="speech-map-bar" style="left:${startPct}%;width:${widthPct}%;background:${colorForSpeaker(s.speaker)};" title="${escapeHtml(s.speaker || 'Sin identificar')} · ${escapeHtml(s.timestamp)}" onclick="seekTranscriptTo('${s.timestamp}')"></div>`;
+        return `<div class="speech-map-bar" style="left:${startPct}%;width:${widthPct}%;background:${colorForSpeaker(s.speaker)};" title="${escapeHtml(s.speaker || 'Sin identificar')} · ${escapeHtml(s.timestamp)}" data-seek="${escapeHtml(s.timestamp)}"></div>`;
     }).join('');
 
     track.innerHTML = bars + '<div class="speech-map-needle" id="speechMapNeedle"></div>';
 
     if (legend) {
         legend.innerHTML = Object.entries(speakerColorMap).map(([sp, color]) => `
-            <span class="speech-map-legend-item" onclick="renameSpeaker('${escapeHtml(sp)}', event)" title="Click para renombrar"><span class="speech-map-legend-dot" style="background:${color}"></span>${escapeHtml(sp)} ✏️</span>
+            <span class="speech-map-legend-item" data-speaker="${escapeHtml(sp)}" title="Click para renombrar"><span class="speech-map-legend-dot" style="background:${color}"></span>${escapeHtml(sp)} ✏️</span>
         `).join('');
     }
 }
@@ -103,7 +103,7 @@ function renderTranscriptList(segments) {
         }
         list.innerHTML = order.map(sp => `
             <div class="transcript-speaker-group">
-                <div class="transcript-speaker-group-title" onclick="renameSpeaker('${escapeHtml(sp)}', event)" title="Click para renombrar"><span class="transcript-badge-dot" style="background:${colorForSpeaker(sp)}"></span>${escapeHtml(sp)} ✏️ <span class="transcript-speaker-count">(${groups[sp].length})</span></div>
+                <div class="transcript-speaker-group-title" data-speaker="${escapeHtml(sp)}" title="Click para renombrar"><span class="transcript-badge-dot" style="background:${colorForSpeaker(sp)}"></span>${escapeHtml(sp)} ✏️ <span class="transcript-speaker-count">(${groups[sp].length})</span></div>
                 ${groups[sp].map(s => transcriptLine(s)).join('')}
             </div>
         `).join('');
@@ -119,8 +119,8 @@ function renderTranscriptList(segments) {
 function transcriptLine(s) {
     const speaker = s.speaker || 'Sin identificar';
     return `
-        <div class="transcript-line" onclick="seekTranscriptTo('${escapeHtml(s.timestamp)}')">
-            <span class="transcript-line-badge" style="border-color:${colorForSpeaker(s.speaker)};" onclick="renameSpeaker('${escapeHtml(speaker)}', event)" title="Click para renombrar este speaker">
+        <div class="transcript-line" data-seek="${escapeHtml(s.timestamp)}">
+            <span class="transcript-line-badge" style="border-color:${colorForSpeaker(s.speaker)};" data-speaker="${escapeHtml(speaker)}" title="Click para renombrar este speaker">
                 <span class="transcript-badge-dot" style="background:${colorForSpeaker(s.speaker)};"></span>
                 ${escapeHtml(speaker)} <span class="transcript-line-time">${escapeHtml(s.timestamp)}</span>
             </span>
@@ -170,3 +170,11 @@ export function renameSpeaker(oldLabel, event) {
 window.seekTranscriptTo = seekTranscriptTo;
 window.switchTranscriptView = switchTranscriptView;
 window.renameSpeaker = renameSpeaker;
+
+// User speaker labels are data, never inline JavaScript.
+document.addEventListener('click', event => {
+    const speaker = event.target.closest('[data-speaker]');
+    if (speaker) { renameSpeaker(speaker.dataset.speaker, event); return; }
+    const seek = event.target.closest('[data-seek]');
+    if (seek) seekTranscriptTo(seek.dataset.seek);
+});

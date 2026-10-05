@@ -1,3 +1,4 @@
+import { durableJobFetch } from './jobs.js';
 import { BACKEND_URL, STREAM_STALL_MS } from '../config.js';
 import { state } from '../state.js';
 import { showLoader, updateProgress } from '../modules/loader.js';
@@ -35,7 +36,7 @@ export function startAnalysis() {
     // detrás del otro - parece que la app sigue reintentando sola después
     // del primer error, cuando en realidad son requests separados.
     if (state.currentAbortController) {
-        alert("Ya hay un análisis en curso. Esperá a que termine o usá 'Detener' antes de arrancar otro.");
+        alert("Ya estás siguiendo un análisis. Esperá a que termine o usá 'Seguir en segundo plano'; podés retomarlo desde Estudio → Trabajos.");
         return;
     }
     const fileInput = document.getElementById('localFile');
@@ -70,7 +71,7 @@ export async function analyzeUrlStream() {
         });
     } catch (e) {
         if (e.name === 'AbortError' && !state._lastStreamStalled) {
-            console.log("Análisis detenido por el usuario.");
+            console.log("Seguimiento cerrado; el trabajo enviado continúa en el servidor.");
             return;
         }
         // Antes acá se reintentaba todo de cero contra el endpoint clásico
@@ -81,9 +82,9 @@ export async function analyzeUrlStream() {
         // avisar claro y dejar que decida si reintenta.
         console.error("Streaming falló:", e);
         if (state._lastStreamStalled) {
-            alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). El servidor puede haber seguido trabajando igual: reintentá 'Procesar Enlace' en un rato.`);
+            alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). Revisá Estudio → Trabajos para recuperar el resultado antes de enviar otro pedido.`);
         } else {
-            alert("Se perdió la conexión con el servidor durante el análisis. No se perdió el link, pero hay que reintentar 'Procesar Enlace'.");
+            alert("Se perdió la conexión con el servidor durante el análisis. Revisá Estudio → Trabajos para recuperar el pedido enviado.");
         }
     } finally {
         showLoader(false);
@@ -111,14 +112,14 @@ export async function analyzeLocalFile() {
         });
     } catch (e) {
         if (e.name === 'AbortError' && !state._lastStreamStalled) {
-            console.log("Análisis detenido por el usuario.");
+            console.log("Seguimiento cerrado; el trabajo enviado continúa en el servidor.");
             return;
         }
         console.error("Streaming falló:", e);
         if (state._lastStreamStalled) {
-            alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). El servidor puede haber seguido trabajando igual: reintentá en un rato.`);
+            alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). Revisá Estudio → Trabajos para recuperar el resultado antes de enviar otro pedido.`);
         } else {
-            alert("Se perdió la conexión con el servidor durante el análisis. Volvé a subir el archivo para reintentar.");
+            alert("Se perdió la conexión con el servidor durante el análisis. Revisá Estudio → Trabajos; si la subida no llegó a terminar, volvé a enviar el archivo.");
         }
     } finally {
         showLoader(false);
@@ -139,10 +140,8 @@ export async function streamingFetch(url, opts) {
     // colgó (el backend manda un keep-alive cada 20s en los pasos largos) -
     // abortamos y marcamos el motivo para que el caller avise en vez de
     // dejar la barra de progreso congelada para siempre.
-    let watchdog = setTimeout(() => {
-        state._lastStreamStalled = true;
-        state.currentAbortController.abort();
-    }, STREAM_STALL_MS);
+    // La subida tiene su propio límite; el watchdog comienza al recibir el stream.
+    let watchdog;
     const resetWatchdog = () => {
         clearTimeout(watchdog);
         watchdog = setTimeout(() => {
@@ -151,12 +150,13 @@ export async function streamingFetch(url, opts) {
         }, STREAM_STALL_MS);
     };
     try {
-        const res = await fetch(url, {
+        const res = await durableJobFetch(url, {
             ...opts,
             headers: { ...authHeaders(), ...(opts.headers || {}) },
             signal: state.currentAbortController.signal
         });
         if (!res.ok || !res.body) throw new Error("Servidor sin respuesta streaming.");
+        resetWatchdog();
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";

@@ -2,6 +2,12 @@ import { BACKEND_URL } from '../config.js';
 import { state } from '../state.js';
 import { authHeaders } from '../utils/storage.js';
 import { escapeHtml } from '../utils/dom.js';
+import { parseAiTimestampsText, tsToSeconds, estimateDurationSeconds } from '../utils/helpers.js';
+
+function proposedCuts(content) {
+    const duration = estimateDurationSeconds(state.originalTimeline);
+    return parseAiTimestampsText(content || '').filter(clip => tsToSeconds(clip.end) > tsToSeconds(clip.start) && tsToSeconds(clip.start) >= 0 && (!duration || tsToSeconds(clip.end) <= duration));
+}
 
 /**
  * Chat de ida y vuelta del modo "Assistant" (ver /assistant-chat en main.py):
@@ -13,14 +19,31 @@ import { escapeHtml } from '../utils/dom.js';
 let sending = false;
 
 export function renderAssistantChat() {
+    document.dispatchEvent(new CustomEvent('editor-changed'));
     const list = document.getElementById('assistantChatMessages');
     if (!list) return;
     if (state.assistantChatHistory.length === 0) {
         list.innerHTML = '<div class="assistant-chat-empty">Preguntale algo sobre el material (ej: "¿de qué temas habla?", "dame 3 ideas de clips fuertes")...</div>';
     } else {
-        list.innerHTML = state.assistantChatHistory.map(m => `
-            <div class="assistant-chat-msg assistant-chat-msg-${m.role}">${escapeHtml(m.content)}</div>
-        `).join('');
+        list.innerHTML = state.assistantChatHistory.map((m,index) => {
+            const role = m.role === 'user' ? 'user' : 'assistant';
+            const cuts = role === 'assistant' ? proposedCuts(m.content) : [];
+            return `<div class="assistant-chat-msg assistant-chat-msg-${role}">${escapeHtml(m.content)}
+                ${cuts.length ? `<details><summary>Revisar ${cuts.length} cortes propuestos</summary>${cuts.map(clip => `<p>${escapeHtml(clip.start)} → ${escapeHtml(clip.end)} · ${escapeHtml(clip.label)}</p>`).join('')}<button class="studio-nav-btn" data-chat-cuts="${index}">Agregar estos cortes al editor</button></details>` : ''}</div>`;
+        }).join('');
+    }
+    if (!list.dataset.actionsBound) {
+        list.dataset.actionsBound = '1';
+        list.addEventListener('click', event => {
+            const button = event.target.closest('[data-chat-cuts]'); if (!button) return;
+            const message = state.assistantChatHistory[Number(button.dataset.chatCuts)];
+            const cuts = proposedCuts(message?.content);
+            for (const cut of cuts) {
+                if (!state.clipsList.some(existing => existing.start === cut.start && existing.end === cut.end)) state.clipsList.push({ ...cut, id:crypto.randomUUID(), selected:true });
+            }
+            document.dispatchEvent(new CustomEvent('editor-restored'));
+            button.textContent = 'Cortes agregados'; button.disabled = true;
+        });
     }
     list.scrollTop = list.scrollHeight;
 }
