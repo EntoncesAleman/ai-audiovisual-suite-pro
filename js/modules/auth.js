@@ -70,6 +70,8 @@ function injectAuthUI() {
                         <p class="auth-error" id="authLoginError" hidden></p>
                         <button type="submit" class="btn-auth-primary" id="authLoginSubmit">Iniciar Sesión</button>
                     </form>
+                    <button type="button" class="btn-auth-primary" id="btnEnterGuest" style="margin-top:12px;background:var(--bg-input);color:var(--text-main);border:1px solid var(--border)">Entrar sin cuenta · FREE</button>
+                    <p style="font-size:12px;color:var(--text-sub);text-align:center;margin:10px 0">Hasta 60 min por archivo y por día, 3 clips por exportación y un trabajo a la vez. Sin historial ni proyectos guardados.</p>
                     <div class="auth-modal-footer" style="flex-direction:column; gap:8px;">
                         <button type="button" class="btn-auth-link" id="btnForgotPassword" style="color:var(--text-sub); font-weight:600;">¿Olvidaste tu contraseña?</button>
                         <div>
@@ -126,6 +128,7 @@ function injectAuthUI() {
     document.body.append(...wrap.children);
 
     document.getElementById('authLoginForm').addEventListener('submit', onLoginSubmit);
+    document.getElementById('btnEnterGuest').addEventListener('click', onGuestSubmit);
     document.getElementById('authRequestForm').addEventListener('submit', onRequestSubmit);
     document.getElementById('btnShowRequestAccess').addEventListener('click', () => switchAuthView('request'));
     document.getElementById('btnForgotPassword').addEventListener('click', showForgotPasswordView);
@@ -178,6 +181,21 @@ function hideLoginModal() {
 // ------------------------------------------------------------
 // LOGIN / LOGOUT / CHEQUEO DE SESIÓN
 // ------------------------------------------------------------
+async function onGuestSubmit() {
+    const button = document.getElementById('btnEnterGuest');
+    const error = document.getElementById('authLoginError');
+    button.disabled = true; error.hidden = true;
+    try {
+        const response = await fetchWithTimeout(`${BACKEND_URL}/auth/guest`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'No se pudo iniciar el acceso FREE.');
+        setApiKey(data.token, true);
+        currentUser = data;
+        hideLoginModal(); renderUserUI();
+    } catch (err) { error.textContent = friendlyErrorMessage(err); error.hidden = false; }
+    finally { button.disabled = false; }
+}
+
 async function onLoginSubmit(e) {
     e.preventDefault();
     const username = document.getElementById('authLoginUsername').value.trim();
@@ -284,7 +302,7 @@ export async function initAuthGuard() {
 // ------------------------------------------------------------
 function renderUserUI() {
     if (currentUser?.username) {
-        setStorageAccount(currentUser.username);
+        setStorageAccount(currentUser.username, currentUser.role === 'GUEST');
         if (document.body.dataset.studioAccount !== currentUser.username) {
             document.body.dataset.studioAccount = currentUser.username;
             document.dispatchEvent(new CustomEvent('auth-ready', { detail: currentUser }));
@@ -292,7 +310,9 @@ function renderUserUI() {
     }
     const accountLabel = document.getElementById('navAccountLabel');
     const accountLink = document.getElementById('navAccountLink');
-    if (accountLabel && currentUser) accountLabel.textContent = currentUser.username;
+    if (accountLabel && currentUser) accountLabel.textContent = currentUser.role === 'GUEST' ? 'Invitado · FREE' : currentUser.username;
+    document.querySelectorAll('a[href="/historial"]').forEach(link => link.style.display = currentUser?.role === 'GUEST' ? 'none' : '');
+    if (currentUser?.role === 'GUEST' && location.pathname === '/historial') { location.replace('/'); return; }
     if (accountLink && !accountLink.dataset.wired) {
         accountLink.dataset.wired = '1';
         accountLink.style.position = 'relative';
@@ -322,6 +342,10 @@ function renderUserUI() {
     }
 
     const nav = document.getElementById('headerNav');
+    const projectsButton = document.getElementById('btnOpenProjects');
+    if (projectsButton) projectsButton.style.display = currentUser?.role === 'GUEST' ? 'none' : '';
+    const logoutButton = document.getElementById('btnLogout');
+    if (logoutButton && currentUser?.role === 'GUEST') logoutButton.textContent = 'Salir / Ingresar con cuenta';
     if (!nav || !currentUser) return;
 
     renderPlanBadge(nav);

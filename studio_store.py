@@ -168,7 +168,7 @@ class RecordStore:
         (self.owner_dir(owner)/f"{media_id}{data['suffix']}").unlink(missing_ok=True)
 
     def save_session(self, token, username, role):
-        session={"username":username,"role":role,"expires_at":time.time()+7*24*3600}
+        session={"username":username,"role":role,"expires_at":time.time()+(24*3600 if role=='GUEST' else 7*24*3600)}
         self.put("__sessions","session",hashlib.sha256(token.encode()).hexdigest(),session)
         return session
 

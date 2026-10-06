@@ -3,16 +3,29 @@ const API_KEY_STORAGE = "api_access_key";
 const URL_DRAFT_KEY = "draft_stream_url";
 const PROJECTS_KEY = "video_projects_v1";
 let storageAccount = null;
+let guestStorage = Boolean(sessionStorage.getItem('guest_access_key'));
+let guestValues = {};
+export function isGuestStorage() { return guestStorage; }
 
 export function getStorageAccount() { return storageAccount; }
-export function setStorageAccount(username) { storageAccount = username || null; }
+export function setStorageAccount(username, guest = false) {
+    if (storageAccount !== username) guestValues = {};
+    storageAccount = username || null;
+    guestStorage = guest;
+}
+function removeAccountValue(key) { if (guestStorage) delete guestValues[key]; else localStorage.removeItem(scoped(key)); }
 function scoped(key) { return `studio:${encodeURIComponent(storageAccount || 'anonymous')}:${key}`; }
 export function readAccountValue(key, fallback = null) {
+    if (guestStorage) return guestValues[key] ?? fallback;
     try { return JSON.parse(localStorage.getItem(scoped(key))) ?? fallback; }
     catch { return fallback; }
 }
-export function writeAccountValue(key, value) { localStorage.setItem(scoped(key), JSON.stringify(value)); }
+export function writeAccountValue(key, value) {
+    if (guestStorage) { guestValues[key] = value; return; }
+    localStorage.setItem(scoped(key), JSON.stringify(value));
+}
 function notifyChange(collection) {
+    if (guestStorage) return;
     writeAccountValue('pending_sync', true);
     document.dispatchEvent(new CustomEvent('workspace-changed', { detail: { collection } }));
 }
@@ -23,6 +36,7 @@ export function getSessions() {
 }
 
 export function setSessions(sessions) {
+    if (guestStorage) sessions = sessions.slice(0, 1);
     writeAccountValue(SESSIONS_KEY, sessions);
     notifyChange('sessions');
 }
@@ -48,22 +62,23 @@ export function setProjects(projects) {
 // ============================================================
 
 export function getApiKey() {
-    return localStorage.getItem(API_KEY_STORAGE) || "";
+    return sessionStorage.getItem('guest_access_key') || localStorage.getItem(API_KEY_STORAGE) || "";
 }
 
-export function setApiKey(key) {
-    localStorage.setItem(API_KEY_STORAGE, key);
+export function setApiKey(key, guest = false) {
+    sessionStorage.removeItem('guest_access_key');
+    if (guest) sessionStorage.setItem('guest_access_key', key);
+    else localStorage.setItem(API_KEY_STORAGE, key);
 }
 
 export function clearApiKey() {
+    sessionStorage.removeItem('guest_access_key');
     localStorage.removeItem(API_KEY_STORAGE);
 }
 
 /**
  * Header listo para mergear en cualquier fetch a un endpoint protegido.
- * Si no hay clave guardada, devuelve un objeto vacío (el backend igual
- * deja pasar todo si el operador no configuró API_ACCESS_KEY del lado
- * del servidor - ver main.py).
+ * Si no hay sesión de cuenta o invitado, devuelve un objeto vacío.
  */
 export function authHeaders() {
     const key = getApiKey();
@@ -83,12 +98,12 @@ export function setUrlDraft(url) {
     if (url) {
         writeAccountValue(URL_DRAFT_KEY, url);
     } else {
-        localStorage.removeItem(scoped(URL_DRAFT_KEY));
+        removeAccountValue(URL_DRAFT_KEY);
     }
 }
 
 export function clearUrlDraft() {
-    localStorage.removeItem(scoped(URL_DRAFT_KEY));
+    removeAccountValue(URL_DRAFT_KEY);
 }
 
 // ============================================================
@@ -105,7 +120,7 @@ export function setLastPromptKey(key) {
     if (key) {
         writeAccountValue(LAST_PROMPT_KEY, key);
     } else {
-        localStorage.removeItem(scoped(LAST_PROMPT_KEY));
+        removeAccountValue(LAST_PROMPT_KEY);
     }
 }
 

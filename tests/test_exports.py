@@ -96,14 +96,20 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(all(Path(path).is_file() for path in material_paths))
 
     def test_animated_crop_uses_bounded_ai_centers(self):
-        fake=SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kwargs:SimpleNamespace(text=json.dumps({
-            'centers':[{'index':0,'x':.2,'y':.4},{'index':1,'x':.8,'y':.5}]}))))
+        calls=[]
+        def generate(**kwargs):
+            calls.append(kwargs['model'])
+            if kwargs['model']=='test-model':
+                error=Exception('429 quota PerDay');error.code=429;raise error
+            return SimpleNamespace(text=json.dumps({'centers':[{'index':0,'x':.2,'y':.4},{'index':1,'x':.8,'y':.5}]}))
+        fake=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
         output=Path(self.tmp.name)/'tracking.mp4'
         request=StudioRenderRequest(clips=[{'start':'00:00','end':'00:02'}],aspect_ratio='9:16',framing='fill',track_speaker=True,output_width=320)
         render_studio(request,self.source,output,self.main.studio_store,'alice',self.main.ts_to_seconds_f,
             self.main.inspect_media_file,self.main.burn_subtitles,self.main.SubtitleStyle,fake,'test-model')
         info=self.main.inspect_media_file(str(output))
         self.assertTrue(info['has_video']);self.assertAlmostEqual(info['duration_seconds'],2,delta=.12)
+        self.assertEqual(calls[0],'test-model');self.assertNotEqual(calls[1],'test-model')
 
 
 if __name__=='__main__':unittest.main()

@@ -1,4 +1,4 @@
-import { authHeaders, getStorageAccount, getWorkspaceDocument, applyWorkspaceDocument, readAccountValue, writeAccountValue } from '../utils/storage.js';
+import { authHeaders, getStorageAccount, getWorkspaceDocument, applyWorkspaceDocument, readAccountValue, writeAccountValue, isGuestStorage } from '../utils/storage.js';
 
 let timer = null;
 let saving = false;
@@ -27,6 +27,12 @@ export async function studioRequest(url, options = {}) {
 }
 
 export async function connectWorkspace({ discardLocal = false } = {}) {
+    if (isGuestStorage()) {
+        ++generation; ready = false; clearTimeout(timer);
+        status('FREE sin cuenta · Sin historial', 'guest');
+        document.dispatchEvent(new CustomEvent('workspace-ready'));
+        return;
+    }
     if (!getStorageAccount()) return;
     const current = ++generation;
     ready = false;
@@ -69,6 +75,7 @@ export function scheduleSave() {
 }
 
 export async function flushWorkspace() {
+    if (isGuestStorage()) return;
     if (!ready || conflict || saving || !getStorageAccount() || !readAccountValue('pending_sync', false)) return;
     saving = true;
     const current = generation;
@@ -97,5 +104,6 @@ document.addEventListener('workspace-changed', scheduleSave);
 window.addEventListener('online', () => connectWorkspace());
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushWorkspace(); });
 window.addEventListener('beforeunload', event => {
+    if (isGuestStorage()) return;
     if (readAccountValue('pending_sync', false)) { event.preventDefault(); event.returnValue = ''; }
 });

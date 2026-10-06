@@ -1,5 +1,5 @@
 import { state } from '../state.js';
-import { getBrand, setBrand, getSessions, setSessions, getProjects, setProjects, getLegacyWorkspace, getWorkspaceDocument, authHeaders } from '../utils/storage.js';
+import { getBrand, setBrand, getSessions, setSessions, getProjects, setProjects, getLegacyWorkspace, getWorkspaceDocument, authHeaders, isGuestStorage } from '../utils/storage.js';
 import { studioRequest, connectWorkspace, flushWorkspace } from './workspaceSync.js';
 import { submitStudioJob, waitForStudioJob } from '../api/jobs.js';
 import { downloadAuthenticated, resolveExportSource, playFromSource } from '../api/api.js';
@@ -199,6 +199,12 @@ export function initOnlineStudio() {
     });
     document.addEventListener('editor-restored', changed);
     document.addEventListener('session-loaded', () => { renderTimeline(); renderCampaign(); });
+    document.addEventListener('auth-ready', () => {
+        document.querySelectorAll('[data-tab]').forEach(button => {
+            button.style.display = isGuestStorage() && !['editor','subtitles'].includes(button.dataset.tab) ? 'none' : '';
+        });
+        if (isGuestStorage()) activeTab = 'editor';
+    });
     document.addEventListener('workspace-ready', populateBrand);
     document.addEventListener('jobs-changed', () => { if (!overlay.hidden && activeTab === 'jobs') refreshJobs(); });
 }
@@ -209,6 +215,7 @@ export function openStudio(tab = 'images') {
 }
 function closeStudio() { el('studioOverlay').hidden = true; clearInterval(polling); persistEditor(); lastFocus?.focus(); }
 async function switchTab(tab) {
+    if (isGuestStorage() && !['editor','subtitles'].includes(tab)) tab = 'editor';
     activeTab = tab; clearInterval(polling); feedback('');
     document.querySelectorAll('[data-panel]').forEach(panel => panel.hidden = panel.dataset.panel !== tab);
     document.querySelectorAll('[data-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.tab === tab)));

@@ -86,4 +86,35 @@ try {
     assert.deepEqual(errors,[]);
     console.log('Browser checks passed: login, private workspace, reload/autosave, images, campaigns, history, two-tab conflicts, mobile.');
     await other.close();
+    const guestContext=await browser.newContext({viewport:{width:390,height:844}});
+    const guest=await guestContext.newPage();guest.on('pageerror',error=>errors.push(error.message));
+    await guest.goto('http://127.0.0.1:8769/');
+    await guest.getByRole('button',{name:'Entrar sin cuenta · FREE'}).click();
+    await guest.waitForFunction(()=>document.getElementById('navAccountLabel')?.textContent==='Invitado · FREE');
+    assert.match(await guest.locator('#studioSaveStatus').textContent(),/Sin historial/);
+    assert.equal(await guest.locator('a[href="/historial"]').isVisible(),false);
+    const authenticated=await guest.evaluate(async()=>{
+        const token=sessionStorage.getItem('guest_access_key');
+        const response=await fetch('/auth/check',{headers:{'X-API-Key':token}});
+        return {user:await response.json(),localToken:localStorage.getItem('api_access_key')};
+    });
+    assert.equal(authenticated.user.plan,'FREE');assert.equal(authenticated.localToken,null);
+    await guest.evaluate(async()=>{
+        const {saveSession}=await import('/js/modules/sessions.js');
+        saveSession({title:'Análisis temporal',raw_timeline:'TIMESTAMP: 00:00\nSPEAKER: Persona\nDIALOGUE: Material sintético para probar el acceso sin cuenta.'});
+    });
+    assert.equal(await guest.evaluate(()=>Object.keys(localStorage).some(key=>key.includes('__guest__'))),false);
+    await guest.getByRole('button',{name:'Estudio',exact:true}).click();
+    assert.equal(await guest.locator('[data-tab="sync"]').isVisible(),false);
+    assert.equal(await guest.locator('[data-tab="jobs"]').isVisible(),false);
+    await guest.locator('#studioClose').click();
+    await guest.reload();
+    await guest.waitForFunction(()=>document.getElementById('navAccountLabel')?.textContent==='Invitado · FREE');
+    assert.equal(await guest.evaluate(async()=>(await import('/js/utils/storage.js')).getSessions().length),0);
+    assert.equal(await guest.evaluate(async()=>(await import('/js/state.js')).state.currentData),null);
+    await guest.goto('http://127.0.0.1:8769/historial');
+    await guest.waitForURL('http://127.0.0.1:8769/');
+    assert.deepEqual(errors,[]);
+    console.log('Guest checks passed: public entry, FREE limits, no saved history, reload, private tabs.');
+    await guestContext.close();
 } finally {await browser.close();}

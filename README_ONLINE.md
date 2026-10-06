@@ -16,6 +16,16 @@ Actualizado el 5 de octubre de 2026. `HANDOFF.md` y `AUDIT_FREE_PRO.md` son docu
 - Subtítulos editables por clip, tiempos y SRT. Separación por palabra con tiempos estimados, que se pueden ajustar antes de exportar.
 - El asistente permite revisar cortes propuestos y agregarlos al editor. Premiere conserva su exportador existente, validado previamente por el propietario.
 
+## Acceso sin cuenta y modelos gratuitos
+
+La pantalla inicial permite **Entrar sin cuenta · FREE**: hasta 60 minutos por archivo y por día (UTC), tres clips por exportación y un trabajo en curso. No incluye historial, biblioteca persistente ni proyectos guardados, y las funciones PRO siguen protegidas en el servidor. El material actual vive en memoria del navegador; recargar descarta el análisis. El token temporal vive en sessionStorage y vence a las 24 horas. No se crea una fila en la tabla de usuarios.
+
+La cuota de invitado se comparte por dirección de red, con un HMAC persistido y propietarios aleatorios para aislar los archivos de cada sesión. Renovar la sesión no renueva el cupo diario; personas detrás de la misma red comparten ese cupo. Los archivos y registros necesarios para procesar no constituyen un historial consultable; la retención del almacenamiento interno requiere la política operativa indicada más abajo.
+
+Texto, análisis, reencuadre y voz recorren alternativas con nivel gratuito. `GEMINI_MODELS`, `GEMINI_REFRAME_MODELS` y `GEMINI_TTS_MODELS` permiten ajustar el orden. No se habilita facturación ni se cambia la clave. Un 429 temporal enfría ese modelo y se intenta el siguiente sin esperar; las cuotas diarias vuelven a comprobarse a medianoche del Pacífico, y los 404 en una hora. Se desactivan los reintentos ocultos del SDK. Prueba real con la clave existente: texto respondió con `gemini-3.5-flash`.
+
+Imágenes también prueba sus alternativas compatibles (`GEMINI_IMAGE_MODELS`), pero sus modelos actuales **no ofrecen nivel gratuito en la API**. Si ninguno tiene cuota, termina con un mensaje claro; no se sustituye por un modelo de texto ni se presenta una imagen inexistente como resultado. Fuentes: [precios](https://ai.google.dev/gemini-api/docs/pricing) y [límites por proyecto](https://ai.google.dev/gemini-api/docs/rate-limits).
+
 ## Activación online
 
 1. Aplicar **`migrations/001_online_studio.sql`** en el SQL Editor del proyecto Supabase existente. Crea una tabla, un RPC de escritura con control de revisión y el bucket privado `avsuite-media`. No borra ni modifica usuarios o exports anteriores.
@@ -52,7 +62,7 @@ La biblioteca muestra los últimos 100 archivos y Trabajos los últimos 50. Los 
 venv/bin/python -m unittest discover -s tests -v
 ```
 
-Las 16 pruebas pasan e incluyen aislamiento de cuentas, conflictos de guardado, recuperación de objetos, límites de subida, cuotas, sesiones, jobs idempotentes y exports reales FFmpeg/CapCut con material sintético. Imágenes, campañas y seguimiento usan proveedores simulados en las pruebas automatizadas.
+Las 27 pruebas pasan e incluyen aislamiento de cuentas, conflictos de guardado, recuperación de objetos, límites de subida, cuotas, sesiones, jobs idempotentes y exports reales FFmpeg/CapCut con material sintético. Imágenes, campañas y seguimiento usan proveedores simulados en las pruebas automatizadas.
 
 Para la interfaz, `tests/preview_server.py` ofrece un servidor **aislado de pruebas** con usuarios/proveedores falsos. No empaquetarlo ni publicarlo: tiene un endpoint de reinicio de fixtures.
 
@@ -61,7 +71,7 @@ venv/bin/python -m uvicorn tests.preview_server:app --host 127.0.0.1 --port 8769
 node tests/browser.mjs
 ```
 
-El script de navegador usa Playwright desde `/private/tmp/avsuite-browser-tests` y Chrome de macOS. Adaptar ambas rutas en el script para otro entorno. Verifica login, guardado tras recarga, conflicto entre dos pestañas, imágenes, campañas, historial y móvil. No usa cuentas ni proyectos reales.
+El script de navegador usa Playwright desde `/private/tmp/avsuite-browser-tests` y Chrome de macOS. Adaptar ambas rutas en el script para otro entorno. Verifica login, acceso FREE sin cuenta y sin historial, guardado tras recarga, conflicto entre dos pestañas, imágenes, campañas, historial y móvil. No usa cuentas ni proyectos reales.
 
 ## Próximas ampliaciones
 

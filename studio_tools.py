@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from google.genai import types
 from PIL import Image
 from pydantic import BaseModel, Field
+from gemini_models import IMAGE_MODELS, ModelsUnavailable, configured_models, generate_with_fallback
 
 
 class ImageRequest(BaseModel):
@@ -34,24 +35,21 @@ def generate_images(client, store, owner, request):
             contents.append(reference.copy())
     contents.append(request.prompt + (f"\nIdentidad visual solicitada: {request.brand}" if request.brand else ""))
     results = []
-    model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
+    models = configured_models("GEMINI_IMAGE_MODELS", IMAGE_MODELS, os.getenv("GEMINI_IMAGE_MODEL"))
     for variant in range(request.variants):
         try:
-            response = client.models.generate_content(
-                model=model, contents=contents,
+            response, model = generate_with_fallback(
+                client, models, contents=contents,
                 config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"],
                     image_config=types.ImageConfig(aspect_ratio=request.aspect_ratio),
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)),
+                valid=lambda response: any(getattr(part, 'inline_data', None) and part.inline_data.mime_type.startswith('image/') for part in (getattr(response, 'parts', None) or [])),
+                capability="generar imágenes",
             )
-        except Exception as exc:
-            code=getattr(exc,"code",None)
-            if code==429:
-                raise HTTPException(429,"El proveedor de imágenes agotó su cuota. Revisá la cuota de Gemini antes de reintentar.") from exc
-            if code==404:
-                raise HTTPException(503,"El modelo de imágenes configurado no está disponible. Revisá GEMINI_IMAGE_MODEL.") from exc
-            if code in {400,401,403}:
-                raise HTTPException(503,"El proveedor no autorizó la generación. Revisá la clave, permisos y facturación de Gemini.") from exc
-            raise
+        except ModelsUnavailable as exc:
+            raise HTTPException(429 if exc.quota else 503,
+                "Ningún modelo de imágenes tiene cuota disponible para esta clave. Se probaron las alternativas. "
+                "Los modelos actuales de imágenes de Gemini no ofrecen nivel gratuito; texto, análisis y edición siguen disponibles.") from exc
         parts = getattr(response, "parts", None) or []
         image_data = next((part.inline_data for part in parts if part.inline_data and part.inline_data.mime_type.startswith("image/")), None)
         if not image_data:

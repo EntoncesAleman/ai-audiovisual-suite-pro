@@ -30,6 +30,11 @@ def account(user):
     return username
 
 
+def require_saved_account(user):
+    if user.get('guest'):
+        raise HTTPException(403, 'Entrar sin cuenta no incluye historial, biblioteca ni proyectos guardados. Iniciá sesión para usar estas funciones.')
+
+
 async def upload_media(store, user, file, max_bytes=512 * 1024 * 1024, inspect=None):
     owner = account(user)
     media_id = uuid.uuid4().hex
@@ -196,11 +201,13 @@ def install_studio(app, store, current_user, handlers, inspect=None):
 
     @app.get("/studio/workspace")
     async def workspace(user: dict = Depends(current_user)):
+        require_saved_account(user)
         row = await asyncio.to_thread(store.get, account(user), "workspace", "main")
         return {"revision": row["revision"] if row else 0, "document": row["payload"] if row else {"sessions": [], "projects": [], "brand": {}}}
 
     @app.put("/studio/workspace")
     async def save_workspace(body: WorkspaceInput, user: dict = Depends(current_user)):
+        require_saved_account(user)
         if len(json.dumps(body.document)) > 8 * 1024 * 1024:
             raise HTTPException(413, "El proyecto supera el máximo de guardado. Exportá parte del historial.")
         if not isinstance(body.document.get("sessions", []), list) or not isinstance(body.document.get("projects", []), list):
@@ -214,6 +221,7 @@ def install_studio(app, store, current_user, handlers, inspect=None):
 
     @app.get("/studio/media")
     async def media_list(user: dict = Depends(current_user)):
+        require_saved_account(user)
         rows = await asyncio.to_thread(store.list, account(user), "media", 100)
         return {"media": [{"id": row["id"], **row["payload"], "download_url": f"/studio/media/{row['id']}"} for row in rows]}
 
@@ -237,6 +245,7 @@ def install_studio(app, store, current_user, handlers, inspect=None):
 
     @app.get("/studio/jobs")
     async def list_jobs(user: dict = Depends(current_user)):
+        require_saved_account(user)
         rows = await asyncio.to_thread(store.list, account(user), "job", 50)
         return {"jobs": [manager.public(row) for row in rows]}
 

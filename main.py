@@ -30,6 +30,7 @@ import requests
 from dotenv import load_dotenv
 import premiere_export
 import capcut_export
+from gemini_models import TEXT_MODELS, TTS_MODELS, configured_models, cooldowns, daily_quota_exhausted, error_code
 from studio_store import RecordStore
 from studio_backend import install_studio, upload_media, account
 from studio_tools import ImageRequest, CampaignRequest, CapCutPackageRequest, generate_images, generate_campaign, build_capcut_package
@@ -82,7 +83,10 @@ if not GEMINI_API_KEY:
         "Ejemplo (Windows PowerShell): $env:GEMINI_API_KEY='tu_clave'"
     )
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+# La app controla la rotación; evitar reintentos ocultos del SDK contra el
+# mismo modelo antes de llegar a una alternativa con cuota disponible.
+client = genai.Client(api_key=GEMINI_API_KEY, http_options=genai_types.HttpOptions(
+    retry_options=genai_types.HttpRetryOptions(attempts=1)))
 
 # ------------------------------------------------------------------
 # Acceso a la API: la pantalla de login (login.html) todavía no tenía
@@ -239,6 +243,8 @@ def require_api_key(x_api_key: str | None = Header(default=None)):
     if x_api_key:
         session = studio_store.get_session(x_api_key)
         if session:
+            if session.get('role') == 'GUEST' and session['username'].startswith('__guest__.'):
+                return session
             user = _get_user_row(session["username"])
             if not user or not user.get("active",True):
                 raise HTTPException(401,"Sesión inválida o expirada. Iniciá sesión de nuevo.")
@@ -298,6 +304,9 @@ def get_current_user(x_api_key: str | None = Header(default=None)) -> dict:
     session = require_api_key(x_api_key)
     username = session.get("username")
     role = session.get("role", "USER")
+    if role == 'GUEST':
+        return {'username': username, 'role': role, 'guest': True,
+                'quota_owner': _guest_quota_owner(username), **_plan_payload_for(username, role)}
     if username == "legacy":
         # API_ACCESS_KEY estática (compatibilidad, sin cuenta real detrás):
         # no tiene sentido meterle límites de plan a un secreto compartido.
@@ -340,6 +349,11 @@ def _check_free_quota(user: dict, duration_seconds: float | None):
     username = user.get("username")
     if not username:
         return
+    if user.get('guest'):
+        used = _guest_usage(username)
+        if used + (duration_seconds or 0) > FREE_DAILY_LIMIT_SECONDS:
+            raise HTTPException(403, 'Alcanzaste los 60 minutos diarios del acceso FREE sin cuenta. Probá mañana o ingresá con una cuenta PRO.')
+        return
     record = _get_user_row(username)
     if not record:
         return
@@ -365,6 +379,10 @@ def _record_usage(username: str | None, duration_seconds: float | None):
     permite hasta 3 jobs simultáneos - ver PRO_MAX_CONCURRENT_JOBS).
     """
     if not username or username == "legacy" or not duration_seconds:
+        return
+    if username.startswith('__guest__.'):
+        studio_store.reserve_quota('__guest_limits', _guest_quota_owner(username)+':'+_today_str(),
+                                   int(round(duration_seconds)), FREE_DAILY_LIMIT_SECONDS)
         return
     _supabase_request(
         "POST", "rpc/increment_usage",
@@ -400,7 +418,7 @@ def _max_jobs_for(user: dict) -> int:
 
 
 async def _acquire_user_job_slot(user: dict):
-    username = user.get("username")
+    username = user.get('quota_owner') or user.get("username")
     if not username or username == "legacy" or user.get("unrestricted"):
         return
     async with _user_jobs_lock:
@@ -411,7 +429,7 @@ async def _acquire_user_job_slot(user: dict):
 
 
 def _release_user_job_slot(user: dict):
-    username = user.get("username")
+    username = user.get('quota_owner') or user.get("username")
     if not username or username == "legacy" or user.get("unrestricted"):
         return
     current = _user_active_jobs.get(username, 0)
@@ -1242,36 +1260,9 @@ CHUNK_THRESHOLD_MIN = int(os.getenv("CHUNK_THRESHOLD_MIN", "15"))   # umbral par
 CHUNK_DURATION_MIN = int(os.getenv("CHUNK_DURATION_MIN", "10"))    # duración de cada tramo
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "65536"))   # tope de salida por llamada
 
-# Lista de modelos Gemini en orden de preferencia (fallback automático al agotar cuota diaria).
-# Cada modelo tiene su propia cuota diaria separada en el free tier, así que sumar más
-# modelos a la lista aumenta la capacidad total gratuita antes de que la app deje de funcionar.
-# gemini-3.1-flash-lite tiene ~500 req/día (vs ~20 req/día del resto), por eso se dejó
-# último como red de contención de alta capacidad en vez de primero.
-GEMINI_MODELS = [
-    m.strip() for m in os.getenv(
-        "GEMINI_MODELS",
-        # gemini-2.0-flash, gemini-2.0-flash-lite, gemini-2.5-flash-lite y
-        # gemini-2.5-flash fueron dados de baja por Google (404 NOT_FOUND
-        # permanente, "no longer available") - sacados de la lista default
-        # para no desperdiciar reintentos contra modelos que nunca van a
-        # responder. gemini-2.5-flash en particular estaba anunciado para
-        # el 16/10/2026 pero confirmado 404 en vivo ya el 28/09/2026 -
-        # dado de baja antes de lo anunciado.
-        # gemini-3.7-flash (el más nuevo) NO va primero a propósito: probado
-        # a mano el 2026-08-25 contra audio real, devuelve 0 candidatos +
-        # 503 "high demand" de forma consistente - muy probablemente por ser
-        # recién salido y todavía en rollout inestable del lado de Google.
-        # Como no es un 404 "modelo muerto" ni una cuota agotada, el código
-        # no lo descarta solo: si queda primero, gasta los 3 intentos + el
-        # fallback contra un modelo roto antes de rendirse. Se lo deja
-        # último, probar de nuevo a ponerlo más arriba en unas semanas.
-        "gemini-3.6-flash,gemini-3.5-flash,"
-        "gemini-3.1-flash-lite,gemini-3.7-flash"
-    ).split(",") if m.strip()
-]
-
-# Modelos con cuota diaria agotada en esta sesión del servidor
-_exhausted_models: set = set()
+# Alternativas con nivel gratuito, en orden; la cuota depende del proyecto API.
+GEMINI_MODELS = configured_models("GEMINI_MODELS", TEXT_MODELS)
+_exhausted_models = cooldowns
 
 
 def get_video_duration_seconds(video_path: str) -> float:
@@ -1734,17 +1725,14 @@ def _is_meaningful_transcript(text: str) -> bool:
 
 def _is_daily_quota_exhausted(e: Exception) -> bool:
     """True si la cuota DIARIA del modelo está agotada (no sirve esperar, hay que cambiar de modelo)."""
-    msg = str(e)
-    is_quota_error = "429" in msg or "RESOURCE_EXHAUSTED" in msg
-    is_daily = "PerDay" in msg or "per_day" in msg.lower() or "daily" in msg.lower()
-    return is_quota_error and is_daily
+    return daily_quota_exhausted(e)
 
 
 def _is_model_unavailable(e: Exception) -> bool:
     """
     True si el modelo fue dado de baja por Google (404 NOT_FOUND, "no longer
     available"). Igual que la cuota diaria agotada: no sirve reintentar,
-    hay que descartar el modelo para el resto de esta sesión del server.
+    se enfría el modelo y se vuelve a comprobar su disponibilidad más tarde.
     """
     msg = str(e)
     return "404" in msg and ("NOT_FOUND" in msg or "not found" in msg.lower() or "no longer available" in msg.lower())
@@ -1833,11 +1821,9 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 4):
     contra ESE modelo hasta agotar los intentos, sin llegar a probar
     nunca los otros 4 sanos de la lista.
     - Cuota diaria agotada / 404 (dado de baja) → se descarta el modelo
-      para el resto de la sesión, como antes (nunca tiene sentido
-      reintentarlo).
-    - Rate limit por minuto (429) → espera el retry_delay sugerido
-      (con techo) y pasa igual al siguiente modelo - no se queda
-      esperando ahí si hay otro modelo con cuota propia disponible.
+      hasta la renovación diaria o un nuevo chequeo de disponibilidad.
+    - Rate limit por minuto (429) → enfría ese modelo y prueba el siguiente
+      sin esperar; reintenta después del plazo indicado por el proveedor.
     - Cualquier otro error, o respuesta vacía/de mala calidad → pasa
       directo al siguiente modelo, sin esperar.
     Da hasta `max_cycles` vueltas completas a la lista (un modelo con un
@@ -1847,7 +1833,7 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 4):
     last_error = None
 
     for cycle in range(1, max_cycles + 1):
-        if cycle > 1:
+        if cycle > 1 and any(model not in cooldowns for model in GEMINI_MODELS):
             # Pausa entre vueltas completas (ver mismo razonamiento en
             # _call_gemini_text): si TODOS los modelos dieron 503 en la
             # vuelta anterior, un respiro le da tiempo a la sobrecarga de
@@ -1857,7 +1843,7 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 4):
         models_this_cycle = [m for m in GEMINI_MODELS if m not in _exhausted_models]
         if not models_this_cycle:
             raise Exception(
-                f"Todos los modelos de Gemini tienen la cuota diaria agotada "
+                f"No quedan modelos Gemini disponibles para este pedido "
                 f"({', '.join(GEMINI_MODELS)}). Último error: {last_error}."
             )
         for model in models_this_cycle:
@@ -1877,24 +1863,26 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 4):
                 print(f"   ⚠ [{model}] devolvió respuesta vacía o sin contenido de calidad. Probando siguiente modelo...")
             except Exception as e:
                 last_error = e
+                if error_code(e) == 401:
+                    raise Exception("La clave de Gemini no autorizó la petición. Revisá GEMINI_API_KEY.") from None
                 if _is_daily_quota_exhausted(e):
-                    print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Descartándolo para el resto de esta sesión...")
+                    print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Descartándolo hasta que se renueve la cuota...")
                     _exhausted_models.add(model)
                 elif _is_model_unavailable(e):
-                    print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo para el resto de esta sesión...")
-                    _exhausted_models.add(model)
+                    print(f"   ⚠ [{model}] no está disponible (404). Se comprobará nuevamente en una hora...")
+                    _exhausted_models.add(model, seconds=3600)
                 elif _is_quota_error(e):
-                    wait = min(_extract_retry_delay(e), 20)
-                    print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s antes de probar el siguiente...")
-                    time.sleep(wait)
+                    print(f"   ⚠ Rate limit temporal (429) en [{model}]. Probando el siguiente sin esperar...")
+                    cooldowns.note_failure(model, e)
                 else:
+                    cooldowns.note_failure(model, e)
                     print(f"   ⚠ [{model}] error: {type(e).__name__}: {e}. Probando siguiente modelo...")
 
     # Último recurso: prompt corto con el modelo activo
     model = _get_active_model()
     if model is None:
         raise Exception(
-            f"Todos los modelos de Gemini tienen la cuota diaria agotada. Último error: {last_error}."
+            f"No quedan modelos Gemini disponibles para este pedido. Último error: {last_error}."
         )
     print(f"   Cambiando a prompt de fallback simplificado [modelo: {model}]...")
     try:
@@ -1914,7 +1902,7 @@ def _call_gemini_with_retry(uploaded_file, max_cycles: int = 4):
     except Exception as e:
         last_error = e
         if _is_daily_quota_exhausted(e) or _is_model_unavailable(e):
-            _exhausted_models.add(model)
+            cooldowns.note_failure(model, e)
         print(f"   ⚠ Fallback también falló: {e}")
 
     raise Exception(
@@ -1936,7 +1924,7 @@ def _call_gemini_text(prompt: str, max_cycles: int = 4) -> str:
     last_error = None
 
     for cycle in range(1, max_cycles + 1):
-        if cycle > 1:
+        if cycle > 1 and any(model not in cooldowns for model in GEMINI_MODELS):
             # Pausa entre vueltas completas (no entre modelos individuales):
             # si TODOS los modelos dieron 503 "alta demanda" en la vuelta
             # anterior, probarlos nuevamente de inmediato pega contra la
@@ -1947,7 +1935,7 @@ def _call_gemini_text(prompt: str, max_cycles: int = 4) -> str:
         models_this_cycle = [m for m in GEMINI_MODELS if m not in _exhausted_models]
         if not models_this_cycle:
             raise Exception(
-                f"Todos los modelos de Gemini tienen la cuota diaria agotada "
+                f"No quedan modelos Gemini disponibles para este pedido "
                 f"({', '.join(GEMINI_MODELS)}). Último error: {last_error}."
             )
         for model in models_this_cycle:
@@ -1967,17 +1955,19 @@ def _call_gemini_text(prompt: str, max_cycles: int = 4) -> str:
                 print(f"   ⚠ [{model}] devolvió respuesta vacía o muy corta. Probando siguiente modelo...")
             except Exception as e:
                 last_error = e
+                if error_code(e) == 401:
+                    raise Exception("La clave de Gemini no autorizó la petición. Revisá GEMINI_API_KEY.") from None
                 if _is_daily_quota_exhausted(e):
-                    print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Descartándolo para el resto de esta sesión...")
+                    print(f"   ⚠ Cuota DIARIA agotada para [{model}]. Descartándolo hasta que se renueve la cuota...")
                     _exhausted_models.add(model)
                 elif _is_model_unavailable(e):
-                    print(f"   ⚠ [{model}] fue dado de baja por Google (404). Descartándolo para el resto de esta sesión...")
-                    _exhausted_models.add(model)
+                    print(f"   ⚠ [{model}] no está disponible (404). Se comprobará nuevamente en una hora...")
+                    _exhausted_models.add(model, seconds=3600)
                 elif _is_quota_error(e):
-                    wait = min(_extract_retry_delay(e), 20)
-                    print(f"   ⚠ Rate limit temporal (429) en [{model}]. Esperando {wait}s antes de probar el siguiente...")
-                    time.sleep(wait)
+                    print(f"   ⚠ Rate limit temporal (429) en [{model}]. Probando el siguiente sin esperar...")
+                    cooldowns.note_failure(model, e)
                 else:
+                    cooldowns.note_failure(model, e)
                     print(f"   ⚠ [{model}] error: {type(e).__name__}: {e}. Probando siguiente modelo...")
 
     raise Exception(f"Gemini no devolvió respuesta tras {max_cycles} ciclo(s). Último error: {last_error}.")
@@ -2775,18 +2765,8 @@ async def generate_with_ai(input_data: GenerateWithAiInput, user: dict = Depends
 # VOICEOVER / DOBLAJE (Gemini TTS)
 # ============================================================
 
-# Modelos con TTS dedicado de Gemini - mismo SDK y cuenta que ya usa el
-# proyecto para transcripción/generación de texto, sin dependencia nueva.
-# El flash-preview es el default (probado en vivo, rápido); el pro-preview
-# queda como respaldo (mejor calidad, cuota más chica) si el primero falla.
-# Son modelos "preview": mismo cuidado que gemini-3.5-transcribe en HANDOFF.md
-# (probar con casos reales antes de prometerlos como 100% estables).
-GEMINI_TTS_MODELS = [
-    m.strip() for m in os.getenv(
-        "GEMINI_TTS_MODELS",
-        "gemini-2.5-flash-preview-tts,gemini-2.5-pro-preview-tts",
-    ).split(",") if m.strip()
-]
+# Alternativas de voz con nivel gratuito; no habilita facturación.
+GEMINI_TTS_MODELS = configured_models("GEMINI_TTS_MODELS", TTS_MODELS)
 
 # Voces prebuilt de Gemini confirmadas en vivo contra la API real (de las ~30
 # que documenta Google, esta es la muestra que efectivamente devolvió audio
@@ -2853,6 +2833,8 @@ async def generate_voiceover(input_data: TtsInput, user: dict = Depends(require_
 
         last_error = None
         for model in GEMINI_TTS_MODELS:
+            if model in cooldowns:
+                continue
             try:
                 response = await asyncio.to_thread(
                     client.models.generate_content,
@@ -2885,6 +2867,7 @@ async def generate_voiceover(input_data: TtsInput, user: dict = Depends(require_
                 return {"download_url": f"/exports/{filename}", "filename": filename, "model": model, "voice": voice}
             except Exception as e:
                 last_error = e
+                cooldowns.note_failure(model, e)
                 print(f"   ⚠ TTS con {model} falló ({e}). Probando siguiente modelo...")
                 continue
 
@@ -3556,6 +3539,8 @@ async def list_exports(user: dict = Depends(get_current_user)):
     SUPERADMIN ve todo. Los archivos "huérfanos" (de antes de esta fase,
     sin dueño registrado) solo los ve SUPERADMIN, por las dudas.
     """
+    if user.get('guest'):
+        raise HTTPException(403, 'El acceso sin cuenta no incluye historial de exportaciones.')
     idx = _load_exports_index()
     is_admin = user["role"] == "SUPERADMIN"
     files = sorted(
@@ -4452,6 +4437,11 @@ def _plan_payload_for(username: str, role: str) -> dict:
     """Bloque de plan/consumo/límites que se manda al frontend en login y
     auth/check, para que la UI pueda mostrar 'FREE 12/60 min hoy' o 'PRO'
     sin tener que pegarle a otro endpoint aparte."""
+    if role == 'GUEST':
+        return {'plan': PLAN_FREE, 'unrestricted': False, 'daily_usage_seconds': _guest_usage(username),
+                'limits': {'daily_seconds': FREE_DAILY_LIMIT_SECONDS, 'max_file_seconds': FREE_MAX_FILE_SECONDS,
+                           'max_batch_clips': FREE_MAX_BATCH_CLIPS, 'max_concurrent_jobs': FREE_MAX_CONCURRENT_JOBS,
+                           'history': False}}
     if username == "legacy":
         return {"plan": PLAN_PRO, "unrestricted": True, "daily_usage_seconds": 0, "limits": {}}
     record = _get_user_row(username)
@@ -4492,6 +4482,28 @@ def auth_check(session: dict = Depends(require_api_key)):
 class LoginBody(BaseModel):
     username: str
     password: str
+
+
+def _guest_quota_owner(username):
+    return username.split('.')[1]
+
+
+def _guest_usage(username):
+    row = studio_store.get('__guest_limits', 'quota', _guest_quota_owner(username)+':'+_today_str())
+    return row['payload'].get('used', 0) if row else 0
+
+
+@app.post('/auth/guest')
+def auth_guest(request: Request):
+    ip = _client_ip(request)
+    _rate_limit('guest:'+ip, max_requests=10, window_seconds=300)
+    # Renewing the browser session cannot renew the network's daily free quota.
+    # Only an HMAC is persisted; files remain isolated by a random session owner.
+    quota_owner = hmac.new(SUPABASE_SERVICE_KEY.encode(), ip.encode(), hashlib.sha256).hexdigest()
+    username = '__guest__.'+quota_owner+'.'+uuid.uuid4().hex
+    token = secrets.token_hex(24)
+    studio_store.save_session(token, username, 'GUEST')
+    return {'token': token, 'username': username, 'role': 'GUEST', **_plan_payload_for(username, 'GUEST')}
 
 
 @app.post("/auth/login")

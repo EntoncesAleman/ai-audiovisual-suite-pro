@@ -12,6 +12,7 @@ from pydantic import Field
 from google.genai import types
 
 from studio_tools import CapCutPackageRequest, PortableClip
+from gemini_models import TEXT_MODELS, configured_models, generate_with_fallback
 
 
 class StudioRenderRequest(CapCutPackageRequest):
@@ -43,9 +44,7 @@ def speaker_keyframes(client, model, source, start, duration, folder):
         frame = Path(folder) / f"sample_{index}.jpg"
         run_ffmpeg(["-ss",str(start+timestamp),"-i",str(source),"-frames:v","1","-vf","scale=480:-2",str(frame)],timeout=60)
         content.extend([f"Frame {index}",types.Part.from_bytes(data=frame.read_bytes(),mime_type="image/jpeg")])
-    try:
-        response = client.models.generate_content(model=(os.getenv("GEMINI_REFRAME_MODEL") or model),contents=content,
-            config=types.GenerateContentConfig(response_mime_type="application/json",temperature=0))
+    def read_positions(response):
         parsed = json.loads(response.text)
         centers = {point["index"]:point for point in parsed["centers"] if isinstance(point,dict) and type(point.get("index")) is int}
         positions = []
@@ -61,6 +60,12 @@ def speaker_keyframes(client, model, source, start, duration, folder):
         if not detections:
             raise ValueError("No visible speaker")
         return positions
+    try:
+        models = configured_models('GEMINI_REFRAME_MODELS', configured_models('GEMINI_MODELS', TEXT_MODELS), os.getenv('GEMINI_REFRAME_MODEL') or model)
+        response, _ = generate_with_fallback(client, models, contents=content,
+            config=types.GenerateContentConfig(response_mime_type='application/json',temperature=0),
+            valid=lambda response: bool(read_positions(response)), capability='seguir al hablante')
+        return read_positions(response)
     except Exception as exc:
         raise HTTPException(422,"No se pudo estimar el seguimiento del hablante. Reintentá o elegí encuadre manual.") from exc
 

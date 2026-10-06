@@ -30,6 +30,7 @@ COPY main.py .
 COPY premiere_export.py .
 COPY capcut_export.py .
 COPY studio_store.py .
+COPY gemini_models.py .
 COPY studio_backend.py .
 COPY studio_tools.py .
 COPY studio_render.py .
