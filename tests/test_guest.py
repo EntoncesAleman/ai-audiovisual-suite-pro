@@ -1,4 +1,5 @@
 """Public FREE entry: no user account, no saved history, private current files."""
+import asyncio
 import importlib
 import io
 import os
@@ -60,6 +61,49 @@ class GuestTests(unittest.TestCase):
         with self.assertRaises(HTTPException): self.main.require_pro(user)
         self.main._check_batch_allowed(user, 3)
         self.main._check_free_quota(user, 30)
+
+    def test_three_access_tiers_and_export_reservations(self):
+        guest, _ = self.guest()
+        self.assertEqual(guest['limits']['daily_seconds'], 1800)
+        self.assertEqual(guest['limits']['daily_exports'], 1)
+        with self.assertRaises(HTTPException):
+            self.main._check_free_quota(self.main.get_current_user(guest['token']), 1801)
+        with patch.object(self.main, '_get_user_row', return_value={'plan': 'FREE'}):
+            account = self.main._plan_payload_for('alice', 'USER')
+        self.assertEqual(account['tier'], 'ACCOUNT')
+        self.assertEqual(account['limits']['daily_seconds'], 3600)
+        self.assertEqual(account['limits']['daily_exports'], 3)
+        self.assertTrue(account['limits']['projects'])
+        old_admin = {'role': 'SUPERADMIN', 'plan': 'FREE'}
+        with patch.object(self.main, '_get_user_row', return_value=old_admin):
+            admin = self.main._plan_payload_for('admin', 'SUPERADMIN')
+        self.assertEqual(admin['plan'], 'PRO')
+        self.assertTrue(admin['unrestricted'])
+        self.assertEqual(admin['limits'], {})
+        self.store.save_session('a' * 48, 'admin', 'SUPERADMIN')
+        with patch.object(self.main, '_get_user_row', return_value=old_admin):
+            admin_user = self.main.get_current_user('a' * 48)
+            self.assertEqual(self.main.require_pro(admin_user)['plan'], 'PRO')
+            self.assertEqual(self.main.require_superadmin('a' * 48)['role'], 'SUPERADMIN')
+
+
+        async def export(user, success=True):
+            async def stream():
+                yield 'data: {"stage": "done"}\n\n' if success else 'data: {"stage": "error"}\n\n'
+            return ''.join([chunk async for chunk in self.main._meter_export_stream(stream(), user)])
+        user = self.main.get_current_user(guest['token'])
+        asyncio.run(export(user, False))
+        self.assertEqual(self.main._export_usage(user), 0)
+        self.assertIn('done', asyncio.run(export(user)))
+        self.assertEqual(self.main._export_usage(user), 1)
+        other, _ = self.guest()
+        self.assertIn('error', asyncio.run(export(self.main.get_current_user(other['token']))))
+        registered = {'username': 'alice', 'plan': 'FREE', 'unrestricted': False}
+        for _ in range(3): self.assertIn('done', asyncio.run(export(registered)))
+        self.assertIn('error', asyncio.run(export(registered)))
+        registered['plan'] = 'PRO'
+        self.assertIn('done', asyncio.run(export(registered)))
+        self.assertEqual(self.main._export_usage(registered), 3)
 
     def test_guest_cannot_read_or_save_history_or_use_pro(self):
         _, headers = self.guest()

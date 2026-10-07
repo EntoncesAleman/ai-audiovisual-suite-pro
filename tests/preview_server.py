@@ -16,13 +16,15 @@ with patch.dict(os.environ,env,clear=True),patch("dotenv.load_dotenv",return_val
     import main
 
 users = {}
-for username in ["alice","bob","free"]:
+for username in ["alice","bob","free","admin"]:
     digest,salt = main._hash_password("test-password")
-    users[username] = {"role":"USER","plan":"FREE" if username=="free" else "PRO","active":True,"password_hash":digest,"salt":salt,
+    users[username] = {"role":"SUPERADMIN" if username=="admin" else "USER","plan":"FREE" if username in {"free","admin"} else "PRO","active":True,"password_hash":digest,"salt":salt,
                        "daily_usage_seconds":0,"daily_usage_date":main._today_str()}
 main._load_users=lambda:users
 main._get_user_row=lambda username:users.get(username)
 main._supabase_upsert=lambda *args,**kwargs:None
+main._save_users=lambda *args,**kwargs:None
+main._load_requests=lambda: []
 main._record_usage=lambda *args,**kwargs:None
 exports={}
 original_register=main._register_export

@@ -18,7 +18,7 @@ Actualizado el 5 de octubre de 2026. `HANDOFF.md` y `AUDIT_FREE_PRO.md` son docu
 
 ## Acceso sin cuenta y modelos gratuitos
 
-La pantalla inicial permite **Entrar sin cuenta · FREE**: hasta 60 minutos por archivo y por día (UTC), tres clips por exportación y un trabajo en curso. No incluye historial, biblioteca persistente ni proyectos guardados, y las funciones PRO siguen protegidas en el servidor. El material actual vive en memoria del navegador; recargar descarta el análisis. El token temporal vive en sessionStorage y vence a las 24 horas. No se crea una fila en la tabla de usuarios.
+La pantalla inicial permite **Entrar sin cuenta · FREE**: hasta 30 minutos por archivo y por día (UTC), una exportación diaria, tres clips por exportación y un trabajo en curso. No incluye historial, biblioteca persistente ni proyectos guardados, y las funciones PRO siguen protegidas en el servidor. El material actual vive en memoria del navegador; recargar descarta el análisis. El token temporal vive en sessionStorage y vence a las 24 horas. No se crea una fila en la tabla de usuarios.
 
 La cuota de invitado se comparte por dirección de red, con un HMAC persistido y propietarios aleatorios para aislar los archivos de cada sesión. Renovar la sesión no renueva el cupo diario; personas detrás de la misma red comparten ese cupo. Los archivos y registros necesarios para procesar no constituyen un historial consultable; la retención del almacenamiento interno requiere la política operativa indicada más abajo.
 
@@ -62,7 +62,7 @@ La biblioteca muestra los últimos 100 archivos y Trabajos los últimos 50. Los 
 venv/bin/python -m unittest discover -s tests -v
 ```
 
-Las 27 pruebas pasan e incluyen aislamiento de cuentas, conflictos de guardado, recuperación de objetos, límites de subida, cuotas, sesiones, jobs idempotentes y exports reales FFmpeg/CapCut con material sintético. Imágenes, campañas y seguimiento usan proveedores simulados en las pruebas automatizadas.
+Las 28 pruebas pasan e incluyen aislamiento de cuentas, conflictos de guardado, recuperación de objetos, límites de subida, cuotas, sesiones, jobs idempotentes y exports reales FFmpeg/CapCut con material sintético. Imágenes, campañas y seguimiento usan proveedores simulados en las pruebas automatizadas.
 
 Para la interfaz, `tests/preview_server.py` ofrece un servidor **aislado de pruebas** con usuarios/proveedores falsos. No empaquetarlo ni publicarlo: tiene un endpoint de reinicio de fixtures.
 
@@ -76,3 +76,41 @@ El script de navegador usa Playwright desde `/private/tmp/avsuite-browser-tests`
 ## Próximas ampliaciones
 
 La base incluye cada área del estudio; las siguientes ampliaciones son transiciones renderizadas fuera de Premiere, resaltado animado por palabra con timing real, logos superpuestos en video, presets de marca aplicados a subtítulos y una timeline multipista con drag & drop. No se presentan como funciones terminadas.
+
+## Tres niveles de uso y Studio unificado
+
+- Sin registro: 30 minutos diarios y una exportación diaria, sin historial ni proyectos.
+- Cuenta gratuita: 60 minutos diarios y tres exportaciones diarias, con historial y proyectos.
+- PRO: acceso a todas las herramientas del Studio, sin estos cupos diarios; conserva los límites operativos de cada herramienta.
+
+Los cupos se reinician a medianoche UTC. Cada exportación de clips, reel o carrusel reserva un cupo atómico antes de procesar; si falla, se devuelve. Un ZIP con varios clips cuenta como una exportación. Invitados de la misma red comparten el cupo; renovar la sesión no lo restablece.
+
+El Studio reúne fuente/asistente, transcripción, vista previa y clips, montaje, video/audio, subtítulos, imágenes, voz IA, Premiere, CapCut, campañas, marca, biblioteca, trabajos, proyectos/historial y guardado en pestañas en la misma página. Reutiliza los controles existentes preservando su estado y los devuelve al dashboard al cerrar.
+
+Todos los niveles usan hoy la configuración existente de modelos gratuitos. Las APIs pagas para PRO son una ampliación futura: no se habilita facturación ni se incorporan claves pagas en este cambio. El aviso de modelos informa cuotas, demoras, calidad variable y la posible falta de cuota gratuita para imágenes.
+
+### Entrada del administrador y barra superior
+
+La comparación de los tres accesos aparece únicamente dentro del formulario de ingreso. SUPERADMIN siempre recibe acceso PRO completo, incluso si su registro conserva un plan FREE anterior. En la página principal abre automáticamente el Studio como espacio de trabajo bajo la barra superior; se puede volver al dashboard. La telemetría está dentro de Trabajos durante la edición.
+
+La barra incluye acceso al Studio, Proyectos, Historial, menú de cuenta y cierre de sesión, Ajustes y el Panel de Control para SUPERADMIN. Ajustes guarda controles compactos y apertura automática por cuenta en este navegador, y permite volver a consultar los permisos reales del servidor. El panel de administración conserva solicitudes, usuarios, planes, contraseñas y activación de acceso.
+
+Las pruebas de navegador también usan un administrador sintético cuyo plan inicial es FREE para comprobar acceso completo automático, administración, ajustes, persistencia de preferencias, proyectos y cierre de sesión.
+
+El producto tiene un único administrador (el propietario), con Studio completo. Los demás son usuarios con plan FREE o PRO; no se ofrece creación ni promoción de administradores. El valor interno SUPERADMIN se conserva para compatibilidad con la cuenta existente y se muestra como Administrador en la interfaz.
+
+### Presentación pendiente de elección
+
+El dashboard vuelve a ser la entrada principal: mini reproductor y telemetría visibles. Herramientas abre el panel creativo a pedido, con íconos SVG en las 16 pestañas. Se retiró la apertura automática y la telemetría permanece en la pantalla principal. Las tres propuestas visuales (panel clásico, barra lateral, tarjetas) son imágenes conceptuales, no una implementación nueva; sus elementos ilustrados pueden incluir funciones futuras.
+
+### Interfaz definitiva por acceso
+
+PRO y el administrador usan exclusivamente el Studio con barra lateral, abierto automáticamente al validar la sesión. Las herramientas se agrupan en Inicio, Editar, Audio, Crear, Exportar y Organizar. El mini reproductor y la telemetría permanecen en el panel derecho al cambiar de herramienta. No existe botón para regresar al dashboard anterior; Escape o cerrar un panel auxiliar no cambia la interfaz de PRO. Historial abre Proyectos e historial dentro de esta misma interfaz, incluso al visitar directamente /historial.
+
+Invitados y cuentas FREE conservan el dashboard anterior y el panel opcional de herramientas. Mientras se verifica la sesión, el dashboard no se muestra, evitando que una cuenta PRO vea fugazmente la interfaz gratuita al recargar. Los permisos de herramientas continúan protegidos por el servidor.
+
+### Vista gratuita y tarjetas PRO
+
+Las vistas sin registro y de cuenta FREE muestran únicamente controles de herramientas disponibles. Se ocultan las herramientas de producción PRO y sus pestañas; tampoco se ofrecen botones bloqueados de voz, imágenes, campañas, CapCut o Premiere. Los subtítulos incrustados, ya disponibles en FREE, aparecen como una tarjeta propia.
+
+El panel mezclado de opciones se divide en duración de clips y creación manual con inicio/fin. Los campos técnicos para recuperar fuente y pegar respuestas de IA quedan en PRO; el exportador usa automáticamente el enlace o archivo del panel Fuente de video cuando no hay una fuente específica. Al final de la vista FREE aparecen ocho tarjetas ilustradas que explican las funciones del plan PRO, con sus límites actuales de proveedor. Solicitar PRO abre un formulario de contacto que envía una solicitud al panel del administrador; no activa ni cobra un plan automáticamente.

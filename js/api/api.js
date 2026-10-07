@@ -59,9 +59,10 @@ export function wireDownloadButton(downloadBtn, url, filename) {
  * (y ya mostró el alert correspondiente).
  */
 export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
-    const url = document.getElementById(urlInputId).value.trim();
+    const url = document.getElementById(urlInputId)?.value.trim() || state.currentData?.source_url || document.getElementById('streamUrl')?.value.trim() || '';
     const fileInput = document.getElementById(fileInputId);
-    const file = fileInput && fileInput.files.length > 0 ? fileInput.files[0] : null;
+    let file = fileInput && fileInput.files.length > 0 ? fileInput.files[0] : null;
+    if (!file && !state.currentData?.cache_key) file = document.getElementById('localFile')?.files?.[0] || null;
 
     if (state.currentData && state.currentData.cache_key && !file) {
         // Mandamos la URL igual aunque haya cache_key: el disco de Render es
@@ -73,7 +74,7 @@ export async function resolveExportSource(urlInputId, fileInputId, statusEl) {
     }
 
     if (!url && !file) {
-        alert("Pegá la URL del video fuente o seleccioná el archivo local antes de exportar.");
+        alert("Primero cargá el video en Fuente de video. Si abriste un proyecto guardado y el video ya no está disponible, volvé a subirlo allí.");
         return null;
     }
     if (file) {

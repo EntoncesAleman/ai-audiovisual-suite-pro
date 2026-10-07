@@ -274,6 +274,9 @@ PLAN_PRO = "PRO"
 
 FREE_DAILY_LIMIT_SECONDS = int(os.getenv("FREE_DAILY_LIMIT_SECONDS", str(60 * 60)))   # 60 min/día
 FREE_MAX_FILE_SECONDS = int(os.getenv("FREE_MAX_FILE_SECONDS", str(60 * 60)))         # 60 min/archivo
+GUEST_DAILY_LIMIT_SECONDS = 30 * 60
+GUEST_MAX_EXPORTS = 1
+FREE_MAX_EXPORTS = 3
 FREE_MAX_CONCURRENT_JOBS = 1
 PRO_MAX_CONCURRENT_JOBS = 3          # fair use del lado app; el semáforo global (MAX_CONCURRENT_HEAVY_OPS)
                                      # sigue siendo el límite real de infraestructura en el free tier de Render.
@@ -288,7 +291,10 @@ def _today_str() -> str:
 def _ensure_plan_defaults(user: dict) -> dict:
     """Migración perezosa: completa plan/daily_usage_* la primera vez que se
     lee un usuario creado antes de esta fase (o recién creado sin esos campos)."""
-    user.setdefault("plan", PLAN_PRO if user.get("role") == "SUPERADMIN" else PLAN_FREE)
+    if user.get("role") == "SUPERADMIN":
+        user["plan"] = PLAN_PRO
+    else:
+        user.setdefault("plan", PLAN_FREE)
     user.setdefault("daily_usage_seconds", 0)
     user.setdefault("daily_usage_date", _today_str())
     return user
@@ -341,18 +347,19 @@ def _check_free_quota(user: dict, duration_seconds: float | None):
     """
     if user["unrestricted"] or user["plan"] != PLAN_FREE:
         return
-    if duration_seconds and duration_seconds > FREE_MAX_FILE_SECONDS:
+    maximum = GUEST_DAILY_LIMIT_SECONDS if user.get("guest") else FREE_MAX_FILE_SECONDS
+    if duration_seconds and duration_seconds > maximum:
         raise HTTPException(
             status_code=403,
-            detail=f"El plan FREE permite archivos de hasta {FREE_MAX_FILE_SECONDS // 60} minutos. Este archivo dura {duration_seconds / 60:.1f} min. Pasate a PRO para procesar archivos más largos."
+            detail=f"El plan FREE permite archivos de hasta {maximum // 60} minutos. Este archivo dura {duration_seconds / 60:.1f} min. Pasate a PRO para procesar archivos más largos."
         )
     username = user.get("username")
     if not username:
         return
     if user.get('guest'):
         used = _guest_usage(username)
-        if used + (duration_seconds or 0) > FREE_DAILY_LIMIT_SECONDS:
-            raise HTTPException(403, 'Alcanzaste los 60 minutos diarios del acceso FREE sin cuenta. Probá mañana o ingresá con una cuenta PRO.')
+        if used + (duration_seconds or 0) > GUEST_DAILY_LIMIT_SECONDS:
+            raise HTTPException(403, "Alcanzaste los 30 minutos diarios sin cuenta. Ingresá para tener 60 minutos o probá mañana.")
         return
     record = _get_user_row(username)
     if not record:
@@ -382,12 +389,51 @@ def _record_usage(username: str | None, duration_seconds: float | None):
         return
     if username.startswith('__guest__.'):
         studio_store.reserve_quota('__guest_limits', _guest_quota_owner(username)+':'+_today_str(),
-                                   int(round(duration_seconds)), FREE_DAILY_LIMIT_SECONDS)
+                                   int(round(duration_seconds)), GUEST_DAILY_LIMIT_SECONDS)
         return
     _supabase_request(
         "POST", "rpc/increment_usage",
         json_body={"p_username": username, "p_seconds": int(round(duration_seconds)), "p_today": _today_str()},
     )
+
+
+def _export_quota_identity(user):
+    return ('__guest_limits', 'exports:' + _guest_quota_owner(user['username']) + ':' + _today_str()) if user.get('guest') else (user['username'], 'exports:' + _today_str())
+
+
+def _export_usage(user):
+    owner, key = _export_quota_identity(user)
+    row = studio_store.get(owner, 'quota', key)
+    return row['payload'].get('used', 0) if row else 0
+
+
+def _meter_export_stream(stream, user):
+    """Reserve one export atomically; failed jobs return their reservation."""
+    async def metered():
+        if user.get('unrestricted') or user.get('plan') == PLAN_PRO:
+            async for chunk in stream:
+                yield chunk
+            return
+        owner, key = _export_quota_identity(user)
+        maximum = GUEST_MAX_EXPORTS if user.get('guest') else FREE_MAX_EXPORTS
+        try:
+            await asyncio.to_thread(studio_store.reserve_quota, owner, key, 1, maximum)
+        except HTTPException as exc:
+            if exc.status_code != 429:
+                raise
+            yield 'data: ' + json.dumps({'stage': 'error', 'message': f'Alcanzaste las {maximum} exportaciones diarias de tu acceso. El cupo se renueva mañana (UTC).'}) + '\n\n'
+            return
+        done = False
+        try:
+            async for chunk in stream:
+                text = chunk.decode() if isinstance(chunk, bytes) else chunk
+                if '"stage": "done"' in text or '"stage":"done"' in text:
+                    done = True
+                yield chunk
+        finally:
+            if not done:
+                await asyncio.to_thread(studio_store.reserve_quota, owner, key, -1, maximum)
+    return metered()
 
 
 def _check_batch_allowed(user: dict, clip_count: int):
@@ -3522,7 +3568,7 @@ async def export_clips_endpoint(input_data: ExportClipsInput, user: dict = Depen
             _heavy_ops_semaphore.release()
             _release_user_job_slot(user)
 
-    return StreamingResponse(generator(), media_type="text/event-stream")
+    return StreamingResponse(_meter_export_stream(generator(), user), media_type="text/event-stream")
 
 
 @app.get("/exports")
@@ -3854,7 +3900,7 @@ class ExportCapCutInput(BaseModel):
 
 
 @app.post("/export-capcut")
-async def export_capcut_endpoint(input_data: ExportCapCutInput, user: dict = Depends(get_current_user)):
+async def export_capcut_endpoint(input_data: ExportCapCutInput, user: dict = Depends(require_pro)):
     await _validate_media_input(input_data, user)
     def event(stage: str, message: str, data: dict = None):
         payload = {"stage": stage, "message": message}
@@ -4214,7 +4260,7 @@ async def export_reel_endpoint(input_data: ReelExportInput, user: dict = Depends
             _heavy_ops_semaphore.release()
             _release_user_job_slot(user)
 
-    return StreamingResponse(generator(), media_type="text/event-stream")
+    return StreamingResponse(_meter_export_stream(generator(), user), media_type="text/event-stream")
 
 
 @app.post("/export-carousel")
@@ -4400,7 +4446,7 @@ async def export_carousel_endpoint(input_data: CarouselExportInput, user: dict =
             _heavy_ops_semaphore.release()
             _release_user_job_slot(user)
 
-    return StreamingResponse(generator(), media_type="text/event-stream")
+    return StreamingResponse(_meter_export_stream(generator(), user), media_type="text/event-stream")
 
 
 @app.get("/")
@@ -4438,10 +4484,10 @@ def _plan_payload_for(username: str, role: str) -> dict:
     auth/check, para que la UI pueda mostrar 'FREE 12/60 min hoy' o 'PRO'
     sin tener que pegarle a otro endpoint aparte."""
     if role == 'GUEST':
-        return {'plan': PLAN_FREE, 'unrestricted': False, 'daily_usage_seconds': _guest_usage(username),
-                'limits': {'daily_seconds': FREE_DAILY_LIMIT_SECONDS, 'max_file_seconds': FREE_MAX_FILE_SECONDS,
+        return {'tier': 'GUEST', 'model_access': 'free', 'daily_exports_used': _export_usage({'username': username, 'guest': True}), 'plan': PLAN_FREE, 'unrestricted': False, 'daily_usage_seconds': _guest_usage(username),
+                'limits': {'daily_seconds': GUEST_DAILY_LIMIT_SECONDS, 'max_file_seconds': GUEST_DAILY_LIMIT_SECONDS,
                            'max_batch_clips': FREE_MAX_BATCH_CLIPS, 'max_concurrent_jobs': FREE_MAX_CONCURRENT_JOBS,
-                           'history': False}}
+                           'history': False, 'projects': False, 'daily_exports': GUEST_MAX_EXPORTS}}
     if username == "legacy":
         return {"plan": PLAN_PRO, "unrestricted": True, "daily_usage_seconds": 0, "limits": {}}
     record = _get_user_row(username)
@@ -4454,9 +4500,13 @@ def _plan_payload_for(username: str, role: str) -> dict:
     plan = record.get("plan", PLAN_FREE)
     return {
         "plan": plan,
+        "tier": "PRO" if unrestricted or plan == PLAN_PRO else "ACCOUNT",
+        "model_access": "free",
+        "daily_exports_used": _export_usage({"username": username}),
         "unrestricted": unrestricted,
         "daily_usage_seconds": used,
         "limits": {} if (unrestricted or plan == PLAN_PRO) else {
+            "history": True, "projects": True, "daily_exports": FREE_MAX_EXPORTS,
             "daily_seconds": FREE_DAILY_LIMIT_SECONDS,
             "max_file_seconds": FREE_MAX_FILE_SECONDS,
             "max_batch_clips": FREE_MAX_BATCH_CLIPS,

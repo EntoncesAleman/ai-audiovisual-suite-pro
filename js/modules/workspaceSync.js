@@ -75,6 +75,7 @@ export function scheduleSave() {
 }
 
 export async function flushWorkspace() {
+    clearTimeout(timer);
     if (isGuestStorage()) return;
     if (!ready || conflict || saving || !getStorageAccount() || !readAccountValue('pending_sync', false)) return;
     saving = true;

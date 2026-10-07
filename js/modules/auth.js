@@ -1,5 +1,5 @@
 import { BACKEND_URL } from '../config.js';
-import { getApiKey, setApiKey, clearApiKey, authHeaders, setStorageAccount } from '../utils/storage.js';
+import { getApiKey, setApiKey, clearApiKey, authHeaders, setStorageAccount, readAccountValue, writeAccountValue } from '../utils/storage.js';
 import { fetchWithTimeout } from '../utils/helpers.js';
 import { flushWorkspace } from './workspaceSync.js';
 
@@ -15,7 +15,7 @@ let currentUser = null; // { username, role, plan, unrestricted, daily_usage_sec
 export function getCurrentUser() { return currentUser; }
 export function isSuperAdmin() { return currentUser?.role === 'SUPERADMIN'; }
 /** true si la cuenta puede usar funciones PRO (Voiceover, Premiere/XML, batch) - SUPERADMIN cuenta como PRO. */
-export function isPro() { return !currentUser || currentUser.unrestricted || currentUser.plan === 'PRO'; }
+export function isPro() { return !!currentUser && (isSuperAdmin() || currentUser.unrestricted || currentUser.plan === 'PRO'); }
 export function planLimits() { return currentUser?.limits || {}; }
 
 /**
@@ -61,7 +61,13 @@ function injectAuthUI() {
                         <span class="app-logo-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="4" y1="19" x2="4" y2="11"/><line x1="10" y1="19" x2="10" y2="5"/><line x1="16" y1="19" x2="16" y2="9"/><line x1="21" y1="19" x2="21" y2="14"/></svg></span>
                         <span class="app-brand-name">AV SUITE PRO</span>
                     </div>
-                    <h2 class="auth-modal-title">Iniciar sesión</h2>
+                    <h2 class="auth-modal-title">Elegí cómo trabajar</h2>    <section class="access-plans" aria-label="Tres formas de usar AV Suite">
+        <article><strong>Sin registro · Gratis</strong><span>30 min · 1 export / día</span><small>Probá con tu material, sin historial.</small></article>
+        <article><strong>Con cuenta · Gratis</strong><span>60 min · 3 exports / día</span><small>Historial y proyectos guardados.</small></article>
+        <article><strong>PRO · Studio completo</strong><span>Todas las herramientas de edición</span><small>Hoy con modelos gratuitos. APIs pagas a futuro.</small></article>
+        <p>Los accesos gratuitos usan modelos con cuotas, posibles demoras y disponibilidad limitada. Cupos diarios con reinicio UTC.</p>
+    </section>
+<h3 class="auth-modal-title">Iniciar sesión</h3>
                     <form id="authLoginForm">
                         <label>Usuario</label>
                         <input type="text" id="authLoginUsername" autocomplete="username" required>
@@ -71,7 +77,7 @@ function injectAuthUI() {
                         <button type="submit" class="btn-auth-primary" id="authLoginSubmit">Iniciar Sesión</button>
                     </form>
                     <button type="button" class="btn-auth-primary" id="btnEnterGuest" style="margin-top:12px;background:var(--bg-input);color:var(--text-main);border:1px solid var(--border)">Entrar sin cuenta · FREE</button>
-                    <p style="font-size:12px;color:var(--text-sub);text-align:center;margin:10px 0">Hasta 60 min por archivo y por día, 3 clips por exportación y un trabajo a la vez. Sin historial ni proyectos guardados.</p>
+                    <p style="font-size:12px;color:var(--text-sub);text-align:center;margin:10px 0">Sin cuenta: 30 min y 1 export por día. Con cuenta gratis: 60 min y 3 exports por día, historial y proyectos. PRO: Studio completo. Hoy todos usan modelos gratuitos, sujetos a cuotas, demoras y disponibilidad; imágenes pueden no tener cuota gratuita.</p>
                     <div class="auth-modal-footer" style="flex-direction:column; gap:8px;">
                         <button type="button" class="btn-auth-link" id="btnForgotPassword" style="color:var(--text-sub); font-weight:600;">¿Olvidaste tu contraseña?</button>
                         <div>
@@ -126,6 +132,7 @@ function injectAuthUI() {
         </div>
     `;
     document.body.append(...wrap.children);
+    document.addEventListener('jobs-changed', () => refreshUsageBadge());
 
     document.getElementById('authLoginForm').addEventListener('submit', onLoginSubmit);
     document.getElementById('btnEnterGuest').addEventListener('click', onGuestSubmit);
@@ -134,6 +141,8 @@ function injectAuthUI() {
     document.getElementById('btnForgotPassword').addEventListener('click', showForgotPasswordView);
     document.getElementById('btnBackToLogin').addEventListener('click', () => switchAuthView('login'));
     document.getElementById('btnCloseAdminDrawer').addEventListener('click', closeAdminDrawer);
+    document.getElementById('adminDrawerOverlay').addEventListener('click', event => { if (event.target.id === 'adminDrawerOverlay') closeAdminDrawer(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') closeAdminDrawer(); });
     document.getElementById('adminTabPending').addEventListener('click', () => switchAdminTab('pending'));
     document.getElementById('adminTabUsers').addEventListener('click', () => switchAdminTab('users'));
     document.getElementById('adminDrawerOverlay').addEventListener('click', (e) => {
@@ -214,7 +223,7 @@ async function onLoginSubmit(e) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Usuario o contraseña incorrectos.');
         setApiKey(data.token);
-        currentUser = { username: data.username, role: data.role, plan: data.plan, unrestricted: data.unrestricted, daily_usage_seconds: data.daily_usage_seconds, limits: data.limits };
+        currentUser = data;
         hideLoginModal();
         renderUserUI();
     } catch (err) {
@@ -269,9 +278,9 @@ export async function logout() {
 /**
  * Auth Guard: se llama al cargar cualquier página protegida (index.html,
  * historial.html). Si no hay sesión válida, bloquea todo detrás de un
- * modal de login. Si falla por red (server dormido en el free tier), NO
- * fuerza logout - deja pasar de forma optimista si ya había un token
- * guardado, igual que el chequeo viejo (ensureAuthenticated en app.js).
+ * modal de login. Si falla la verificación, conserva el token y muestra el ingreso con
+ * un mensaje de reintento. La interfaz de trabajo se muestra después de
+ * validar el acceso para no presentar el dashboard FREE a una cuenta PRO.
  */
 export async function initAuthGuard() {
     injectAuthUI();
@@ -284,39 +293,100 @@ export async function initAuthGuard() {
             showLoginModal();
             return;
         }
-        if (!res.ok) { hideLoginModal(); return; }
+        if (!res.ok) { showLoginModal(); return; }
         const data = await res.json();
         if (data.username) {
-            currentUser = { username: data.username, role: data.role, plan: data.plan, unrestricted: data.unrestricted, daily_usage_seconds: data.daily_usage_seconds, limits: data.limits };
+            currentUser = data;
         }
         hideLoginModal();
         renderUserUI();
     } catch (err) {
         console.warn('No se pudo verificar la sesión (¿servidor dormido?):', err);
-        hideLoginModal();
+        showLoginModal();
+        const message = document.getElementById('authLoginError');
+        message.textContent = 'No se pudo verificar tu sesión. Esperá unos segundos y reintentá.'; message.hidden = false;
     }
 }
 
 // ------------------------------------------------------------
 // HEADER: nombre de usuario + badge SUPERUSER + botón Panel de Control
 // ------------------------------------------------------------
+function initHeaderActions() {
+    const nav = document.getElementById('headerNav');
+    if (!nav || document.getElementById('navProjects')) return;
+    const button = document.createElement('button');
+    button.type = 'button'; button.id = 'navProjects'; button.className = 'nav-link'; button.textContent = 'Proyectos';
+    button.addEventListener('click', async () => {
+        const { closeStudio } = await import('./onlineStudio.js'); closeStudio();
+        const { openProjectsManager } = await import('./projects.js'); openProjectsManager();
+    });
+    nav.prepend(button);
+    document.getElementById('navSettings')?.addEventListener('click', openSettings);
+    nav.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            document.getElementById('accountDropdown')?.classList.remove('open');
+            document.getElementById('navAccountLink')?.setAttribute('aria-expanded', 'false');
+        }
+    });
+}
+
+function openSettings() {
+    let dialog = document.getElementById('accountSettings');
+    if (!dialog) {
+        dialog = document.createElement('dialog'); dialog.id = 'accountSettings'; dialog.className = 'account-settings';
+        dialog.innerHTML = `<form method="dialog"><header><h2>Ajustes de tu espacio</h2><button aria-label="Cerrar ajustes">✕</button></header></form>
+        <p id="settingsAccount"></p><p>Todos los modelos siguen sujetos a la disponibilidad del proveedor. Las APIs pagas se habilitarán en una etapa futura.</p>
+        <label><input type="checkbox" id="settingsCompact"> Usar controles compactos en el Studio</label>
+
+        <button type="button" class="studio-nav-btn" id="settingsRefresh">Actualizar sesión y permisos</button><p id="settingsStatus" role="status"></p>`;
+        document.body.append(dialog);
+        document.getElementById('settingsCompact').addEventListener('change', event => {
+            writeAccountValue('compact_studio', event.target.checked); document.body.classList.toggle('studio-compact', event.target.checked);
+        });
+        document.getElementById('settingsRefresh').addEventListener('click', async () => {
+            const button = document.getElementById('settingsRefresh'); button.disabled = true;
+            try {
+                const response = await fetchWithTimeout(`${BACKEND_URL}/auth/check`, { headers: authHeaders() });
+                const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'No se pudo actualizar la sesión.');
+                currentUser = data; renderUserUI();
+                document.getElementById('settingsAccount').textContent = `${currentUser.username} · ${isSuperAdmin() ? 'Administrador · Studio completo' : currentUser.plan}`;
+                document.getElementById('settingsStatus').textContent = 'Sesión y permisos actualizados.';
+            } catch (error) { document.getElementById('settingsStatus').textContent = friendlyErrorMessage(error); }
+            finally { button.disabled = false; }
+        });
+    }
+    document.getElementById('settingsAccount').textContent = `${currentUser?.username || 'Invitado'} · ${isSuperAdmin() ? 'Administrador · Studio completo' : currentUser?.plan || 'FREE'}`;
+    document.getElementById('settingsCompact').checked = !!readAccountValue('compact_studio', false);
+    document.getElementById('settingsStatus').textContent = '';
+    dialog.showModal();
+}
+
 function renderUserUI() {
+    initHeaderActions();
     if (currentUser?.username) {
         setStorageAccount(currentUser.username, currentUser.role === 'GUEST');
+        const access = `${currentUser.role}:${currentUser.plan}:${!!currentUser.unrestricted}`;
+        const changedAccess = document.body.dataset.studioAccess !== access;
+        document.body.dataset.studioAccess = access;
         if (document.body.dataset.studioAccount !== currentUser.username) {
             document.body.dataset.studioAccount = currentUser.username;
             document.dispatchEvent(new CustomEvent('auth-ready', { detail: currentUser }));
+        } else if (changedAccess) {
+            document.dispatchEvent(new CustomEvent('auth-updated', { detail: currentUser }));
         }
     }
+    document.body.classList.toggle('studio-compact', !!readAccountValue('compact_studio', false));
     const accountLabel = document.getElementById('navAccountLabel');
     const accountLink = document.getElementById('navAccountLink');
     if (accountLabel && currentUser) accountLabel.textContent = currentUser.role === 'GUEST' ? 'Invitado · FREE' : currentUser.username;
     document.querySelectorAll('a[href="/historial"]').forEach(link => link.style.display = currentUser?.role === 'GUEST' ? 'none' : '');
+    document.querySelectorAll('a[href="/historial"], a[data-studio-history]').forEach(link => { link.dataset.studioHistory = '1'; link.href = isPro() ? '/?studio=projects' : '/historial'; });
+    if (isPro() && location.pathname === '/historial') { location.replace('/?studio=projects'); return; }
     if (currentUser?.role === 'GUEST' && location.pathname === '/historial') { location.replace('/'); return; }
     if (accountLink && !accountLink.dataset.wired) {
         accountLink.dataset.wired = '1';
-        accountLink.style.position = 'relative';
-        accountLink.insertAdjacentHTML('beforeend', `
+        accountLink.parentElement.style.position = 'relative';
+        accountLink.parentElement.insertAdjacentHTML('beforeend', `
             <div class="account-dropdown" id="accountDropdown">
                 <button type="button" id="btnOpenProjects">📁 Proyectos</button>
                 <button type="button" id="btnLogout">Cerrar sesión</button>
@@ -324,11 +394,13 @@ function renderUserUI() {
         `);
         accountLink.addEventListener('click', (e) => {
             e.stopPropagation();
-            document.getElementById('accountDropdown').classList.toggle('open');
+            const open = document.getElementById('accountDropdown').classList.toggle('open');
+            accountLink.setAttribute('aria-expanded', String(open));
         });
         document.getElementById('btnOpenProjects').addEventListener('click', async (e) => {
             e.stopPropagation();
             document.getElementById('accountDropdown').classList.remove('open');
+            const { closeStudio } = await import('./onlineStudio.js'); closeStudio();
             const { openProjectsManager } = await import('./projects.js');
             openProjectsManager();
         });
@@ -338,15 +410,22 @@ function renderUserUI() {
         });
         document.addEventListener('click', () => {
             document.getElementById('accountDropdown')?.classList.remove('open');
+            accountLink.setAttribute('aria-expanded', 'false');
         });
     }
 
     const nav = document.getElementById('headerNav');
     const projectsButton = document.getElementById('btnOpenProjects');
+    if (document.getElementById('navProjects')) document.getElementById('navProjects').hidden = currentUser?.role === 'GUEST';
     if (projectsButton) projectsButton.style.display = currentUser?.role === 'GUEST' ? 'none' : '';
     const logoutButton = document.getElementById('btnLogout');
     if (logoutButton && currentUser?.role === 'GUEST') logoutButton.textContent = 'Salir / Ingresar con cuenta';
     if (!nav || !currentUser) return;
+    document.body.classList.remove('access-pending');
+    const adminButton = document.getElementById('btnOpenAdminPanel');
+    const adminBadge = document.getElementById('adminBadge');
+    if (adminButton) adminButton.hidden = !isSuperAdmin();
+    if (adminBadge) adminBadge.hidden = !isSuperAdmin();
 
     renderPlanBadge(nav);
 
@@ -354,7 +433,7 @@ function renderUserUI() {
         const badge = document.createElement('span');
         badge.className = 'admin-badge';
         badge.id = 'adminBadge';
-        badge.textContent = 'SUPERUSER';
+        badge.textContent = 'ADMINISTRADOR';
 
         const btn = document.createElement('button');
         btn.className = 'btn-admin-panel';
@@ -390,9 +469,10 @@ function renderPlanBadge(nav) {
     } else {
         const used = Math.round((currentUser.daily_usage_seconds || 0) / 60);
         const limitMin = Math.round((currentUser.limits?.daily_seconds || 3600) / 60);
-        badge.textContent = `FREE · ${used}/${limitMin} min hoy`;
+        const maxExports = currentUser.limits?.daily_exports || (currentUser.role === 'GUEST' ? 1 : 3);
+        badge.textContent = `${currentUser.role === 'GUEST' ? 'INVITADO' : 'CUENTA GRATIS'} · ${used}/${limitMin} min · ${currentUser.daily_exports_used || 0}/${maxExports} exports hoy`;
         badge.className = 'plan-badge plan-badge-free';
-        badge.title = 'Plan FREE: 60 min/día, 60 min/archivo, 1 trabajo a la vez. Sin Voiceover/Premiere/lote.';
+        badge.title = 'Cupos diarios con reinicio UTC. Modelos gratuitos: cuotas, demoras, calidad variable y disponibilidad limitada.';
     }
 }
 
@@ -404,7 +484,7 @@ export async function refreshUsageBadge() {
         if (!res.ok) return;
         const data = await res.json();
         if (data.username) {
-            currentUser = { ...currentUser, plan: data.plan, unrestricted: data.unrestricted, daily_usage_seconds: data.daily_usage_seconds, limits: data.limits };
+            currentUser = { ...currentUser, ...data };
             renderUserUI();
         }
     } catch (e) { /* silencioso */ }
@@ -549,7 +629,7 @@ async function loadActiveUsers() {
         tbody.innerHTML = users.map((u) => `
             <tr data-username="${escapeHtml(u.username)}">
                 <td>${escapeHtml(u.username)}</td>
-                <td>${u.role === 'SUPERADMIN' ? '<span class="admin-role-badge">SUPERADMIN</span>' : 'USER'}</td>
+                <td>${u.role === 'SUPERADMIN' ? '<span class="admin-role-badge">Administrador</span>' : 'Usuario'}</td>
                 <td>
                     ${u.role === 'SUPERADMIN'
                         ? '<span class="plan-badge plan-badge-pro" style="position:static;">PRO</span>'

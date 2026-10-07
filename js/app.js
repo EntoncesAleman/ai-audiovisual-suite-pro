@@ -62,6 +62,7 @@ function initDropzone() {
     zone.addEventListener('drop', (e) => {
         if (e.dataTransfer.files.length > 0) {
             input.files = e.dataTransfer.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
             text.textContent = e.dataTransfer.files[0].name;
         }
     });
@@ -204,7 +205,7 @@ function loadSessionFromQueryString() {
  * (Clips simple / Video para Redes), así que se engancha en ambos inputs.
  */
 function initLocalSourcePreview() {
-    ['clipSourceFile', 'reelSourceFile'].forEach((id) => {
+    ['localFile', 'clipSourceFile', 'reelSourceFile'].forEach((id) => {
         const input = document.getElementById(id);
         if (!input) return;
         input.addEventListener('change', () => {

@@ -202,3 +202,14 @@
 }
 .btn-admin-mini:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-main); }
 .btn-admin-mini:disabled { opacity: .35; cursor: not-allowed; }
+.auth-guard-overlay { overflow:auto; align-items:safe center; }
+.auth-modal { max-width:920px; overflow:visible; max-height:calc(100dvh - 40px); overflow-y:auto; }
+.auth-modal .access-plans { margin:16px 0 22px; padding:0; }
+.auth-modal .access-plans article { border:var(--border); }
+.auth-modal #authLoginForm,.auth-modal #btnEnterGuest,.auth-modal #authViewRequest { max-width:380px; margin-left:auto; margin-right:auto; }
+.auth-modal #btnEnterGuest { display:block; width:100%; }
+.auth-modal .access-plans strong { font-size:14px; }
+.auth-modal .access-plans small { color:var(--text-sub); }
+.auth-modal .access-plans span { color:var(--accent-gold); }
+.nav-account button:focus-visible,.header-nav button:focus-visible { outline:2px solid var(--accent-blue); outline-offset:3px; }
+@media(max-width:650px) { .auth-modal { padding:20px 16px; } .auth-modal .access-plans { grid-template-columns:1fr; gap:8px; } .auth-modal .access-plans article { padding:12px; gap:5px; } }

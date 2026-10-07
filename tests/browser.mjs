@@ -11,26 +11,37 @@ try {
     page.on('dialog', async dialog => { if (dialog.type() === 'beforeunload') await dialog.accept(); });
     await page.request.post('http://127.0.0.1:8769/__test/reset');
     page.on('pageerror',error=>errors.push(error.message));
-    await page.goto('http://127.0.0.1:8769/');
+    await page.goto('http://127.0.0.1:8769/',{waitUntil:'domcontentloaded'});
     await page.locator('#authLoginUsername').fill('alice');
     await page.locator('#authLoginPassword').fill('test-password');
     await page.locator('#authLoginSubmit').click();
     await page.waitForFunction(()=>document.getElementById('studioSaveStatus')?.dataset.state==='saved').catch(async error=>{console.log(await page.locator('#studioSaveStatus').textContent(),await page.locator('#authLoginError').textContent());throw error;});
-    await page.goto('http://127.0.0.1:8769/?session=100');
+    await page.goto('http://127.0.0.1:8769/?session=100',{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>document.querySelector('#clipsCardGrid .clip-card-title')?.value==='Primer clip');
     // Apostrophes in speaker labels must be data, not inline JavaScript.
     page.once('dialog',async dialog=>{assert.match(dialog.message(),/O'Brien/);await dialog.dismiss();});
+    await page.locator('[data-tab="transcript"]').click();
     await page.locator('.transcript-line-badge').first().click();
-    await page.getByRole('button',{name:'Estudio',exact:true}).click();
+    await page.getByRole('button',{name:'Herramientas',exact:true}).click();
+    assert.equal(await page.locator('#studioOverlay [data-tab]').count(),16);
+    assert.equal(await page.locator('#studioOverlay .video-source-card').count(),1);
+    assert.equal(await page.locator('#studioOverlay #previewVideo').count(),1);
+    await page.locator('[data-tab="preview"]').click();
+    assert.equal(await page.locator('#studioOverlay .player-only-card').isVisible(),true);
+    await page.locator('[data-tab="premiere"]').click();
+    assert.equal(await page.locator('#studioOverlay .premiere-export-card').isVisible(),true);
+
     await page.locator('[data-tab="editor"]').click();
     await page.locator('#studioTimeline [data-time="end"]').fill('00:02');
     await page.locator('#studioTimeline [data-time="end"]').press('Tab');
     await page.waitForTimeout(1100);
-    await page.locator('#studioClose').click();
+    await page.evaluate(async () => (await import('/js/modules/onlineStudio.js')).closeStudio());
+    assert.equal(await page.locator('.dashboard').isVisible(), false);
+    assert.equal(await page.locator('.studio-preview-rail .player-only-card').isVisible(), true);
     await page.waitForFunction(()=>document.getElementById('studioSaveStatus')?.textContent==='Guardado online');
-    await page.reload();
+    await page.reload({waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>document.querySelector('#clipsCardGrid input[title="Fin (Out)"]')?.value==='00:02');
-    await page.getByRole('button',{name:'Estudio',exact:true}).click();
+    await page.getByRole('button',{name:'Herramientas',exact:true}).click();
     await page.locator('[data-tab="brand"]').click();
     await page.locator('#studioBrandName').fill('Marca de prueba');
     await page.locator('#studioBrandTone').fill('Editorial y cercana');
@@ -45,22 +56,29 @@ try {
     await page.locator('#studioCampaignForm button[type="submit"]').click();
     await page.waitForSelector('#studioCampaignResults .studio-job');
     await page.getByRole('button',{name:'Aplicar títulos y copies a los clips'}).click();
-    await page.locator('#studioClose').click();
+    await page.evaluate(async () => (await import('/js/modules/onlineStudio.js')).closeStudio());
+    assert.equal(await page.locator('.dashboard').isVisible(), false);
+    assert.equal(await page.locator('.studio-preview-rail .player-only-card').isVisible(), true);
     assert.equal(await page.locator('#clipsCardGrid .clip-card-title').inputValue(),'Título 1');
     await page.waitForFunction(()=>document.getElementById('studioSaveStatus')?.textContent==='Guardado online');
-    await page.goto('http://127.0.0.1:8769/historial');
-    await page.waitForSelector('.session-item-full');
-    assert.equal(await page.locator('.session-item-full').count(),1);
-    assert.match(await page.locator('.session-item-full-title').textContent(),/Prueba del estudio/);
+    await page.goto('http://127.0.0.1:8769/historial',{waitUntil:'domcontentloaded'});
+    await page.waitForURL('http://127.0.0.1:8769/?studio=projects');
+    await page.waitForSelector('#studioHistory button');
+    assert.equal(await page.locator('#studioHistory button').count(),1);
+    assert.match(await page.locator('#studioHistory button').textContent(),/Prueba del estudio/);
+    await page.waitForFunction(() => document.getElementById('studioSaveStatus')?.dataset.state === 'saved');
     console.log('Initial studio checks passed.');
     // Two tabs must never silently overwrite each other's saved revision.
     const secondTab=await context.newPage();secondTab.setDefaultTimeout(15000);secondTab.on('dialog',async dialog=>{if(dialog.type()==='beforeunload')await dialog.accept();});secondTab.on('pageerror',error=>errors.push(error.message));
-    await secondTab.goto('http://127.0.0.1:8769/?session=100');
-    await secondTab.waitForFunction(()=>document.querySelector('#clipsCardGrid .clip-card-title')?.value==='Título 1');
-    await page.getByRole('button',{name:'Estudio',exact:true}).click();
+    await secondTab.goto('http://127.0.0.1:8769/?session=100',{waitUntil:'domcontentloaded'});
+    await secondTab.waitForFunction(()=>document.querySelector('#clipsCardGrid .clip-card-title')?.value==='Título 1' && document.getElementById('studioSaveStatus')?.dataset.state==='saved');
+    await page.getByRole('button',{name:'Herramientas',exact:true}).click();
     await page.locator('[data-tab="brand"]').click();await page.locator('#studioBrandName').fill('Marca actualizada');
     await page.locator('#studioBrandForm button[type="submit"]').click();
-    await page.waitForFunction(()=>document.getElementById('studioSaveStatus')?.textContent==='Guardado online');
+    await page.evaluate(async () => (await import('/js/modules/workspaceSync.js')).flushWorkspace());
+    await page.waitForFunction(async () => { const response = await fetch('/studio/workspace', {headers:{'X-API-Key':localStorage.getItem('api_access_key')}}); return (await response.json()).document.brand?.name === 'Marca actualizada'; });
+    await page.waitForFunction(() => document.getElementById('studioSaveStatus')?.dataset.state === 'saved');
+    await secondTab.locator('[data-tab="preview"]').click();
     await secondTab.locator('#clipsCardGrid .clip-card-title').fill('Cambio de otra pestaña');
     await secondTab.locator('#clipsCardGrid .clip-card-title').press('Tab');
     await secondTab.waitForFunction(()=>document.getElementById('studioSaveStatus')?.dataset.state==='conflict');
@@ -72,11 +90,11 @@ try {
     // A new browser and account cannot see Alice's workspace.
     const other=await browser.newContext({viewport:{width:390,height:844}});
     const mobile=await other.newPage();mobile.on('pageerror',error=>errors.push(error.message));
-    await mobile.goto('http://127.0.0.1:8769/');
+    await mobile.goto('http://127.0.0.1:8769/',{waitUntil:'domcontentloaded'});
     await mobile.locator('#authLoginUsername').fill('bob');await mobile.locator('#authLoginPassword').fill('test-password');
     await mobile.locator('#authLoginSubmit').click();
     await mobile.waitForFunction(()=>document.getElementById('studioSaveStatus')?.textContent.includes('sincronizado'));
-    await mobile.getByRole('button',{name:'Estudio',exact:true}).click();
+    await mobile.getByRole('button',{name:'Herramientas',exact:true}).click();
     await mobile.locator('[data-tab="jobs"]').click();
     await mobile.waitForFunction(()=>document.getElementById('studioJobs')?.textContent.includes('Todavía no hay trabajos'));
     await mobile.locator('[data-tab="images"]').click();
@@ -88,7 +106,7 @@ try {
     await other.close();
     const guestContext=await browser.newContext({viewport:{width:390,height:844}});
     const guest=await guestContext.newPage();guest.on('pageerror',error=>errors.push(error.message));
-    await guest.goto('http://127.0.0.1:8769/');
+    await guest.goto('http://127.0.0.1:8769/',{waitUntil:'domcontentloaded'});
     await guest.getByRole('button',{name:'Entrar sin cuenta · FREE'}).click();
     await guest.waitForFunction(()=>document.getElementById('navAccountLabel')?.textContent==='Invitado · FREE');
     assert.match(await guest.locator('#studioSaveStatus').textContent(),/Sin historial/);
@@ -104,17 +122,148 @@ try {
         saveSession({title:'Análisis temporal',raw_timeline:'TIMESTAMP: 00:00\nSPEAKER: Persona\nDIALOGUE: Material sintético para probar el acceso sin cuenta.'});
     });
     assert.equal(await guest.evaluate(()=>Object.keys(localStorage).some(key=>key.includes('__guest__'))),false);
-    await guest.getByRole('button',{name:'Estudio',exact:true}).click();
+    await guest.getByRole('button',{name:'Herramientas',exact:true}).click();
     assert.equal(await guest.locator('[data-tab="sync"]').isVisible(),false);
     assert.equal(await guest.locator('[data-tab="jobs"]').isVisible(),false);
     await guest.locator('#studioClose').click();
-    await guest.reload();
+    await guest.reload({waitUntil:'domcontentloaded'});
     await guest.waitForFunction(()=>document.getElementById('navAccountLabel')?.textContent==='Invitado · FREE');
     assert.equal(await guest.evaluate(async()=>(await import('/js/utils/storage.js')).getSessions().length),0);
     assert.equal(await guest.evaluate(async()=>(await import('/js/state.js')).state.currentData),null);
-    await guest.goto('http://127.0.0.1:8769/historial');
+    await guest.goto('http://127.0.0.1:8769/historial',{waitUntil:'domcontentloaded'});
     await guest.waitForURL('http://127.0.0.1:8769/');
     assert.deepEqual(errors,[]);
+    assert.equal(await guest.locator('#freeProShowcase').isVisible(), true);
+    assert.equal(await guest.locator('.advanced-tools-accordion').isVisible(), false);
     console.log('Guest checks passed: public entry, FREE limits, no saved history, reload, private tabs.');
     await guestContext.close();
+    const freeContext = await browser.newContext({viewport:{width:1440,height:1050}});
+    const free = await freeContext.newPage(); free.on('pageerror', error => errors.push(error.message));
+    await free.goto('http://127.0.0.1:8769/',{waitUntil:'domcontentloaded'});
+    await free.locator('#authLoginUsername').fill('free'); await free.locator('#authLoginPassword').fill('test-password');
+    await free.locator('#authLoginSubmit').click();
+    await free.waitForFunction(() => document.getElementById('navAccountLabel')?.textContent === 'free');
+    assert.equal(await free.locator('.dashboard').isVisible(), true);
+    assert.equal(await free.locator('#studioOverlay').isVisible(), false);
+    assert.equal(await free.locator('.player-only-card').isVisible(), true);
+    assert.equal(await free.locator('.advanced-tools-accordion').isVisible(), false);
+    assert.equal(await free.locator('#freeProShowcase').isVisible(), true);
+    assert.equal(await free.locator('.pro-feature-card').count(), 8);
+    assert.equal(await free.locator('#btnClipAiImport').isVisible(), false);
+    assert.equal(await free.locator('.subtitle-export-card').isVisible(), true);
+
+    await free.locator('#navStudio').click();
+    assert.equal(await free.locator('#studioOverlay').evaluate(node => node.classList.contains('studio-pro')), false);
+    for (const tab of ['premiere','voice','images','render','capcut','campaign','brand']) {
+        assert.equal(await free.locator(`[data-tab="${tab}"]`).isVisible(), false);
+    }
+    await free.evaluate(async () => (await import('/js/modules/onlineStudio.js')).openStudio('premiere'));
+    assert.equal(await free.locator('[data-panel="premiere"]').isVisible(), false);
+    assert.equal(await free.locator('[data-panel="editor"]').isVisible(), true);
+
+    await free.locator('#studioClose').click();
+    assert.equal(await free.locator('.dashboard').isVisible(), true);
+    await free.locator('#requestProAccess').click();
+    assert.equal(await free.locator('#proRequestDialog').isVisible(), true);
+    let upgradeRequest;
+    await free.route('**/access-requests', async route => {
+        upgradeRequest = route.request().postDataJSON();
+        await route.fulfill({status:200, contentType:'application/json', body:'{"ok":true}'});
+    });
+    await free.locator('#proRequestContact').fill('prueba@example.invalid');
+    await free.locator('#proRequestForm button[type="submit"]').click();
+    await free.waitForFunction(() => document.getElementById('proRequestStatus').textContent.includes('Solicitud enviada'));
+    assert.equal(upgradeRequest.name, 'free');
+    assert.match(upgradeRequest.reason, /prueba@example.invalid/);
+    await free.getByRole('button',{name:'Cerrar solicitud PRO'}).click();
+    const source = await free.evaluate(async () => {
+        document.getElementById('streamUrl').value = 'https://example.invalid/video';
+        return (await import('/js/api/api.js')).resolveExportSource('clipSourceUrl', 'clipSourceFile');
+    });
+    assert.equal(source.url, 'https://example.invalid/video');
+    await free.locator('#streamUrl').fill('');
+    await free.route('**/inspect-file', route => route.fulfill({status:200,contentType:'application/json',body:'{"asset_id":"synthetic-upload"}'}));
+    await free.locator('#localFile').setInputFiles({name:'video-de-prueba.mp4',mimeType:'video/mp4',buffer:Buffer.from('synthetic-test-input')});
+    assert.equal(await free.locator('#previewVideo').evaluate(video => video.classList.contains('has-src')), true);
+    const uploaded = await free.evaluate(async () => (await import('/js/api/api.js')).resolveExportSource('clipSourceUrl','clipSourceFile'));
+    assert.equal(uploaded.asset_id, 'synthetic-upload');
+    await free.locator('#localFile').setInputFiles([]);
+
+
+    const adminContext = await browser.newContext({viewport:{width:1440,height:1050}});
+    const admin = await adminContext.newPage(); admin.on('pageerror', error => errors.push(error.message));
+    await admin.goto('http://127.0.0.1:8769/',{waitUntil:'domcontentloaded'});
+    assert.equal(await admin.locator('#authGuardOverlay .access-plans').isVisible(), true);
+    assert.equal(await admin.locator('body > .access-plans').count(), 0);
+    await admin.locator('#authLoginUsername').fill('admin');
+    await admin.locator('#authLoginPassword').fill('test-password');
+    await admin.locator('#authLoginSubmit').click();
+    await admin.waitForFunction(() => document.getElementById('navAccountLabel')?.textContent === 'admin');
+    assert.equal(await admin.locator('#authGuardOverlay .access-plans').isVisible(), false);
+    assert.equal(await admin.locator('.player-only-card').isVisible(), true);
+    assert.equal(await admin.locator('.telemetry-card').isVisible(), true);
+    await admin.locator('#navStudio').click();
+    assert.equal(await admin.locator('#studioOverlay .studio-tabs button:visible').count(), 16);
+    assert.equal(await admin.locator('#studioOverlay .studio-tool-icon').count(), 16);
+    assert.equal(await admin.locator('.dashboard').isVisible(), false);
+    assert.equal(await admin.locator('#freeProShowcase').isVisible(), false);
+    for (const tab of ['editor','transcript','voice','images','premiere','jobs','sync']) {
+        await admin.locator(`[data-tab="${tab}"]`).click();
+        assert.equal(await admin.locator('.studio-preview-rail .player-only-card').isVisible(), true);
+        assert.equal(await admin.locator('.studio-preview-rail .telemetry-card').isVisible(), true);
+    }
+    await admin.screenshot({path:'test-results/studio-sidebar-desktop.png'});
+
+    assert.equal(await admin.locator('#btnOpenAdminPanel').isVisible(), true);
+    assert.match(await admin.locator('#adminBadge').textContent(), /ADMIN/);
+    await admin.locator('[data-tab="premiere"]').click();
+    assert.equal(await admin.locator('.premiere-export-card').isVisible(), true);
+    assert.equal(await admin.locator('#studioClose').isVisible(), false);
+    await admin.evaluate(async () => (await import('/js/modules/onlineStudio.js')).closeStudio());
+    assert.equal(await admin.locator('.dashboard').isVisible(), false);
+    await admin.locator('#navSettings').click();
+    assert.match(await admin.locator('#settingsAccount').textContent(), /Administrador · Studio completo/);
+    await admin.locator('#settingsCompact').check();
+    assert.equal(await admin.evaluate(() => document.body.classList.contains('studio-compact')), true);
+    await admin.locator('#settingsRefresh').click();
+    await admin.waitForFunction(() => document.getElementById('settingsStatus').textContent.includes('actualizados'));
+    await admin.getByRole('button', {name:'Cerrar ajustes'}).click();
+    const adminToken = await admin.evaluate(() => localStorage.getItem('api_access_key'));
+    await free.locator('#navSettings').click();
+    for (const plan of ['PRO','FREE']) {
+        const changed = await admin.request.post('http://127.0.0.1:8769/admin/users/free/set-plan', {headers:{'X-API-Key':adminToken}, data:{plan}});
+        assert.equal(changed.status(), 200);
+        await free.locator('#settingsRefresh').click();
+        await free.waitForFunction(expected => document.getElementById('settingsAccount').textContent.includes(expected), plan);
+        assert.equal(await free.locator('.dashboard').isVisible(), plan === 'FREE');
+        assert.equal(await free.locator('#studioOverlay').isVisible(), plan === 'PRO');
+        assert.equal(await free.locator('#previewVideo').count(), 1);
+        assert.equal(await free.locator('#telemetryLog').count(), 1);
+    }
+    await free.getByRole('button',{name:'Cerrar ajustes'}).click();
+    await freeContext.close();
+
+    await admin.locator('#btnOpenAdminPanel').click();
+    await admin.waitForSelector('#adminRequestList .admin-empty');
+    await admin.locator('#adminTabUsers').click();
+    await admin.waitForFunction(() => document.getElementById('adminUsersTableBody').textContent.includes('admin'));
+    await admin.locator('#btnCloseAdminDrawer').click();
+    await admin.reload({waitUntil:'domcontentloaded'});
+    await admin.waitForFunction(() => document.getElementById('navAccountLabel')?.textContent === 'admin');
+    assert.equal(await admin.evaluate(() => document.body.classList.contains('studio-compact')), true);
+    await admin.locator('#navProjects').click();
+    assert.equal(await admin.locator('#studioOverlay').isVisible(), true);
+    await admin.waitForSelector('#projectsDrawerOverlay.active');
+    // Reload closes the project manager and restores the main workspace.
+    await admin.reload({waitUntil:'domcontentloaded'});
+    await admin.waitForFunction(() => document.getElementById('navAccountLabel')?.textContent === 'admin');
+    await admin.locator('#navAccountLink').click();
+    assert.equal(await admin.locator('#navAccountLink').getAttribute('aria-expanded'), 'true');
+    await admin.locator('#btnLogout').click();
+    await admin.waitForSelector('#authGuardOverlay.active');
+    assert.equal(await admin.locator('#authGuardOverlay .access-plans').isVisible(), true);
+    assert.deepEqual(errors, []);
+    console.log('Administrator checks passed: login-only plans, exclusive PRO sidebar, pinned player and telemetry, FREE legacy dashboard, visible administration, working settings, preferences, projects and logout.');
+    await adminContext.close();
+
 } finally {await browser.close();}
