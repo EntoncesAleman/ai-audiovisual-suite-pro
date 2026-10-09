@@ -42,8 +42,16 @@ export async function connectWorkspace({ discardLocal = false } = {}) {
     try {
         const remote = await studioRequest('/studio/workspace');
         if (current !== generation) return;
-        const pending = readAccountValue('pending_sync', false);
-        const revision = readAccountValue('workspace_revision', 0);
+        let pending = readAccountValue('pending_sync', false);
+        let revision = readAccountValue('workspace_revision', 0);
+        // Almacenamiento recién estrenado (ej. modo local sin Supabase): nunca
+        // se guardó nada ahí, así que la copia de este navegador es la buena
+        // y se sube, en vez de pisarla con un documento vacío.
+        const local = getWorkspaceDocument();
+        if (!discardLocal && remote.revision === 0 && (local.sessions.length || local.projects.length)) {
+            pending = true; revision = 0;
+            writeAccountValue('pending_sync', true);
+        }
         loadedRevision = revision;
         if (!discardLocal && pending && remote.revision !== revision) {
             conflict = true;

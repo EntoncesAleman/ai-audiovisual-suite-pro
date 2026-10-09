@@ -17,6 +17,7 @@ import zipfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Literal
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,6 +102,22 @@ client = genai.Client(api_key=GEMINI_API_KEY, http_options=genai_types.HttpOptio
 API_ACCESS_KEY = os.getenv("API_ACCESS_KEY")
 
 # ------------------------------------------------------------------
+# MODO LOCAL PRO (LOCAL_PRO_MODE=1 en .env): uso personal en esta misma
+# máquina, sin login y sin Supabase. Cualquier request que llegue desde
+# localhost entra como SUPERADMIN/PRO (ver _is_local_pro_request) y todo lo
+# que normalmente vive en Supabase (usuarios, consumo, índice de exports,
+# estudio) queda en STUDIO_DATA_DIR. Los requests que NO vienen de localhost
+# (el server escucha en 0.0.0.0) siguen necesitando sesión como siempre.
+# Nunca activarlo en un deploy público.
+# ------------------------------------------------------------------
+LOCAL_PRO_MODE = os.getenv("LOCAL_PRO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+# Mismo nombre que el superadmin real, para reencontrar el historial que el
+# navegador ya tenía guardado bajo esa cuenta.
+LOCAL_PRO_USERNAME = os.getenv("ADMIN_USERNAME") or "local"
+if LOCAL_PRO_MODE and os.getenv("RENDER"):
+    raise RuntimeError("LOCAL_PRO_MODE es solo para uso local: no se puede activar en un deploy público.")
+
+# ------------------------------------------------------------------
 # Usuarios reales (username + password) con roles. Las contraseñas NUNCA
 # se guardan en texto plano: se hashean con PBKDF2-HMAC-SHA256 + salt
 # aleatoria por usuario.
@@ -117,7 +134,9 @@ API_ACCESS_KEY = os.getenv("API_ACCESS_KEY")
 SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").rstrip("/")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_SCHEMA = os.getenv("SUPABASE_SCHEMA", "avsuite")
-if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+if LOCAL_PRO_MODE:
+    SUPABASE_SERVICE_KEY = SUPABASE_SERVICE_KEY or "local"
+elif not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise RuntimeError(
         "Faltan SUPABASE_URL / SUPABASE_SERVICE_KEY. Son obligatorias: usuarios, planes, consumo, "
         "access requests y ownership de exports viven en Supabase (no en JSON local), así que sin "
@@ -169,7 +188,15 @@ def _supabase_upsert(table: str, rows, on_conflict: str):
 # and can be revoked across server restarts. Raw tokens are never stored.
 
 
+def _local_pro_user_row() -> dict:
+    # Sin password_hash/salt reales: esta cuenta no se puede usar por /auth/login.
+    return {"role": "SUPERADMIN", "plan": "PRO", "active": True, "password_hash": "", "salt": "",
+            "daily_usage_seconds": 0, "daily_usage_date": _today_str()}
+
+
 def _load_users() -> dict:
+    if LOCAL_PRO_MODE:
+        return {LOCAL_PRO_USERNAME: _local_pro_user_row()}
     rows = _supabase_select("users")
     return {r["username"]: {k: v for k, v in r.items() if k != "username"} for r in rows}
 
@@ -177,6 +204,8 @@ def _load_users() -> dict:
 def _save_users(users: dict):
     """Upsert de TODO el dict recibido (siempre se llama después de _load_users(),
     así que ya trae todas las filas relevantes - no hace falta un diff)."""
+    if LOCAL_PRO_MODE:
+        return
     rows = [{"username": uname, **fields} for uname, fields in users.items()]
     _supabase_upsert("users", rows, on_conflict="username")
 
@@ -184,6 +213,8 @@ def _save_users(users: dict):
 def _get_user_row(username: str) -> dict | None:
     """Fetch de UNA sola fila (evita traer toda la tabla) - usado en los paths
     calientes de auth/metering que corren en cada request."""
+    if LOCAL_PRO_MODE:
+        return _local_pro_user_row() if username == LOCAL_PRO_USERNAME else None
     rows = _supabase_select("users", params={"username": f"eq.{username}", "limit": "1"})
     if not rows:
         return None
@@ -192,10 +223,14 @@ def _get_user_row(username: str) -> dict | None:
 
 
 def _load_requests() -> list:
+    if LOCAL_PRO_MODE:
+        return []
     return _supabase_select("access_requests", params={"order": "created_at.desc"})
 
 
 def _save_requests(reqs: list):
+    if LOCAL_PRO_MODE:
+        return
     _supabase_upsert("access_requests", reqs, on_conflict="id")
 
 
@@ -235,11 +270,35 @@ def _bootstrap_superadmin():
     print(f"✓ Superusuario inicial creado: {admin_user}")
 
 
-_bootstrap_superadmin()
+if not LOCAL_PRO_MODE:
+    _bootstrap_superadmin()
 
 
-def require_api_key(x_api_key: str | None = Header(default=None)):
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_local_pro_request(request) -> bool:
+    """True solo si LOCAL_PRO_MODE está activo y el request sale de un navegador
+    de esta misma máquina apuntando a localhost. Un túnel/proxy (headers
+    Forwarded), otra máquina de la red, o una página de otro origen pegándole
+    a localhost NO cuentan como locales."""
+    if not LOCAL_PRO_MODE or request is None or not request.client:
+        return False
+    if request.client.host not in _LOOPBACK_HOSTS:
+        return False
+    headers = request.headers
+    if any(headers.get(name) for name in ("x-forwarded-for", "x-real-ip", "forwarded")):
+        return False
+    if (request.url.hostname or "") not in _LOOPBACK_HOSTS:
+        return False
+    origin = headers.get("origin")
+    return not origin or (urlparse(origin).hostname or "") in _LOOPBACK_HOSTS
+
+
+def require_api_key(x_api_key: str | None = Header(default=None), request: Request = None):
     """Exige una sesión persistente válida o la clave estática de compatibilidad."""
+    if _is_local_pro_request(request):
+        return {"username": LOCAL_PRO_USERNAME, "role": "SUPERADMIN"}
     if x_api_key:
         session = studio_store.get_session(x_api_key)
         if session:
@@ -255,8 +314,8 @@ def require_api_key(x_api_key: str | None = Header(default=None)):
     raise HTTPException(status_code=401, detail="Sesión inválida o expirada. Iniciá sesión de nuevo.")
 
 
-def require_superadmin(x_api_key: str | None = Header(default=None)):
-    session = require_api_key(x_api_key)
+def require_superadmin(x_api_key: str | None = Header(default=None), request: Request = None):
+    session = require_api_key(x_api_key, request)
     if not session or session.get("role") != "SUPERADMIN":
         raise HTTPException(status_code=403, detail="Necesitás permisos de administrador.")
     return session
@@ -300,14 +359,14 @@ def _ensure_plan_defaults(user: dict) -> dict:
     return user
 
 
-def get_current_user(x_api_key: str | None = Header(default=None)) -> dict:
+def get_current_user(x_api_key: str | None = Header(default=None), request: Request = None) -> dict:
     """
     Dependency que resuelve la sesión (require_api_key) y la enriquece con
     plan/límites, para que los endpoints de metering/feature-gating no
     tengan que releer users_db.json cada uno a mano. Devuelve siempre un
     dict con username/role/plan/unrestricted (nunca None).
     """
-    session = require_api_key(x_api_key)
+    session = require_api_key(x_api_key, request)
     username = session.get("username")
     role = session.get("role", "USER")
     if role == 'GUEST':
@@ -386,6 +445,8 @@ def _record_usage(username: str | None, duration_seconds: float | None):
     permite hasta 3 jobs simultáneos - ver PRO_MAX_CONCURRENT_JOBS).
     """
     if not username or username == "legacy" or not duration_seconds:
+        return
+    if LOCAL_PRO_MODE and not username.startswith('__guest__.'):
         return
     if username.startswith('__guest__.'):
         studio_store.reserve_quota('__guest_limits', _guest_quota_owner(username)+':'+_today_str(),
@@ -517,12 +578,28 @@ def _client_ip(request) -> str:
 # quién es el dueño de cada uno vive en la base.
 # ------------------------------------------------------------------
 
+def _local_exports_index_path() -> Path:
+    return studio_store.root / "exports_index.json"
+
+
+def _load_local_exports_index() -> dict:
+    try:
+        return json.loads(_local_exports_index_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def _load_exports_index() -> dict:
+    if LOCAL_PRO_MODE:
+        return _load_local_exports_index()
     rows = _supabase_select("exports_index")
     return {r["filename"]: {"username": r["username"], "created_at": r["created_at"]} for r in rows}
 
 
 def _save_exports_index(idx: dict):
+    if LOCAL_PRO_MODE:
+        _local_exports_index_path().write_text(json.dumps(idx), encoding="utf-8")
+        return
     rows = [{"filename": fn, **fields} for fn, fields in idx.items()]
     _supabase_upsert("exports_index", rows, on_conflict="filename")
 
@@ -532,6 +609,11 @@ def _register_export(filename: str, username: str | None):
         raise HTTPException(401, "Ingresá con una cuenta para guardar exportaciones.")
     studio_store.save_media(username, EXPORT_DIR / filename, filename, "export",
                            hashlib.sha256(filename.encode()).hexdigest())
+    if LOCAL_PRO_MODE:
+        idx = _load_local_exports_index()
+        idx[filename] = {"username": username, "created_at": datetime.now(timezone.utc).isoformat()}
+        _save_exports_index(idx)
+        return
     _supabase_upsert(
         "exports_index",
         {"filename": filename, "username": username, "created_at": datetime.now(timezone.utc).isoformat()},
@@ -541,6 +623,8 @@ def _register_export(filename: str, username: str | None):
 
 def _get_export_owner(filename: str) -> str | None:
     """Fetch de UNA sola fila (evita traer todo el índice) - usado en la descarga."""
+    if LOCAL_PRO_MODE:
+        return _load_local_exports_index().get(filename, {}).get("username")
     rows = _supabase_select("exports_index", params={"filename": f"eq.{filename}", "select": "username", "limit": "1"})
     return rows[0]["username"] if rows else None
 
@@ -578,7 +662,7 @@ VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 studio_store = RecordStore(
     os.getenv("STUDIO_DATA_DIR", str(Path(__file__).parent / ".studio-data")),
-    mode=os.getenv("STUDIO_STORAGE", "supabase"), url=SUPABASE_URL,
+    mode="local" if LOCAL_PRO_MODE else os.getenv("STUDIO_STORAGE", "supabase"), url=SUPABASE_URL,
     key=SUPABASE_SERVICE_KEY, schema=SUPABASE_SCHEMA,
 )
 

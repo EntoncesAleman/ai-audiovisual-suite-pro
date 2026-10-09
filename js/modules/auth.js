@@ -285,7 +285,8 @@ export async function logout() {
 export async function initAuthGuard() {
     injectAuthUI();
     const token = getApiKey();
-    if (!token) { showLoginModal(); return; }
+    // Sin token igual se consulta: en modo local PRO (LOCAL_PRO_MODE en el
+    // backend) localhost entra directo, sin login. Si no, responde 401.
     try {
         const res = await fetchWithTimeout(`${BACKEND_URL}/auth/check`, { headers: authHeaders() });
         if (res.status === 401) {
@@ -303,6 +304,7 @@ export async function initAuthGuard() {
     } catch (err) {
         console.warn('No se pudo verificar la sesión (¿servidor dormido?):', err);
         showLoginModal();
+        if (!token) return;
         const message = document.getElementById('authLoginError');
         message.textContent = 'No se pudo verificar tu sesión. Esperá unos segundos y reintentá.'; message.hidden = false;
     }

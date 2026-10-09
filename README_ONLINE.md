@@ -44,6 +44,8 @@ El nuevo login depende de la tabla del estudio: aplicar la migración **antes** 
 
 `STUDIO_STORAGE=supabase` guarda registros y objetos en el backend remoto. `STUDIO_DATA_DIR` funciona como caché local de archivos. `STUDIO_STORAGE=local` usa SQLite y archivos persistentes para el estudio; los usuarios y planes siguen en el Supabase existente. `.studio-data/` está excluido de Git.
 
+`LOCAL_PRO_MODE=1` (solo en el `.env` de tu máquina, nunca en un deploy) permite usar la versión PRO en `http://localhost:8000` sin iniciar sesión y sin Supabase: los requests que salen de esta misma máquina entran como superadmin PRO y todo se guarda en `STUDIO_DATA_DIR`. Desde otra máquina de la red sigue pidiendo sesión. Para volver al modo online, borrá esa línea y reiniciá el servidor.
+
 Los datos viejos de localStorage no se asignan automáticamente a una cuenta: Estudio → Guardado → Importar historial anterior permite incorporarlos explícitamente. Los archivos temporales anteriores al cambio deben subirse nuevamente; nunca se acepta una ruta de servidor proporcionada por el cliente.
 
 La copia local preserva cambios si falla la red. Si otra pestaña guardó una revisión distinta, la app conserva esa copia y pide elegir una versión. Se puede descargar un respaldo antes de cargar la versión online.
