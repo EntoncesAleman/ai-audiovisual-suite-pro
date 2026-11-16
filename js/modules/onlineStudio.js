@@ -13,12 +13,13 @@ import { loadSessionById, saveSession } from './sessions.js';
 import { renderClipsList } from './clips.js';
 import { renderReelClipsList } from './reelEditor.js';
 import { renderAssistantChat } from './assistantChat.js';
+import { initEditingWorkspace, refreshEditingWorkspace } from './editingWorkspace.js';
 
 let media = [];
 let objectUrls = [];
 let polling;
 let lastFocus;
-let activeTab = 'source';
+let activeTab = 'transcript';
 const mountedTools = [];
 let mountedPro = null;
 const toolIcons = {"source": "<path d=\"M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4\"/>", "transcript": "<path d=\"M6 3h9l4 4v14H6zM9 11h7M9 15h7M9 18h4\"/>", "preview": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"m10 8 5 3-5 3zM8 21h8m-4-4v4\"/>", "premiere": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/><path d=\"M8 17V7h4a3 3 0 0 1 0 6H8m8 4v-6h2\"/>", "voice": "<rect x=\"9\" y=\"2\" width=\"6\" height=\"12\" rx=\"3\"/><path d=\"M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8\"/>", "projects": "<path d=\"M3 7V4h6l2 3h10v13H3z\"/>", "images": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><circle cx=\"8\" cy=\"8\" r=\"1.5\"/><path d=\"m3 17 6-6 4 4 3-3 5 5\"/>", "editor": "<circle cx=\"5\" cy=\"6\" r=\"3\"/><circle cx=\"5\" cy=\"18\" r=\"3\"/><path d=\"m8 8 13 13M8 16 21 3\"/>", "render": "<path d=\"M4 8v8m4-12v16m4-13v6m4-8v16m4-13v10\"/>", "subtitles": "<rect x=\"2\" y=\"5\" width=\"20\" height=\"14\" rx=\"2\"/><path d=\"M10 10H6v4h4m8-4h-4v4h4\"/>", "capcut": "<path d=\"m4 5 16 14H4L20 5H4m0 7h16\"/>", "campaign": "<path d=\"m3 9 15-5v16L3 15zM7 16v5h4l-1-4m11-7v4\"/>", "brand": "<path d=\"m12 3 3 6 6 1-4 5 1 6-6-3-6 3 1-6-4-5 6-1z\"/>", "library": "<path d=\"M4 3v18m5-18v18m5-18v18m3-17 4 16\"/>", "jobs": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 6v6l4 2\"/>", "sync": "<path d=\"M4 3h13l3 3v15H4zM8 3v6h8V3M8 21v-8h8v8\"/>"};
@@ -79,7 +80,13 @@ export function initOnlineStudio() {
         save.id = 'studioSaveStatus'; save.className = 'studio-save'; save.setAttribute('role','status');
         save.textContent = 'Ingresá para guardar online';
         const button = document.createElement('button');
-        button.id = 'navStudio'; button.type = 'button'; button.className = 'studio-nav-btn'; button.textContent = 'Herramientas'; button.addEventListener('click', () => { if (!document.querySelector('.dashboard')) location.href = '/?studio=source'; else openStudio('source'); });
+        button.id = 'navStudio'; button.type = 'button'; button.className = 'studio-nav-btn'; button.textContent = 'Herramientas'; button.addEventListener('click', () => {
+            if (!document.querySelector('.dashboard')) location.href = '/?studio=source';
+            else if (isPro() && !el('studioOverlay')?.hidden) {
+                const more = el('studioMoreTools'); more.open = !more.open;
+                button.setAttribute('aria-expanded', String(more.open));
+            } else openStudio('source');
+        });
         nav.append(save, button);
     }
     const overlay = document.createElement('div');
@@ -88,14 +95,14 @@ export function initOnlineStudio() {
       <section class="studio-window" role="dialog" aria-modal="true" aria-labelledby="studioTitle">
         <header><h2 id="studioTitle">Herramientas creativas</h2><button class="studio-nav-btn" id="studioClose" aria-label="Cerrar estudio">✕</button></header>
         <nav class="studio-tabs" aria-label="Herramientas del estudio">
-          ${[
-            ['Inicio', [['source', 'Fuente y asistente']]],
-            ['Editar', [['preview', 'Clips'], ['editor', 'Montaje'], ['transcript', 'Transcripción'], ['subtitles', 'Subtítulos']]],
-            ['Audio', [['voice', 'Voz IA'], ['render', 'Video y audio']]],
-            ['Crear', [['images', 'Imágenes'], ['campaign', 'Campañas'], ['brand', 'Mi marca']]],
-            ['Exportar', [['premiere', 'Premiere'], ['capcut', 'CapCut']]],
-            ['Organizar', [['projects', 'Proyectos e historial'], ['library', 'Biblioteca'], ['jobs', 'Trabajos'], ['sync', 'Guardado']]],
-          ].map(([group, tabs]) => `<div class="studio-sidebar-group"><h3>${group}</h3>${tabs.map(([id, label]) => `<button class="studio-nav-btn" data-tab="${id}" aria-selected="false">${toolIcon(id)}<span>${label}</span></button>`).join('')}</div>`).join('')}
+          <button class="studio-nav-btn workspace-preview-link" data-workspace-action="fullscreen">${toolIcon('preview')}<span>Vista previa</span></button>
+          ${[['source','Importar'],['preview','Clips'],['editor','Montaje'],['transcript','Transcripción'],['subtitles','Subtítulos']].map(([id,label]) => `<button class="studio-nav-btn" data-tab="${id}" aria-selected="false">${toolIcon(id)}<span>${label}</span></button>`).join('')}
+          <button class="studio-nav-btn workspace-assistant-link" data-workspace-action="assistant">${toolIcon('campaign')}<span>Asistente</span></button>
+          <div class="workspace-nav-divider"></div>
+          <button class="studio-nav-btn" data-tab="render" aria-selected="false">${toolIcon('source')}<span>Exportar</span></button>
+          <details id="studioMoreTools" class="studio-more-tools"><summary>Más herramientas</summary><div class="studio-sidebar-group">
+          ${[['voice','Voz IA'],['images','Imágenes'],['campaign','Campañas'],['brand','Mi marca'],['premiere','Premiere'],['capcut','CapCut'],['projects','Proyectos e historial'],['library','Biblioteca'],['jobs','Trabajos'],['sync','Guardado']].map(([id,label]) => `<button class="studio-nav-btn" data-tab="${id}" aria-selected="false">${toolIcon(id)}<span>${label}</span></button>`).join('')}
+          </div></details>
         </nav>
         <div class="studio-model-notice">Modelos gratuitos en todos los accesos por ahora: cuotas del proveedor, demoras, calidad variable y disponibilidad limitada. La generación de imágenes puede no estar disponible sin cuota. PRO tendrá APIs de modelos pagos en una etapa futura.</div>
         <aside class="studio-preview-rail" aria-label="Vista previa y actividad" hidden><div id="studioPinnedPlayer"></div><div id="studioPinnedActivity"></div></aside>
@@ -171,6 +178,7 @@ export function initOnlineStudio() {
       </section>`;
     const appHeader = document.querySelector('.app-header');
     if (appHeader) appHeader.after(overlay); else document.body.append(overlay);
+    initEditingWorkspace({ openTool: switchTab, changed, feedback });
     initFreeOffer(toolIcon);
     el('studioClose').addEventListener('click', closeStudio);
     el('studioProjects').addEventListener('click', async () => { closeStudio(); const { openProjectsManager } = await import('./projects.js'); openProjectsManager(); });
@@ -296,6 +304,7 @@ export function openStudio(tab = 'source') {
     el('studioClose').textContent = '✕';
     el('studioClose').setAttribute('aria-label', 'Cerrar herramientas');
     el('studioOverlay').hidden = false; switchTab(tab);
+    refreshEditingWorkspace();
     if (!docked) el('studioClose').focus();
 }
 export function closeStudio() {
@@ -304,6 +313,8 @@ export function closeStudio() {
 async function switchTab(tab) {
     if (!isPro() && !freeStudioTab(tab)) tab = 'editor';
     activeTab = tab; clearInterval(polling); feedback('');
+    el('studioOverlay').dataset.view = tab;
+    el('studioOverlay').dataset.assistant = 'false';
     const proTabs = ['images','render','capcut','campaign','premiere','voice'];
     if (proTabs.includes(tab) && !isPro()) feedback('Herramienta del Studio PRO. Podés ver sus opciones; necesitás una cuenta PRO para ejecutarla.', true);
     if (tab === 'projects') {
@@ -465,7 +476,7 @@ function saveBrand(event) {
     feedback('Identidad guardada. Se aplicará a tus nuevas imágenes y campañas.');
 }
 
-function changed() { renderClipsList(); renderReelClipsList(); renderAssistantChat(); renderTimeline(); persistEditor(); }
+function changed() { renderClipsList(); renderReelClipsList(); renderAssistantChat(); renderTimeline(); persistEditor(); refreshEditingWorkspace(); }
 function renderTimeline() {
     const container = el('studioTimeline'); if (!container) return;
     const clips = state.clipsList;

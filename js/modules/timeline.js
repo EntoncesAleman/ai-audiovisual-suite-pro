@@ -21,6 +21,29 @@ export function searchTimeline() {
     const q = document.getElementById('timelineSearch').value.trim();
     const box = document.getElementById('resTimeline');
     if (state.editing) return; // no interferir con edición
+    if (document.getElementById('studioOverlay')?.classList.contains('studio-pro')) {
+        setRawTranscriptVisible(false);
+        renderInteractiveTranscript();
+        let matches = 0;
+        const needle = q.toLocaleLowerCase();
+        document.querySelectorAll('#transcriptList .transcript-line').forEach(line => {
+            const text = line.querySelector('.transcript-line-text');
+            const original = text.textContent;
+            line.hidden = !!needle && !original.toLocaleLowerCase().includes(needle);
+            if (line.hidden || !needle) return;
+            const pattern = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+            text.replaceChildren();
+            let offset = 0;
+            for (const match of original.matchAll(pattern)) {
+                text.append(document.createTextNode(original.slice(offset, match.index)));
+                const mark = document.createElement('mark'); mark.textContent = match[0]; text.append(mark);
+                offset = match.index + match[0].length; matches++;
+            }
+            text.append(document.createTextNode(original.slice(offset)));
+        });
+        document.getElementById('searchInfo').textContent = q ? `${matches} coincidencia${matches === 1 ? '' : 's'}` : '';
+        return;
+    }
     if (!q) {
         box.innerText = state.originalTimeline;
         document.getElementById('searchInfo').textContent = "";

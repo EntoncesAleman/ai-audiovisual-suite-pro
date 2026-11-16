@@ -201,16 +201,16 @@ try {
     await admin.waitForFunction(() => document.getElementById('navAccountLabel')?.textContent === 'admin');
     assert.equal(await admin.locator('#authGuardOverlay .access-plans').isVisible(), false);
     assert.equal(await admin.locator('.player-only-card').isVisible(), true);
-    assert.equal(await admin.locator('.telemetry-card').isVisible(), true);
+    assert.equal(await admin.locator('.telemetry-card').isVisible(), false);
     await admin.locator('#navStudio').click();
-    assert.equal(await admin.locator('#studioOverlay .studio-tabs button:visible').count(), 16);
-    assert.equal(await admin.locator('#studioOverlay .studio-tool-icon').count(), 16);
+    assert.equal(await admin.locator('#studioOverlay .studio-tabs button[data-tab]:visible').count(), 16);
+    assert.equal(await admin.locator('#studioOverlay [data-tab] .studio-tool-icon').count(), 16);
     assert.equal(await admin.locator('.dashboard').isVisible(), false);
     assert.equal(await admin.locator('#freeProShowcase').isVisible(), false);
     for (const tab of ['editor','transcript','voice','images','premiere','jobs','sync']) {
         await admin.locator(`[data-tab="${tab}"]`).click();
         assert.equal(await admin.locator('.studio-preview-rail .player-only-card').isVisible(), true);
-        assert.equal(await admin.locator('.studio-preview-rail .telemetry-card').isVisible(), true);
+        assert.equal(await admin.locator('.telemetry-card').isVisible(), tab === 'jobs');
     }
     await admin.screenshot({path:'test-results/studio-sidebar-desktop.png'});
 
@@ -263,7 +263,7 @@ try {
     await admin.waitForSelector('#authGuardOverlay.active');
     assert.equal(await admin.locator('#authGuardOverlay .access-plans').isVisible(), true);
     assert.deepEqual(errors, []);
-    console.log('Administrator checks passed: login-only plans, exclusive PRO sidebar, pinned player and telemetry, FREE legacy dashboard, visible administration, working settings, preferences, projects and logout.');
+    console.log('Administrator checks passed: login-only plans, PRO editing workspace, pinned player, activity in Jobs, FREE dashboard, administration, settings, projects and logout.');
     await adminContext.close();
 
 } finally {await browser.close();}

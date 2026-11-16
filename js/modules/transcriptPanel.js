@@ -35,6 +35,7 @@ export function renderInteractiveTranscript() {
     const segments = parseTimelineToSegments(state.originalTimeline).filter(s => s.timestamp);
     renderSpeechMap(segments);
     renderTranscriptList(segments);
+    document.dispatchEvent(new CustomEvent('transcript-rendered'));
 }
 
 function renderSpeechMap(segments) {
