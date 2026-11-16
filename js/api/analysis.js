@@ -84,7 +84,7 @@ export async function analyzeUrlStream() {
         if (state._lastStreamStalled) {
             alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). Revisá Estudio → Trabajos para recuperar el resultado antes de enviar otro pedido.`);
         } else {
-            alert("Se perdió la conexión con el servidor durante el análisis. Revisá Estudio → Trabajos para recuperar el pedido enviado.");
+            alert(e.message || "No se pudo completar el análisis.");
         }
     } finally {
         showLoader(false);
@@ -119,7 +119,7 @@ export async function analyzeLocalFile() {
         if (state._lastStreamStalled) {
             alert(`Se perdió la conexión con el servidor (sin respuesta por ${Math.round(STREAM_STALL_MS / 1000)}s). Revisá Estudio → Trabajos para recuperar el resultado antes de enviar otro pedido.`);
         } else {
-            alert("Se perdió la conexión con el servidor durante el análisis. Revisá Estudio → Trabajos; si la subida no llegó a terminar, volvé a enviar el archivo.");
+            alert(e.message || "No se pudo completar la subida o el análisis.");
         }
     } finally {
         showLoader(false);

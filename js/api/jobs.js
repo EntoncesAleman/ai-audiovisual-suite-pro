@@ -1,10 +1,36 @@
 import { studioRequest } from '../modules/workspaceSync.js';
 import { writeAccountValue } from '../utils/storage.js';
 
+function pause(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(signal.reason);
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+        function abort() { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); }
+        signal?.addEventListener('abort', abort, { once: true });
+    });
+}
+
+async function recoverableRequest(url, options, onReconnect = () => {}) {
+    const deadline = Date.now() + 60000;
+    while (true) {
+        try {
+            const timeout = AbortSignal.timeout(15000);
+            return await studioRequest(url, { ...options,
+                signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout });
+        } catch (error) {
+            if (options.signal?.aborted) throw options.signal.reason;
+            if (error.status && ![408, 429, 502, 503, 504].includes(error.status)) throw error;
+            if (Date.now() >= deadline) throw error;
+            onReconnect();
+            await pause(1500, options.signal);
+        }
+    }
+}
+
 export async function submitStudioJob(action, payload, signal) {
     const requestId = crypto.randomUUID();
     writeAccountValue('last_job_request', requestId);
-    const job = await studioRequest('/studio/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const job = await recoverableRequest('/studio/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, payload, request_id: requestId }), signal });
     document.dispatchEvent(new CustomEvent('jobs-changed', { detail: job }));
     return job;
@@ -12,16 +38,12 @@ export async function submitStudioJob(action, payload, signal) {
 
 export async function waitForStudioJob(id, onUpdate = () => {}, signal) {
     while (true) {
-        const job = await studioRequest(`/studio/jobs/${encodeURIComponent(id)}`, { signal });
+        const job = await recoverableRequest(`/studio/jobs/${encodeURIComponent(id)}`, { signal }, () =>
+            onUpdate({ events: [{ stage: 'reconnecting', message: 'Reconectando con el servidor. El análisis enviado sigue guardado.', seq: 0 }] }));
         onUpdate(job);
         if (job.status === 'done') return job;
         if (job.status === 'error' || job.status === 'interrupted') throw new Error(job.message || 'El trabajo no pudo terminar.');
-        await new Promise((resolve, reject) => {
-            if (signal?.aborted) { reject(signal.reason); return; }
-            const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, 1500);
-            function abort() { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); }
-            signal?.addEventListener('abort', abort, { once: true });
-        });
+        await pause(1500, signal);
     }
 }
 
@@ -49,6 +71,7 @@ export async function durableJobFetch(url, options = {}) {
             emit({ stage: 'queued', message: 'Trabajo guardado. Podés consultar el resultado en Trabajos aunque cierres esta pestaña.' });
             waitForStudioJob(job.id, update => {
                 for (const event of update.events || []) {
+                    if (event.stage === 'reconnecting') { emit(event); continue; }
                     if ((event.seq || 0) > lastSeq) { emit(event); lastSeq = event.seq; }
                 }
                 if (!closed) controller.enqueue(encoder.encode(': keep-alive\n\n'));

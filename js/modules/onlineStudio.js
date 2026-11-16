@@ -164,7 +164,7 @@ export function initOnlineStudio() {
             <label>Logo de la biblioteca<select id="studioBrandLogo"><option value="">Sin logo</option></select></label>
             <button class="studio-primary" type="submit">Guardar identidad</button></form>
           </section>
-          <section data-panel="library" hidden><h3>Biblioteca privada</h3><p>Fuentes, imágenes y exportaciones de tu cuenta.</p><label>Subir archivo <input type="file" id="studioLibraryUpload" accept="video/*,audio/*,image/png,image/jpeg,image/webp"></label><div id="studioLibrary" class="studio-gallery"></div></section>
+          <section data-panel="library" hidden><h3>Biblioteca privada</h3><p>Fuentes, imágenes y exportaciones de tu cuenta.</p><label>Subir archivo <input type="file" id="studioLibraryUpload" accept="video/*,audio/*,.opus,image/png,image/jpeg,image/webp"></label><div id="studioLibrary" class="studio-gallery"></div></section>
           <section data-panel="jobs" hidden><h3>Trabajos y resultados</h3><p>Los trabajos continúan aunque cierres esta pestaña mientras el servidor esté activo. Si se interrumpe el servidor, el estado lo indicará.</p><div id="studioJobs"></div></section>
           <section data-panel="sync" hidden><h3>Guardado del proyecto</h3><p id="studioSyncDetails">Ingresá con tu cuenta para guardar online.</p><div class="studio-row"><button class="studio-primary" id="studioRetrySync">Reintentar sincronización</button><button class="studio-nav-btn" id="studioBackup">Descargar copia local</button><button class="studio-nav-btn" id="studioLoadRemote">Cargar versión online</button><button class="studio-nav-btn" id="studioImportLegacy">Importar historial anterior</button></div></section>
         </div>

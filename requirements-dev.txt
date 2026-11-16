@@ -1,0 +1,3 @@
+-r requirements.txt
+# Explicit test transport; google-genai 3 uses httpx2 instead of httpx.
+httpx2==2.16.2

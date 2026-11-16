@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='avsuite_image_smoke_') as root:
     store=RecordStore(root,mode='local')
     try:
         from google.genai import types
-        client=genai.Client(api_key=key,http_options=types.HttpOptions(timeout=30000,retry_options=types.HttpRetryOptions(attempts=1)))
+        client=genai.Client(api_key=key,http_options=types.HttpOptions(api_version=os.getenv('GOOGLE_GENAI_API_VERSION') or 'v1beta',timeout=30000,retry_options=types.HttpRetryOptions(attempts=1)))
         result=generate_images(client,store,'qa',ImageRequest(prompt='Una placa abstracta minimalista, fondo azul y círculo dorado, sin texto.',aspect_ratio='16:9'))
         path,_=store.media_path('qa',result['images'][0]['id'])
         with Image.open(path) as image:print(f'Imagen verificada: {image.width} × {image.height}.')

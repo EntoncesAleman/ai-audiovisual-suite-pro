@@ -87,6 +87,8 @@ if not GEMINI_API_KEY:
 # La app controla la rotación; evitar reintentos ocultos del SDK contra el
 # mismo modelo antes de llegar a una alternativa con cuota disponible.
 client = genai.Client(api_key=GEMINI_API_KEY, http_options=genai_types.HttpOptions(
+    # Keep preview-model fallbacks available after the SDK 3 default changed to v1.
+    api_version=os.getenv("GOOGLE_GENAI_API_VERSION") or "v1beta",
     retry_options=genai_types.HttpRetryOptions(attempts=1)))
 
 # ------------------------------------------------------------------

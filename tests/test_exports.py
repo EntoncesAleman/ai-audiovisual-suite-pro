@@ -95,6 +95,30 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(material_paths)
         self.assertTrue(all(Path(path).is_file() for path in material_paths))
 
+    def test_local_capcut_cli_creates_editable_synced_draft_in_isolated_store(self):
+        adapter = self.main.capcut_export
+        cli = adapter._find_capcut_cli()
+        if not cli:
+            self.skipTest('capcut-cli is not installed')
+        template = Path(cli).resolve().parent.parent / 'templates' / '_init'
+        projects = Path(self.tmp.name) / 'local-capcut-projects'
+        projects.mkdir()
+        with patch.object(adapter, 'CAPCUT_PROJECTS_DIR', projects), \
+                patch.object(adapter, '_find_real_template_dir', return_value=template), \
+                patch.dict(os.environ, {'CAPCUT_DRAFT_DIR': str(projects)}):
+            ok, message, result = adapter.build_and_register_capcut_draft(
+                'Compatibilidad CLI', str(self.source),
+                [{'start': 0, 'end': 1, 'text': 'Subtítulo editable'}],
+                {'color': '#FFFFFF', 'border_color': '#000000', 'border_width': 2},
+            )
+        self.assertTrue(ok, message)
+        self.assertTrue(result['synced'], message)
+        self.assertEqual(result['cues_added'], 1, result)
+        self.assertTrue(result['cue_results'][0]['border_ok'], result)
+        draft = Path(result['folder_path'])
+        self.assertEqual(draft.parent, projects)
+        self.assertTrue((draft / 'draft_content.json').is_file())
+
     def test_animated_crop_uses_bounded_ai_centers(self):
         calls=[]
         def generate(**kwargs):

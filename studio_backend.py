@@ -39,7 +39,7 @@ async def upload_media(store, user, file, max_bytes=512 * 1024 * 1024, inspect=N
     owner = account(user)
     media_id = uuid.uuid4().hex
     suffix = Path(file.filename or "archivo.bin").suffix.lower()
-    allowed = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".png", ".jpg", ".jpeg", ".webp"}
+    allowed = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".png", ".jpg", ".jpeg", ".webp"}
     if suffix not in allowed:
         raise HTTPException(415, "Subí un video, audio o imagen compatible.")
     temporary = store.owner_dir(owner) / f"upload_{media_id}{suffix}"

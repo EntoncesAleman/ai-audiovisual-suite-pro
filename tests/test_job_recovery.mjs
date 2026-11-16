@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { mock } from 'node:test';
+const source = (await readFile(new URL('../js/api/jobs.js', import.meta.url), 'utf8'))
+    .replace(/^import .*;\n/gm, '');
+globalThis.document = new EventTarget();
+globalThis.writeAccountValue = () => {};
+const jobs = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+mock.timers.enable({ apis: ['setTimeout'] });
+let calls = [];
+globalThis.studioRequest = async (url, options) => {
+    calls.push(options.body);
+    if (calls.length === 1) throw new TypeError('Failed to fetch');
+    return { id: 'same-job', status: 'queued' };
+};
+const submission = jobs.submitStudioJob('analyze-file', { asset_id: 'audio' });
+await new Promise(setImmediate);
+mock.timers.tick(1500);
+assert.equal((await submission).id, 'same-job');
+assert.equal(calls.length, 2);
+assert.equal(calls[0], calls[1], 'Retries must reuse the same request ID');
+let attempts = 0;
+const updates = [];
+globalThis.studioRequest = async () => {
+    if (++attempts === 1) throw new TypeError('Failed to fetch');
+    return { status: 'done', result: { raw_timeline: 'Recovered' } };
+};
+const tracking = jobs.waitForStudioJob('same-job', job => updates.push(job));
+await new Promise(setImmediate);
+mock.timers.tick(1500);
+assert.equal((await tracking).result.raw_timeline, 'Recovered');
+assert.equal(updates[0].events[0].stage, 'reconnecting');
+globalThis.studioRequest = async () => { throw Object.assign(new Error('Formato no admitido'), { status: 415 }); };
+await assert.rejects(jobs.submitStudioJob('analyze-file', {}), /Formato no admitido/);
+const controller = new AbortController();
+globalThis.studioRequest = async () => { throw new TypeError('Failed to fetch'); };
+const stopped = jobs.waitForStudioJob('same-job', () => {}, controller.signal);
+await new Promise(setImmediate);
+controller.abort();
+await assert.rejects(stopped, { name: 'AbortError' });
+mock.timers.reset();
+console.log('PASS: submission deduplication, tracking recovery, HTTP errors and cancellation');

@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import httpx
+import httpx2 as httpx
 from fastapi import FastAPI, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from PIL import Image

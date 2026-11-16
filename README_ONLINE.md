@@ -33,7 +33,7 @@ Imágenes también prueba sus alternativas compatibles (`GEMINI_IMAGE_MODELS`), 
 2. El SQL usa el schema `avsuite`. Si el despliegue usa otro `SUPABASE_SCHEMA`, adaptar el SQL al mismo schema. Mantener ese schema expuesto en la Data API, igual que para las tablas existentes.
 3. Configurar las variables de `.env.example` en el servidor. No copiar el `.env` real al repositorio. No configurar `GEMINI_REFRAME_MODEL` vacío: omitirlo o darle un modelo válido.
 4. Ejecutar `venv/bin/python scripts/check_online.py`. Solo consulta la disponibilidad de tabla y bucket; no modifica datos ni imprime secretos.
-5. Desplegar el Dockerfile actualizado. Instala Node y `capcut-cli@0.21.0`, y copia los nuevos módulos. Mantener inicialmente **una instancia / un proceso Uvicorn**: la concurrencia del pipeline existente todavía usa semáforos en memoria.
+5. Desplegar el Dockerfile actualizado. Instala Node, Deno 2.9.8 y `capcut-cli@0.34.0`, y copia los nuevos módulos. Mantener inicialmente **una instancia / un proceso Uvicorn**: la concurrencia del pipeline existente todavía usa semáforos en memoria.
 6. Verificar login, subir una fuente sintética, guardar un proyecto y descargar sus resultados. Para imágenes, la clave Gemini debe tener cuota para el modelo configurado. `scripts/check_images.py` consume una generación real y guarda el resultado solo temporalmente.
 
 **Migración confirmada:** el propietario ejecutó el SQL en Supabase; se verificaron la tabla del estudio, el bucket privado y el RPC `studio_write`, incluido su control de revisión sin crear registros. La prueba real de imágenes recibió HTTP 429 de Gemini: su cuota sigue pendiente. La publicación del código no equivale a una verificación del despliegue online.
@@ -61,10 +61,11 @@ La biblioteca muestra los últimos 100 archivos y Trabajos los últimos 50. Los 
 ## Verificación
 
 ```sh
+venv/bin/python -m pip install -r requirements-dev.txt
 venv/bin/python -m unittest discover -s tests -v
 ```
 
-Las 28 pruebas pasan e incluyen aislamiento de cuentas, conflictos de guardado, recuperación de objetos, límites de subida, cuotas, sesiones, jobs idempotentes y exports reales FFmpeg/CapCut con material sintético. Imágenes, campañas y seguimiento usan proveedores simulados en las pruebas automatizadas.
+Las 32 pruebas pasan e incluyen aislamiento de cuentas, conflictos de guardado, recuperación de objetos, límites de subida, cuotas, sesiones, jobs idempotentes y exports reales FFmpeg/CapCut con material sintético. Imágenes, campañas y seguimiento usan proveedores simulados en las pruebas automatizadas. La actualización del 16 de noviembre de 2026 se verificó con FFmpeg 9.0.2 y CapCut CLI 0.34.0; los detalles y límites están en `ACTUALIZACION_INSTALADA_2026-11-16.md`.
 
 Para la interfaz, `tests/preview_server.py` ofrece un servidor **aislado de pruebas** con usuarios/proveedores falsos. No empaquetarlo ni publicarlo: tiene un endpoint de reinicio de fixtures.
 

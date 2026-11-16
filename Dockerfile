@@ -16,14 +16,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # de firma que YouTube exige antes de entregar formatos de video reales
 # (sin esto, yt-dlp solo consigue miniaturas/imágenes, no video descargable).
 ENV DENO_INSTALL=/usr/local
-RUN curl -fsSL https://deno.land/install.sh | sh
+RUN curl -fsSL https://deno.land/install.sh | sh -s v2.9.8
 
 # Pinned draft compiler: portable online exports do not require CapCut on the server.
-RUN npm install -g capcut-cli@0.21.0
+RUN npm install -g capcut-cli@0.34.0
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
